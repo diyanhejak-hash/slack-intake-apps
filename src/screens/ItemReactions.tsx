@@ -78,9 +78,13 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
   );
 }
 
-export function ItemReactionBar({ itemId }: { itemId: string }) {
+export function ItemReactionBar({ projectId, itemId }: { projectId: string; itemId: string }) {
   const [pending, setPending] = useState<ItemReaction[]>([]);
   const [open, setOpen] = useState(false);
+  // Poin revisi: "React semua Item, atau React hanya item ini" — toggle scope SEBELUM milih
+  // emoji, biar 1 klik emoji langsung nentuin ke mana reaction-nya keantre. Default "item"
+  // (paling aman) tiap kali popover dibuka lagi.
+  const [scope, setScope] = useState<"item" | "all">("item");
 
   function refresh() {
     window.api.itemReaction.list(itemId).then(setPending);
@@ -91,8 +95,19 @@ export function ItemReactionBar({ itemId }: { itemId: string }) {
 
   async function addPending(preset: EmojiPreset) {
     if (!preset.slack_shortcode) return;
+    if (scope === "all") {
+      if (!confirm(`Antrekan reaction ${preset.type === "unicode" ? preset.value : `:${preset.slack_shortcode}:`} ke SEMUA item di project ini?`)) return;
+      const payload = { emojiType: preset.type, emojiValue: preset.value, slackShortcode: preset.slack_shortcode };
+      const result = await window.api.itemReaction.addToProject(projectId, payload);
+      setOpen(false);
+      setScope("item");
+      refresh();
+      alert(`Reaction diantrekan ke ${result.added}/${result.total} item (sisanya udah pernah diantre reaction yang sama).`);
+      return;
+    }
     await window.api.itemReaction.add(itemId, { emojiType: preset.type, emojiValue: preset.value, slackShortcode: preset.slack_shortcode });
     setOpen(false);
+    setScope("item");
     refresh();
   }
 
@@ -109,7 +124,27 @@ export function ItemReactionBar({ itemId }: { itemId: string }) {
       {pending.map((r) => (
         <ReactionChip key={r.id} reaction={r} onRemove={() => removePending(r.id)} />
       ))}
-      {open && <ReactionPickerPopover onPick={addPending} style={{ top: "calc(100% + 4px)", left: 0 }} />}
+      {open && (
+        <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
+          <div className="card" style={{ display: "flex", gap: 2, padding: 3, marginBottom: 4, width: 200 }}>
+            <button
+              className="btn"
+              style={{ flex: 1, padding: "3px 0", justifyContent: "center", fontSize: 11, ...(scope === "item" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}) }}
+              onClick={() => setScope("item")}
+            >
+              Item ini
+            </button>
+            <button
+              className="btn"
+              style={{ flex: 1, padding: "3px 0", justifyContent: "center", fontSize: 11, ...(scope === "all" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}) }}
+              onClick={() => setScope("all")}
+            >
+              Semua item
+            </button>
+          </div>
+          <ReactionPickerPopover onPick={addPending} style={{ position: "static" }} />
+        </div>
+      )}
     </div>
   );
 }

@@ -234,7 +234,7 @@ export default function Drawer({
           </div>
           {/* Icon reaction PENDING — selalu kelihatan (beda dari overlay di atas), nambah ke
               antrean yang dikirim bareng pas "Kirim ke Slack" biasa. */}
-          <ItemReactionBar itemId={item.id} />
+          <ItemReactionBar projectId={projectId} itemId={item.id} />
         </div>
         <div style={{ textAlign: "right" }}>
           <button className="icon-btn" title="Item berikutnya" onClick={onNext} disabled={!canNext}>

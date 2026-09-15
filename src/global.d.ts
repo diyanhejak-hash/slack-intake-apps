@@ -242,6 +242,11 @@ declare global {
       itemReaction: {
         list: (itemId: string) => Promise<ItemReaction[]>;
         add: (itemId: string, payload: { emojiType: "unicode" | "custom"; emojiValue: string; slackShortcode: string }) => Promise<string | null>;
+        /** Poin revisi "React semua Item" — antre reaction yang sama ke SEMUA item di project ini. */
+        addToProject: (
+          projectId: string,
+          payload: { emojiType: "unicode" | "custom"; emojiValue: string; slackShortcode: string }
+        ) => Promise<{ total: number; added: number }>;
         remove: (id: string) => Promise<void>;
       };
       /** Reaction INSTAN (poin revisi) — fire-and-forget, butuh thread yang udah ada. */

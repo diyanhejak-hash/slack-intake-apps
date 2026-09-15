@@ -78,6 +78,7 @@ contextBridge.exposeInMainWorld("api", {
   itemReaction: {
     list: (itemId) => ipcRenderer.invoke("itemReaction:list", itemId),
     add: (itemId, payload) => ipcRenderer.invoke("itemReaction:add", itemId, payload),
+    addToProject: (projectId, payload) => ipcRenderer.invoke("itemReaction:addToProject", projectId, payload),
     remove: (id) => ipcRenderer.invoke("itemReaction:remove", id),
   },
   reaction: {

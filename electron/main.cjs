@@ -137,6 +137,7 @@ function validateAccess(channel, args) {
   else if (channel === "reply:removeManyEverywhere" || channel === "reply:reorder") valid = projects.ownsProject(args[0]) || projects.ownsItem(args[0]);
   else if (channel === "send:start" || channel === "send:quick" || channel === "reaction:sendInstant") valid = projects.ownsProject(args[0]?.projectId);
   else if (["itemReaction:list", "itemReaction:add"].includes(channel)) valid = projects.ownsItem(args[0]);
+  else if (channel === "itemReaction:addToProject") valid = projects.ownsProject(args[0]);
   else if (channel === "itemReaction:remove") valid = projects.ownsItemReaction(args[0]);
   else if (channel === "item:restore") valid = projects.ownsProject(args[0]?.project_id);
   else if (channel === "item:unmerge") valid = !args[0] || projects.ownsProject(args[0]?.items?.[0]?.project_id);
@@ -356,6 +357,8 @@ handle("emojiPreset:pickImage", async () => {
 // PENDING per item — dikirim bareng lewat send:start (lihat loop-nya di atas), bukan langsung.
 handle("itemReaction:list", (_e, itemId) => projects.listItemReactions(itemId));
 handle("itemReaction:add", (_e, itemId, payload) => projects.addItemReaction(itemId, payload));
+// Poin revisi: "React semua Item" — antre reaction yang sama ke SEMUA item di project ini.
+handle("itemReaction:addToProject", (_e, projectId, payload) => projects.addReactionToAllItems(projectId, payload));
 handle("itemReaction:remove", (_e, id) => projects.removeItemReaction(id));
 
 // INSTAN — overlay hover pil item, fire-and-forget, gak pernah nyentuh item_reactions. Butuh

@@ -804,6 +804,16 @@ function removeItemReaction(id) {
   db.prepare(`DELETE FROM item_reactions WHERE id = ?`).run(id);
 }
 
+// Poin revisi: "React semua Item, atau React hanya item ini" — antre reaction yang SAMA ke
+// SEMUA item di project sekaligus (bukan instan, tetap lewat jalur PENDING biasa — dedupe
+// per-item bawaan `addItemReaction` udah nyegah dobel kalau dipanggil berkali-kali).
+function addReactionToAllItems(projectId, payload) {
+  const itemIds = db.prepare(`SELECT id FROM items WHERE project_id = ?`).all(projectId).map((r) => r.id);
+  let added = 0;
+  for (const itemId of itemIds) if (addItemReaction(itemId, payload)) added++;
+  return { total: itemIds.length, added };
+}
+
 function ownsItemReaction(id) {
   return !!db
     .prepare(`SELECT 1 FROM item_reactions r JOIN items i ON i.id=r.item_id JOIN projects p ON p.id=i.project_id WHERE r.id=? AND p.owner_user_id=? AND p.owner_team_id=?`)
@@ -1085,6 +1095,7 @@ module.exports = {
   removeEmojiPreset,
   listItemReactions,
   addItemReaction,
+  addReactionToAllItems,
   removeItemReaction,
   ownsItemReaction,
   exportProject,
