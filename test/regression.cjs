@@ -171,6 +171,20 @@ async function test(name, fn) {
       assert.equal(restored.name, "Named"); assert.equal(restored.files.length, 0);
       assert.throws(() => projects.restoreItem({ id: "fabricated", project_id: project.id, files: [] }));
     });
+    await test("staged attachment paths are already canonical (cross-platform symlink safety)", () => {
+      // Bug ketemu di CI macOS (bukan Windows): stageFile/stageWrite dulu nyimpen stored_path
+      // MENTAH (path.join biasa), sementara isManagedFile/storagePath SELALU fs.realpathSync
+      // path yang mau dicek sebelum query DB. Di Windows dua-duanya sama (jarang ada symlink di
+      // path lokal), tapi macOS `/var` -> `/private/var` (tempat os.tmpdir() sering berada) bikin
+      // 2 STRING BEDA buat file yang SAMA PERSIS, lookup DB gagal. Assert ini gak nunggu symlink
+      // beneran ada — cukup buktiin stored_path yang di-generate SEKARANG udah bentuk final
+      // (realpath == dirinya sendiri), invariant yang bikin lookup nanti konsisten di platform APA
+      // PUN.
+      const src = path.join(temp, "canonical-check.txt");
+      fs.writeFileSync(src, "x");
+      const { storedPath } = projects.stageFile(project.id, src);
+      assert.equal(storedPath, fs.realpathSync(storedPath));
+    });
     await test("batch survives source removal, import, duplicate, deletion and resync", () => {
       const bp = projects.createProject({ name: "roundtrip", channelId: "CA", channelName: "audit" });
       const bi = projects.addItem(bp.id, { name: "batch" });

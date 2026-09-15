@@ -376,7 +376,14 @@ function uniqueAttachmentDir(ownerId) {
   const safeOwner = String(ownerId || "unknown").replace(/[^a-zA-Z0-9_-]/g, "_");
   const destDir = path.join(dataDir, "attachments", safeOwner, uuid());
   fs.mkdirSync(destDir, { recursive: true });
-  return destDir;
+  // realpath SEKARANG (bukan cuma pas dibandingin nanti) — `storagePath()`/`isManagedFile()`
+  // selalu realpath-in path yang MAU DICEK sebelum query DB, tapi stored_path yang disimpan di
+  // sini sebelumnya gak di-realpath duluan. Di Windows dua-duanya kebetulan sama (jarang ada
+  // symlink di path lokal biasa), TAPI di macOS `/var` itu symlink ke `/private/var` (dan
+  // `os.tmpdir()` sering di bawah situ) — stored_path mentah vs versi realpath jadi 2 STRING
+  // BEDA, lookup DB gagal walau file-nya sama persis. Realpath SEKALI di sini bikin keduanya
+  // konsisten dari awal, gak peduli platform.
+  return fs.realpathSync(destDir);
 }
 
 function stageFile(ownerId, sourcePath) {
