@@ -18,7 +18,7 @@
     "typecheck": "tsc --noEmit",
     "test": "node test/regression.cjs",
     "test:smoke": "electron test/electron-smoke.cjs",
-    "check": "npm run typecheck && npm test && npm run test:smoke && npm run build:renderer"
+    "check": "npm run typecheck && npm test && npm run build:renderer && npm run test:smoke"
   },
   "dependencies": {
     "@lexical/link": "^0.50.0",
