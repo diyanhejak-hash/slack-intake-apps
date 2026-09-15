@@ -672,3 +672,44 @@ Checklist manual:
   "added" 0 atau lebih kecil dari total (item yang udah punya reaction itu di-skip, bukan dobel).
 - [ ] **Overlay instan TIDAK punya opsi semua item**: hover pil (bukan klik icon SmilePlus) →
   popover yang muncul CUMA grid emoji, TANPA toggle "Item ini"/"Semua item".
+
+## 25. Saran install Slack Desktop, non-blocking (2026-09-17) ✅ (siap dites)
+
+Poin revisi: "sediakan exe resmi Slack di paket installer, boleh dilewati, tapi tetap tampilkan
+saran". Dicek dulu — lisensi Slack (Software Integration Supplement) EKSPLISIT larang
+redistribusi software mereka ("neither you nor the customer may rent, lease, lend, redistribute or
+sublicense the software"). Jadi **BUKAN bundling file installer Slack ke paket kita** — sebagai
+gantinya: card saran non-blocking, tombol-nya buka halaman download RESMI `slack.com` di browser
+(user download LANGSUNG dari server Slack, kita gak pernah nyimpen/megang file mereka).
+
+**Kapan muncul**: sekali per komputer (flag `localStorage`), CUMA kalau Slack Desktop kebukti
+BELUM ke-install (cek eksistensi file di lokasi install baku — `/Applications/Slack.app` di Mac,
+`%LOCALAPPDATA%\slack\slack.exe` di Windows — bukan nebak-nebak, bukan pakai
+`app.getApplicationInfoForProtocol` yang perilakunya gak konsisten dijelasin di dokumentasi
+Electron pas gak ada handler terdaftar). Muncul CUMA setelah login (gak ganggu layar Login),
+sebagai card kecil pojok kanan-bawah — BUKAN modal blocking (`aria-modal`) — ada tombol "Install
+Slack" (buka browser) DAN "Lewati"/X (dismiss, gak nongol lagi).
+
+Backend baru: IPC `system:hasSlackDesktop` (main.cjs) — return `{installed, downloadUrl}`,
+`downloadUrl` dihitung di main process (`process.platform` gak ambigu, beda dari
+`navigator.platform` browser yang deprecated/gak reliable buat deteksi platform native).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 24 test
+regresi + smoke test Electron sungguhan + build) semua lulus, cross-check IPC channel match.
+**BELUM**: smoke-test manual visual (restart app dulu — IPC baru, gak hot-reload) DAN belum dites
+di komputer yang BENERAN gak ada Slack Desktop-nya (deteksi cuma dites logic-nya, belum kondisi
+real "belum install").
+
+Checklist manual:
+
+- [ ] **Restart app dulu** (IPC baru, `main.cjs`/`preload.cjs` gak hot-reload).
+- [ ] **Muncul kalau belum ada Slack Desktop**: di komputer yang BENERAN belum install Slack
+  Desktop → login ke app → card saran muncul di pojok kanan-bawah beberapa saat setelah login.
+- [ ] **Gak muncul kalau Slack Desktop UDAH ada**: di komputer yang Slack Desktop-nya UDAH
+  ke-install → login → card TIDAK muncul sama sekali.
+- [ ] **Tombol Install buka browser**: klik "Install Slack" → browser default kebuka ke halaman
+  resmi `slack.com/downloads/...` (bukan halaman lain, bukan download otomatis diam-diam).
+- [ ] **Skip beneran gak muncul lagi**: klik "Lewati" atau X → card ilang → tutup & buka ulang app
+  → card TIDAK muncul lagi (biarpun Slack Desktop masih belum ke-install).
+- [ ] **Gak blocking**: pas card muncul, coba klik-klik bagian lain app (Table/Reply/dst) → tetap
+  bisa dipakai normal, card cuma nemplok di pojok, gak nutup layar/ngeblok interaksi.
