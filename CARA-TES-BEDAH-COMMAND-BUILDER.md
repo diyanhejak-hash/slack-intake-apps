@@ -632,3 +632,43 @@ Checklist manual:
 - [ ] **Overlay instan di item yang belum pernah dikirim**: pilih item yang beneran belum pernah ada pesan di Slack sama sekali → hover pil-nya, klik overlay instan, pilih emoji → muncul error jelas ("belum pernah dikirim..."), BUKAN bikin pesan baru dadakan.
 - [ ] **Icon pending TETAP bisa dipakai di item yang belum pernah dikirim**: item yang sama di atas → klik icon SmilePlus yang selalu kelihatan (bukan overlay) → tetap bisa nambah ke antrean pending, gak ada error (nunggu dikirim bareng nanti).
 - [ ] **Reaction custom emoji yang gagal gak nggagalin item**: antre-in reaction custom emoji yang BELUM ada di Slack workspace tujuan → kirim item itu → pesan & reply tetap SUKSES terkirim, reaction-nya doang yang tetap "pending" (cek Message Log ada catatan gagalnya).
+
+## 24. Reaction: opsi "React semua item" (2026-09-17) ✅ (siap dites)
+
+Poin revisi yang kelewat dari request awal fitur Reaction — popover icon SmilePlus (selalu
+kelihatan di sebelah Pil Item) sekarang ada 2 tombol toggle di atas grid emoji: **"Item ini"**
+(default) dan **"Semua item"**. Pilih scope dulu, baru klik emoji — kalau scope "Semua item",
+muncul `confirm()` dulu (nyebutin emoji-nya) sebelum reaction diantrekan ke SETIAP item di project
+ini sekaligus. Abis itu ada `alert()` nunjukin berapa item yang beneran ke-tambah (item yang udah
+punya reaction sama sebelumnya otomatis di-skip, dedupe bawaan `addItemReaction` per-item).
+
+**Tetap lewat jalur PENDING** (`item_reactions`), BUKAN instan — konsisten sama desain yang udah
+ada: reaction beneran kekirim ke Slack pas "Kirim ke Slack" per-item dijalanin (bukan langsung pas
+di-antre). Overlay reaction INSTAN (hover pil) TIDAK dapet opsi "semua item" — sengaja, karena
+instan = fire-immediately ke Slack API, bulk-instan ke banyak item sekaligus jauh lebih berisiko
+(gak ada jalan mundur) dibanding antre-lalu-kirim-bareng.
+
+Backend baru: `projects.addReactionToAllItems(projectId, payload)` (loop semua item di project,
+reuse `addItemReaction` yang udah ada dedupe-nya), IPC `itemReaction:addToProject` (akses
+divalidasi `ownsProject`).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run build:renderer` bersih, `node -c`
+semua 8 `.cjs`, cross-check IPC channel match. **BELUM**: smoke-test manual (restart app dulu — IPC
+baru, gak hot-reload).
+
+Checklist manual:
+
+- [ ] **Restart app dulu** (IPC baru, `main.cjs`/`preload.cjs` gak hot-reload).
+- [ ] **Toggle scope muncul**: klik icon SmilePlus (yang selalu kelihatan) di sebelah pil Item →
+  di atas grid emoji ada 2 tombol "Item ini" / "Semua item", default "Item ini" ke-highlight.
+- [ ] **Scope "Item ini" gak berubah perilaku lama**: pastikan "Item ini" aktif → pilih emoji →
+  cuma item yang lagi kebuka yang dapet chip pending baru (item lain di project TIDAK ikut).
+- [ ] **Scope "Semua item" minta konfirmasi**: klik "Semua item" → pilih emoji → muncul dialog
+  konfirmasi nyebutin emoji-nya → klik Cancel → TIDAK ada yang keantre di item mana pun.
+- [ ] **Scope "Semua item" beneran ngantrekan ke semua**: ulangi, klik OK di dialog konfirmasi →
+  muncul alert jumlah item yang ke-tambah → pindah ke item LAIN di project yang sama (bukan yang
+  lagi kebuka tadi) → chip pending reaction yang sama HARUS muncul di situ juga.
+- [ ] **Dedupe jalan**: ulangi "Semua item" dengan emoji YANG SAMA lagi → alert-nya nunjukin angka
+  "added" 0 atau lebih kecil dari total (item yang udah punya reaction itu di-skip, bukan dobel).
+- [ ] **Overlay instan TIDAK punya opsi semua item**: hover pil (bukan klik icon SmilePlus) →
+  popover yang muncul CUMA grid emoji, TANPA toggle "Item ini"/"Semua item".
