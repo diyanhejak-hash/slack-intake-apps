@@ -568,7 +568,7 @@ handle("shell:openExternal", (_e, url) => {
 handle("shell:openSlackMessage", (_e, { channelId, ts }) => openSlack({ channelId, ts }));
 
 // ---------- Update check ----------
-handle("update:check", () => checkForUpdate(process.env.GITHUB_REPO));
+handle("update:check", () => checkForUpdate(process.env.GITHUB_REPO, process.env.GITHUB_RELEASES_TOKEN));
 
 // Only preload calls this after Electron obtains a path from an OS-backed File.
 ipcMain.on("file:grantDrop", (event, file) => {

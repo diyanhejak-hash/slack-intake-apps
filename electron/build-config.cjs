@@ -13,7 +13,7 @@ module.exports = async function () {
   const root = path.resolve(__dirname, '..');
   const envPath = path.join(root, '.env');
   const env = { ...(fs.existsSync(envPath) ? dotenv.parse(fs.readFileSync(envPath)) : {}), ...process.env };
-  const keys = ['SLACK_CLIENT_ID', 'SLACK_REDIRECT_URI', 'OAUTH_PORT', 'GITHUB_REPO'];
+  const keys = ['SLACK_CLIENT_ID', 'SLACK_REDIRECT_URI', 'OAUTH_PORT', 'GITHUB_REPO', 'GITHUB_RELEASES_TOKEN'];
   const config = Object.fromEntries(keys.filter((key) => env[key]).map((key) => [key, env[key]]));
   for (const key of keys.slice(0, 2)) if (!config[key]) throw new Error(`Konfigurasi build belum lengkap: ${key}`);
   const destination = path.join(root, '.packaging');

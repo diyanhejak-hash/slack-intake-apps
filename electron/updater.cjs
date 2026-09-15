@@ -2,10 +2,18 @@ const { app } = require("electron");
 
 // Cek versi doang, install tetap manual (poin 9 rancangan — app unsigned/gratis di Mac
 // gak bisa pakai auto-update diam-diam ala Squirrel.Mac yang butuh signing).
-async function checkForUpdate(repo) {
+//
+// `token` (poin revisi: repo rilis privat) — fine-grained PAT read-only, scoped CUMA ke 1 repo
+// ini ("Contents: Read-only"), dipakai buat baca /releases/latest yang gak kebaca publik kalau
+// repo-nya privat. Beda risiko dari client_secret OAuth yang dihapus — token ini gak bisa dipakai
+// buat apa pun selain baca metadata rilis repo ini, dan gampang dicabut/diganti dari GitHub
+// Settings kapan pun kalau kecurigaan bocor.
+async function checkForUpdate(repo, token) {
   if (!repo) return { available: false, reason: "GITHUB_REPO belum dikonfigurasi." };
   try {
-    const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`);
+    const res = await fetch(`https://api.github.com/repos/${repo}/releases/latest`, {
+      headers: token ? { Authorization: `Bearer ${token}`, "X-GitHub-Api-Version": "2022-11-28" } : {},
+    });
     if (!res.ok) return { available: false, reason: `GitHub API ${res.status}` };
     const data = await res.json();
     const latest = String(data.tag_name || "").replace(/^v/, "");
