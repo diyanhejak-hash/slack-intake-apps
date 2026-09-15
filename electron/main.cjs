@@ -573,6 +573,26 @@ handle("shell:openSlackMessage", (_e, { channelId, ts }) => openSlack({ channelI
 // ---------- Update check ----------
 handle("update:check", () => checkForUpdate(process.env.GITHUB_REPO, process.env.GITHUB_RELEASES_TOKEN));
 
+// ---------- Saran install Slack Desktop (poin revisi) ----------
+// Cek EKSISTENSI FILE di lokasi install baku Slack per-platform — lebih reliable daripada
+// app.getApplicationInfoForProtocol("slack://...") (perilakunya pas gak ada handler kebukti gak
+// konsisten antar OS di dokumentasi Electron). SENGAJA gak nyimpen/redistribute installer Slack
+// sendiri (lisensi mereka larang redistribusi) — cuma ngarahin ke link download RESMI, di-fetch
+// user langsung dari server Slack pas diklik.
+const SLACK_DOWNLOAD_URL = { darwin: "https://slack.com/downloads/mac", win32: "https://slack.com/downloads/windows" };
+function hasSlackDesktop() {
+  const candidates =
+    process.platform === "darwin"
+      ? ["/Applications/Slack.app"]
+      : process.platform === "win32"
+        ? [path.join(process.env.LOCALAPPDATA || "", "slack", "slack.exe"), path.join(process.env.LOCALAPPDATA || "", "Programs", "slack", "slack.exe")]
+        : [];
+  return candidates.some((p) => { try { return fs.existsSync(p); } catch { return false; } });
+}
+// downloadUrl dihitung di sini (main process, `process.platform` gak ambigu) — bukan di renderer
+// (navigator.platform browser sifatnya deprecated/gak selalu akurat buat deteksi platform native).
+handle("system:hasSlackDesktop", () => ({ installed: hasSlackDesktop(), downloadUrl: SLACK_DOWNLOAD_URL[process.platform] || SLACK_DOWNLOAD_URL.win32 }));
+
 // Only preload calls this after Electron obtains a path from an OS-backed File.
 ipcMain.on("file:grantDrop", (event, file) => {
   try {

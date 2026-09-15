@@ -276,6 +276,12 @@ declare global {
         openExternal: (url: string) => Promise<void>;
         openSlackMessage: (payload: { channelId: string; ts?: string }) => Promise<void>;
       };
+      system: {
+        /** Cek eksistensi file di lokasi install baku Slack Desktop (poin revisi) — dipakai buat
+         * saran "install Slack Desktop" pas pertama kali app dibuka. downloadUrl dihitung di main
+         * process (process.platform gak ambigu, beda dari navigator.platform di renderer). */
+        hasSlackDesktop: () => Promise<{ installed: boolean; downloadUrl: string }>;
+      };
       log: {
         list: (limit?: number) => Promise<LogEntry[]>;
         clear: () => Promise<void>;

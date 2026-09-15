@@ -3,6 +3,7 @@ import type { AuthStatus } from "./global";
 import Login from "./screens/Login";
 import StartMenu from "./screens/StartMenu";
 import MainTable from "./screens/MainTable";
+import SlackDesktopSuggestion from "./screens/SlackDesktopSuggestion";
 
 export default function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
@@ -53,11 +54,18 @@ export default function App() {
     return <Login onLoggedIn={setAuth} />;
   }
 
-  if (!projectId) {
-    return <StartMenu auth={auth} onOpenProject={setProjectId} />;
-  }
-
-  // key={projectId}: paksa remount pas ganti project (mis. abis Save As) biar semua state lokal
-  // (selected, undo stack, drawer, dst) reset bersih — bukan cuma refetch data project-nya.
-  return <MainTable key={projectId} projectId={projectId} onBackToStartMenu={() => setProjectId(null)} onOpenProject={setProjectId} />;
+  return (
+    <>
+      {!projectId ? (
+        <StartMenu auth={auth} onOpenProject={setProjectId} />
+      ) : (
+        // key={projectId}: paksa remount pas ganti project (mis. abis Save As) biar semua state
+        // lokal (selected, undo stack, drawer, dst) reset bersih — bukan cuma refetch data project.
+        <MainTable key={projectId} projectId={projectId} onBackToStartMenu={() => setProjectId(null)} onOpenProject={setProjectId} />
+      )}
+      {/* Poin revisi: saran install Slack Desktop — CUMA muncul setelah login (biar gak ganggu
+          layar Login), non-blocking, sekali doang per komputer. */}
+      <SlackDesktopSuggestion />
+    </>
+  );
 }

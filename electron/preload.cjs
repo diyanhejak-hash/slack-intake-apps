@@ -107,6 +107,9 @@ contextBridge.exposeInMainWorld("api", {
     openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
     openSlackMessage: (payload) => ipcRenderer.invoke("shell:openSlackMessage", payload),
   },
+  system: {
+    hasSlackDesktop: () => ipcRenderer.invoke("system:hasSlackDesktop"),
+  },
   log: {
     list: (limit) => ipcRenderer.invoke("log:list", limit),
     clear: () => ipcRenderer.invoke("log:clear"),
