@@ -20,11 +20,16 @@ const deadline = setTimeout(() => { console.error('Electron smoke timeout'); app
 app.on('browser-window-created', (_event, win) => {
   win.webContents.once('did-finish-load', async () => {
     try {
-      const state = await win.webContents.executeJavaScript(`(async () => ({
-        status: await window.api.auth.status(),
-        body: document.body.innerText,
-        denied: await window.api.project.create({name: 'unauthenticated', channelId: 'CA', channelName: 'a'}).then(() => false, () => true)
-      }))()`);
+      const state = await win.webContents.executeJavaScript(`(async () => {
+        const status = await window.api.auth.status();
+        const denied = await window.api.project.create({name: 'unauthenticated', channelId: 'CA', channelName: 'a'}).then(() => false, () => true);
+        let body = document.body.innerText;
+        for (let i = 0; i < 50 && !/Slack/.test(body); i++) {
+          await new Promise((r) => setTimeout(r, 100));
+          body = document.body.innerText;
+        }
+        return { status, body, denied };
+      })()`);
       assert.equal(state.status.loggedIn, false);
       assert.equal(state.denied, true);
       assert.match(state.body, /Slack/);
