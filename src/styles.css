@@ -1,0 +1,428 @@
+/* Design tokens — poin 8 rancangan: simpel, hierarki jelas, palet terbatas, tanpa gradient/shadow dekoratif */
+:root {
+  --bg: #f7f7f5;
+  --surface: #ffffff;
+  --surface-hover: #fafaf8;
+  --border: #e5e5e1;
+  --border-strong: #d4d4cf;
+  --text: #1a1a18;
+  --text-secondary: #6b6b66;
+  --text-muted: #9b9b95;
+  --accent: #2f6feb;
+  --accent-hover: #2558c4;
+  --accent-soft: #eaf1ff;
+  --success: #16a34a;
+  --success-soft: #eafaf0;
+  --danger: #dc2626;
+  --danger-soft: #fdecec;
+  --warning: #d97706;
+  --warning-soft: #fdf3e3;
+  --radius: 6px;
+  --radius-lg: 10px;
+  --font: -apple-system, "Segoe UI", "Inter", system-ui, sans-serif;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+}
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1 {
+  font-size: 20px;
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+h2 {
+  font-size: 15px;
+  font-weight: 600;
+  margin: 0;
+}
+h3 {
+  font-size: 13px;
+  font-weight: 600;
+  margin: 0;
+}
+.caption {
+  font-size: 12px;
+  color: var(--text-secondary);
+}
+.muted {
+  color: var(--text-muted);
+}
+.label {
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+button {
+  font-family: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 14px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 500;
+  transition: background-color 0.12s ease, border-color 0.12s ease;
+}
+.btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--text-muted);
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.btn-primary:hover {
+  background: var(--accent-hover);
+  border-color: var(--accent-hover);
+}
+.btn-danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.btn-danger:hover {
+  background: #c41f1f;
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius);
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--text-secondary);
+}
+.icon-btn:hover {
+  background: var(--surface-hover);
+  border-color: var(--border);
+  color: var(--text);
+}
+.icon-btn:disabled {
+  opacity: 0.35;
+  cursor: not-allowed;
+}
+.icon-btn:disabled:hover {
+  background: transparent;
+  border-color: transparent;
+}
+
+input,
+select,
+textarea {
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+input:focus,
+select:focus,
+textarea:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+
+.card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+
+/* Kartu reply (poin b2 revisi UI) — container BERBATAS JELAS per field (bukan lagi
+   border-color: transparent), biar user bisa lihat pembatas antar field. Header (drag, judul,
+   checkbox, broadcast, hapus) balik jadi 1 baris di DALAM container yang sama (revert dari
+   split avatar-di-luar-bubble round sebelumnya — instruksi user: "Judul field di baris yang
+   sama dengan button drag-checkbox-dst"). Aksi (checkbox/broadcast/hapus) cuma kelihatan jelas
+   pas hover/lagi kecentang/lagi fokus di dalam card ini. */
+.reply-bubble {
+  background: var(--surface-hover);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.reply-bubble.selected {
+  border-color: var(--accent);
+}
+.reply-bubble.field-drag-over {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+.reply-bubble .reply-actions {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+}
+.reply-bubble:hover .reply-actions,
+.reply-bubble.selected .reply-actions,
+.reply-bubble:focus-within .reply-actions {
+  opacity: 1;
+}
+
+/* Tool text (Bold/Italic/Link/List/dst.) di tiap field cuma nongol pas text area-nya lagi
+   fokus (poin b2 revisi: "klik text area, baru muncul tool text") — :focus-within di WRAPPER
+   spesifik (bukan di .reply-bubble) biar klik judul field di atasnya gak ikut nongolin toolbar,
+   dan tetap kelihatan pas fokus pindah ke salah satu tombol toolbar-nya sendiri (masih
+   descendant wrapper yang sama, gak butuh state JS). */
+.field-toolbar {
+  display: none;
+}
+.field-editor-wrap:focus-within .field-toolbar {
+  display: flex;
+}
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+.badge-new {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.badge-reply {
+  background: var(--warning-soft);
+  color: var(--warning);
+}
+.badge-success {
+  background: var(--success-soft);
+  color: var(--success);
+}
+.badge-error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+}
+th {
+  text-align: left;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+  user-select: none;
+}
+/* Header tabel item (Check/Item/Artis/Reply/...) freeze pas scroll body tabel, plus tint warna
+   brand + center-align (poin B7 — polish visual, ala Command Builder). */
+thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--accent-soft);
+  color: var(--accent);
+  text-align: center;
+}
+td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  text-align: center;
+}
+/* Zebra-stripe tipis (poin B7) — baris genap beda shade dikit biar gampang di-scan mata. */
+tbody tr:nth-child(even) td {
+  background: var(--surface-hover);
+}
+tr:hover td {
+  background: var(--surface-hover);
+}
+/* Overlay "Instant Intake" (poin revisi, Tab Table) — nongol CUMA di cell yang lagi di-cursor
+   (bukan satu row penuh), delay 0.5s sebelum muncul (transition-delay pas :hover, biar gak kedip
+   pas mouse numpang lewat), tapi ilang LANGSUNG (transition-delay 0s) pas mouse keluar. Posisi/
+   warna ada di style inline komponennya sendiri (QuickSendButton.tsx) — kelas ini cuma ngatur
+   visibility. Versi "inline" (Tab Reply) gak pakai kelas ini, ikut hover .reply-actions biasa.*/
+.row-quicksend {
+  opacity: 0;
+  transition: opacity 0.12s ease;
+  pointer-events: none;
+}
+td:hover > .row-quicksend {
+  opacity: 1;
+  transition-delay: 0.5s;
+  pointer-events: auto;
+}
+/* Overlay reaction INSTAN (poin revisi) di Pil Item Tab Reply — pola sama persis kayak Instant
+   Intake, delay 0.5s, cuma hover-zone-nya bukan `td` (pil bukan cell tabel). */
+.pill-hover-zone:hover > .row-quicksend {
+  opacity: 1;
+  transition-delay: 0.5s;
+  pointer-events: auto;
+}
+/* Scale-up dikit pas di-hover (baik variant overlay maupun inline) — feedback tactile kecil,
+   bukan cuma warna doang. */
+.quicksend-btn {
+  transition: transform 0.1s ease;
+}
+.quicksend-btn:hover {
+  transform: scale(1.15);
+}
+
+.placeholder-box {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 32px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-lg);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 999px;
+}
+
+/* Field wajib diisi tapi kosong pas user coba apply — highlight jelas, bukan silent no-op. */
+.input-error {
+  border-color: var(--danger) !important;
+  box-shadow: 0 0 0 3px var(--danger-soft) !important;
+}
+
+/* Editor WYSIWYG Lexical (poin H1) — gantiin textarea polos. */
+.lexical-editor-wrap {
+  position: relative;
+}
+.lexical-content-editable {
+  min-height: 44px;
+  outline: none;
+  font-family: inherit;
+  font-size: 13px;
+  padding: 7px 10px;
+  border-radius: var(--radius);
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+}
+.lexical-content-editable:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+}
+.lexical-placeholder {
+  position: absolute;
+  top: 7px;
+  left: 10px;
+  color: var(--text-muted);
+  pointer-events: none;
+  user-select: none;
+}
+.lexical-content-editable strong {
+  font-weight: 700;
+}
+.lexical-content-editable em {
+  font-style: italic;
+}
+/* Lexical bungkus tiap baris/Enter jadi <p> — browser default margin (~1em) bikin jarak antar
+   baris kegedean DAN teks mulai lebih ke bawah dari posisi placeholder (yang gak punya margin
+   itu). Reset ke 0 biar rapat & align sama placeholder. */
+.lexical-content-editable p {
+  margin: 0;
+}
+.lexical-content-editable ul,
+.lexical-content-editable ol {
+  margin: 4px 0;
+  padding-left: 20px;
+}
+.lexical-content-editable a {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* Tab Table/Reply — gaya boxed/folder: tab aktif nyatu visual sama panel isinya. */
+.folder-tabbar {
+  display: flex;
+  gap: 2px;
+  padding: 8px 10px 0;
+  background: var(--bg);
+}
+.folder-tab {
+  padding: 7px 16px;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: 6px 6px 0 0;
+  background: var(--surface-hover);
+  color: var(--text-secondary);
+  font-weight: 500;
+  font-size: 13px;
+  cursor: pointer;
+  position: relative;
+  top: 1px;
+}
+.folder-tab.active {
+  background: var(--surface);
+  color: var(--text);
+  border-color: var(--border);
+  font-weight: 600;
+}
+.folder-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+}
+
+.spin {
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}

@@ -1,0 +1,317 @@
+const assert = require("node:assert/strict");
+const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
+const vm = require("node:vm");
+const { createRequire } = require("node:module");
+
+const appRoot = path.resolve(__dirname, "..");
+const root = path.resolve(appRoot, "..");
+const temp = fs.mkdtempSync(path.join(os.tmpdir(), "slack-intake-test-"));
+const appData = path.join(temp, "userdata");
+const nativeRequire = createRequire(path.join(appRoot, "package.json"));
+fs.mkdirSync(appData, { recursive: true });
+const { DatabaseSync } = require("node:sqlite");
+const legacyDb = new DatabaseSync(path.join(appData, "slack-intake-apps.db"));
+legacyDb.exec(`CREATE TABLE threads(item_name TEXT PRIMARY KEY, channel_id TEXT NOT NULL, thread_ts TEXT NOT NULL, updated_at TEXT NOT NULL)`);
+legacyDb.prepare(`INSERT INTO threads VALUES(?,?,?,?)`).run("legacy", "CA", "0.001", new Date().toISOString());
+legacyDb.close();
+
+function load(relativePath, mocks) {
+  const filename = path.join(appRoot, relativePath);
+  const module = { exports: {} };
+  vm.runInNewContext(fs.readFileSync(filename, "utf8"), {
+    require: (id) => Object.hasOwn(mocks, id) ? mocks[id] : nativeRequire(id),
+    module, exports: module.exports, Buffer, console, URL, URLSearchParams, process, __dirname: path.dirname(filename), setTimeout, clearTimeout,
+  }, { filename });
+  return module.exports;
+}
+
+const dbModule = load("electron/db.cjs", { electron: { app: { getPath: () => appData } } });
+const { db } = dbModule;
+const projects = load("electron/projects.cjs", { "./db.cjs": dbModule });
+projects.setScope("U-TEST", "T-TEST");
+
+const calls = [];
+const oauthAccessCalls = [];
+let failUpload = false;
+let failPermalink = false;
+let serial = 0;
+class MockSlack {
+  constructor() { this.userPage = 0; this.channelPage = 0; }
+  chat = {
+    postMessage: async (args) => { calls.push(args); return { ts: `${++serial}.000` }; },
+    getPermalink: async () => { if (failPermalink) throw Error("mock permalink failure"); return { permalink: "https://example.invalid/thread" }; },
+  };
+  files = { uploadV2: async (args) => { for (const f of args.file_uploads || []) for await (const _ of f.file) {} if (failUpload) throw Error("mock upload failure"); } };
+  oauth = { v2: { access: async (args) => { oauthAccessCalls.push(args); return { authed_user: { access_token: "xoxp-mock", id: "U-MOCK" }, team: { name: "Mock Team", id: "T-MOCK" } }; } } };
+  users = {
+    list: async () => (++this.userPage === 1
+      ? { members: [{ id: "U1", name: "First" }], response_metadata: { next_cursor: "next" } }
+      : { members: [{ id: "U2", name: "Second" }], response_metadata: { next_cursor: "" } }),
+    conversations: async () => (++this.channelPage === 1
+      ? { channels: [{ id: "CA", name: "First" }], response_metadata: { next_cursor: "next" } }
+      : { channels: [{ id: "CB", name: "Second" }], response_metadata: { next_cursor: "" } }),
+  };
+}
+const slack = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
+const send = (itemName, channelId, posts = []) => slack.sendItem({ token: "MOCK", itemName, threadKey: itemName, channelId, posts });
+
+async function test(name, fn) {
+  await fn();
+  console.log(`PASS: ${name}`);
+}
+
+(async () => {
+  try {
+    await test("legacy thread schema migrates without losing mapping", () => {
+      assert.equal(db.prepare("SELECT thread_ts FROM threads WHERE item_name=? AND channel_id=?").get("legacy", "CA").thread_ts, "0.001");
+      assert.deepEqual(Array.from(db.prepare("PRAGMA table_info(threads)").all().filter((c) => c.pk).map((c) => c.name)), ["item_name", "channel_id"]);
+    });
+    await test("thread mappings remain independent per channel", async () => {
+      const a = await send("same-name", "CA");
+      const b = await send("same-name", "CB");
+      assert.notEqual(a.threadTs, b.threadTs);
+      assert.equal((await send("same-name", "CA")).threadTs, a.threadTs);
+      assert.equal(db.prepare("SELECT count(*) AS n FROM threads WHERE item_name=?").get("same-name").n, 2);
+    });
+    await test("retry reuses root and resumes failed upload", async () => {
+      const file = path.join(temp, "attachment.txt"); fs.writeFileSync(file, "test");
+      const posts = [{ text: "done first" }, { files: [{ path: file, filename: "attachment.txt" }] }];
+      failUpload = true; await assert.rejects(send("partial", "CA", posts));
+      failUpload = false;
+      await assert.rejects(send("partial", "CA", posts), /belum pasti/);
+      slack.resolveAttempt({ threadKey: "partial", channelId: "CA", action: "retry" });
+      await send("partial", "CA", posts);
+      assert.equal(calls.filter((c) => c.text === "*partial*" && !c.thread_ts).length, 1);
+      assert.equal(calls.filter((c) => c.text === "done first").length, 1);
+    });
+    await test("permalink metadata failure does not fail delivery", async () => {
+      failPermalink = true;
+      const result = await send("permalink", "CA", [{ text: "sent" }]);
+      failPermalink = false;
+      assert.equal(result.permalink, undefined);
+    });
+    await test("import rejects path traversal without modifying files", () => {
+      const sentinel = path.join(appData, "sentinel.txt"); fs.writeFileSync(sentinel, "original");
+      assert.throws(() => projects.importProject({ formatVersion: 1, project: { name: "x", channel_id: "CA", channel_name: "a", items: [], files: [{ original_name: "../../../sentinel.txt", dataBase64: "eA==" }] } }));
+      assert.equal(fs.readFileSync(sentinel, "utf8"), "original");
+    });
+    const project = projects.createProject({ name: "test", channelId: "CA", channelName: "audit" });
+    const sourceItem = projects.addItem(project.id, { name: "source" });
+    const targetItem = projects.addItem(project.id, { name: "target" });
+    await test("renamed reply broadcasts by visible category", () => {
+      const source = projects.addReplyWithFiles(sourceItem, { title: "BG", textValue: "source" });
+      const oldTarget = projects.addReplyWithFiles(targetItem, { title: "BG", textValue: "keep" });
+      projects.updateReply(source, { title: "Char" });
+      projects.broadcastReply(source, project.id);
+      assert.equal(db.prepare("SELECT text_value FROM replies WHERE id=?").get(oldTarget).text_value, "keep");
+      assert.equal(db.prepare("SELECT count(*) AS n FROM replies WHERE item_id=? AND category='Char'").get(targetItem).n, 1);
+    });
+    await test("invalid batch update rolls back", () => {
+      projects.saveBatchSections(project.id, [{ id: "old", name: "old", files: [] }]);
+      assert.throws(() => projects.saveBatchSections(project.id, [{ id: "new", name: null, files: [] }]));
+      assert.equal(projects.listBatchSections(project.id)[0].id, "old");
+    });
+    await test("batch apply is idempotent", () => {
+      const file = path.join(temp, "batch.txt"); fs.writeFileSync(file, "batch");
+      projects.saveBatchSections(project.id, [{ id: "section", name: "Assets", files: [{ id: "batch-file", path: file, filename: "batch.txt", connectedItemIds: [sourceItem] }] }]);
+      assert.equal(projects.applyBatchSections(project.id).added, 1);
+      assert.equal(projects.applyBatchSections(project.id).added, 0);
+    });
+    await test("failed broadcast preserves destination attachment", () => {
+      const file = path.join(temp, "broadcast.txt"); fs.writeFileSync(file, "test");
+      const source = projects.addReplyWithFiles(sourceItem, { title: "broadcast", filePaths: [file] });
+      const target = projects.addReplyWithFiles(targetItem, { title: "broadcast", filePaths: [file] });
+      fs.unlinkSync(db.prepare("SELECT stored_path FROM reply_files WHERE reply_id=?").get(source).stored_path);
+      assert.throws(() => projects.broadcastReply(source, project.id));
+      assert.equal(db.prepare("SELECT count(*) AS n FROM reply_files WHERE reply_id=?").get(target).n, 1);
+    });
+    await test("malformed import leaves no partial project", () => {
+      const before = projects.listProjects().length;
+      assert.throws(() => projects.importProject({ formatVersion: 1, project: { name: "broken", channel_id: "CA", channel_name: "a", items: null } }));
+      assert.equal(projects.listProjects().length, before);
+    });
+    await test("Slack lists consume every cursor page", async () => {
+      assert.equal((await slack.listUsers("MOCK")).length, 2);
+      assert.equal((await slack.listChannels("MOCK")).length, 2);
+    });
+    await test("deleting project removes managed attachment", () => {
+      const disposable = projects.createProject({ name: "delete", channelId: "CA", channelName: "audit" });
+      const file = path.join(temp, "delete.txt"); fs.writeFileSync(file, "test");
+      projects.addProjectFiles(disposable.id, [file]);
+      const stored = projects.getProject(disposable.id).files[0].stored_path;
+      projects.deleteProject(disposable.id);
+      assert.equal(fs.existsSync(stored), false);
+    });
+
+    await test("legacy attachment deletion preserves sibling bytes", () => {
+      const legacy = path.join(appData, "attachments", "legacy-owner");
+      fs.mkdirSync(legacy, { recursive: true });
+      for (const id of ["legacy-one", "legacy-two"]) {
+        const file = path.join(legacy, id + ".txt"); fs.writeFileSync(file, id);
+        db.prepare('INSERT INTO project_files(id,project_id,stored_path,original_name,sort_order) VALUES(?,?,?,?,0)').run(id, project.id, file, id + ".txt");
+      }
+      projects.removeProjectFile("legacy-one");
+      assert.equal(fs.readFileSync(path.join(legacy, "legacy-two.txt"), "utf8"), "legacy-two");
+    });
+    await test("failed multi-file addition rolls back reply and attachment rows", () => {
+      const file = path.join(temp, "valid.txt"); fs.writeFileSync(file, "valid");
+      const before = db.prepare('SELECT count(*) AS n FROM replies').get().n;
+      assert.throws(() => projects.addReplyWithFiles(sourceItem, { title: "partial", filePaths: [file, path.join(temp, "missing-file")] }));
+      assert.equal(db.prepare('SELECT count(*) AS n FROM replies').get().n, before);
+    });
+    await test("restore uses main-owned snapshot and keeps the same identity through redo", () => {
+      const id = projects.addItem(project.id, { name: "" });
+      projects.updateItem(id, { name: "Named" }); projects.updateItem(id, { name: "" });
+      projects.removeItem(id);
+      projects.restoreItem({ id, project_id: project.id, files: [{ stored_path: path.join(temp, "secret") }] });
+      projects.updateItem(id, { name: "Named" });
+      const restored = projects.getProject(project.id).items.find(i => i.id === id);
+      assert.equal(restored.name, "Named"); assert.equal(restored.files.length, 0);
+      assert.throws(() => projects.restoreItem({ id: "fabricated", project_id: project.id, files: [] }));
+    });
+    await test("batch survives source removal, import, duplicate, deletion and resync", () => {
+      const bp = projects.createProject({ name: "roundtrip", channelId: "CA", channelName: "audit" });
+      const bi = projects.addItem(bp.id, { name: "batch" });
+      const file = path.join(temp, "roundtrip.txt"); fs.writeFileSync(file, "bytes");
+      projects.saveBatchSections(bp.id, [{ id: "roundtrip-section", name: "Assets", files: [{ id: "roundtrip-file", path: file, filename: "roundtrip.txt", connectedItemIds: [bi] }] }]);
+      projects.applyBatchSections(bp.id); fs.unlinkSync(file);
+      const payload = projects.exportProject(bp.id);
+      const imported = projects.importProject(payload);
+      assert.equal(projects.applyBatchSections(imported).added, 0);
+      const duplicate = projects.duplicateProject(bp.id, "copy");
+      assert.equal(projects.applyBatchSections(duplicate).added, 0);
+      const reply = projects.getProject(bp.id).items[0].replies[0];
+      projects.removeReply(reply.id);
+      assert.equal(projects.applyBatchSections(bp.id).added, 1);
+      const newReply = projects.getProject(bp.id).items[0].replies[0];
+      projects.removeReplyFile(newReply.files[0].id);
+      assert.equal(projects.applyBatchSections(bp.id).added, 1);
+    });
+    await test("cross-account broadcast, batch IDs and silent legacy adoption are rejected", () => {
+      projects.setScope("OTHER", "OTHERTEAM");
+      const foreign = projects.createProject({ name: "foreign", channelId: "CB", channelName: "foreign" });
+      const fi = projects.addItem(foreign.id, { name: "foreign" });
+      const fr = projects.addReplyWithFiles(fi, { title: "Shared", textValue: "unchanged" });
+      projects.saveBatchSections(foreign.id, [{ id: "foreign-section", name: "foreign", files: [] }]);
+      projects.setScope("U-TEST", "T-TEST");
+      const own = projects.addReplyWithFiles(sourceItem, { title: "Shared", textValue: "bad" });
+      assert.throws(() => projects.broadcastReply(own, foreign.id));
+      assert.throws(() => projects.saveBatchSections(project.id, [{ id: "foreign-section", name: "bad", files: [] }]));
+      assert.equal(db.prepare('SELECT text_value FROM replies WHERE id=?').get(fr).text_value, "unchanged");
+      db.prepare('UPDATE projects SET owner_user_id=NULL, owner_team_id=NULL WHERE id=?').run(foreign.id);
+      projects.setScope("U-TEST", "T-TEST", true);
+      assert.equal(projects.ownsProject(foreign.id), false);
+      assert.throws(() => projects.mergeItems([sourceItem, fi]));
+    });
+    await test("token fallback and explicit item identities isolate same-name threads", async () => {
+      const args = { itemName: "collision", channelId: "CA" };
+      const a = await slack.sendItem({ ...args, token: "A" });
+      const b = await slack.sendItem({ ...args, token: "B" });
+      assert.notEqual(a.threadTs, b.threadTs);
+      const c = await slack.sendItem({ ...args, token: "A", threadKey: "project-A/item" });
+      const d = await slack.sendItem({ ...args, token: "A", threadKey: "project-B/item" });
+      assert.notEqual(c.threadTs, d.threadTs);
+      assert.equal(slack.findThreadChannel("project-A/item"), "CA");
+    });
+    await test("uncertain root is not posted twice and can be reconciled", async () => {
+      const original = MockSlack.prototype.constructor;
+      const pendingKey = "uncertain-root";
+      db.prepare('INSERT INTO send_attempts(item_name,channel_id,fingerprint,thread_ts,artist_sent,next_post,updated_at,pending_phase) VALUES(?,?,?,?,0,0,?,?)').run(pendingKey, "CA", "pending", "", new Date().toISOString(), "root");
+      const before = calls.length;
+      await assert.rejects(slack.sendItem({ token: "MOCK", itemName: "uncertain", threadKey: pendingKey, channelId: "CA" }), /belum pasti/);
+      assert.equal(calls.length, before);
+      slack.resolveAttempt({ threadKey: pendingKey, channelId: "CA", action: "received", threadTs: "1234567890.000001" });
+      assert.equal(slack.findThreadInfo(pendingKey).threadTs, "1234567890.000001");
+    });
+    await test("quick-send holds its lock during await and releases it on rejection", async () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
+      let handler, finish;
+      const context = { activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
+        projects: { getProject: () => ({ channel_id: "CA", items: [{ id: "I", name: "item", replies: [] }] }), addLog: () => {} },
+        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+        slack: { findThreadChannel: () => null, sendItem: () => new Promise((_resolve, reject) => { finish = reject; }) } };
+      vm.runInNewContext(quick, context);
+      const first = handler({}, { projectId: "P", itemId: "I", scope: "item" });
+      assert.ok(context.activeSend);
+      await assert.rejects(handler({}, { projectId: "P", itemId: "I", scope: "item" }), /berjalan/);
+      finish(Error("network")); await assert.rejects(first, /network/);
+      assert.equal(context.activeSend, null);
+    });
+
+    await test("OAuth ignores wrong-state callbacks and finishes the legitimate callback", async () => {
+      let callback, authorizeUrl, closed = false;
+      const server = { listen: (_port, _host, fn) => fn(), on: () => {}, close: () => { closed = true; } };
+      const oauth = load("electron/slack.cjs", {
+        "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack },
+        "node:http": { createServer: (fn) => { callback = fn; return server; } },
+      });
+      const promise = oauth.loginWithBrowser({ clientId: "fake", clientSecret: "fake", redirectUri: "http://localhost:3737/callback", port: 3737 }, (url) => { authorizeUrl = url; });
+      await Promise.resolve(); await Promise.resolve();
+      const res = { writeHead: () => res, end: () => res };
+      await callback({ url: "/callback?state=wrong&error=denied" }, res);
+      assert.equal(closed, false);
+      const state = new URL(authorizeUrl).searchParams.get("state");
+      const rejected = assert.rejects(promise, /denied/);
+      await callback({ url: "/callback?state=" + state + "&error=denied" }, res);
+      await rejected; assert.equal(closed, true);
+    });
+
+    await test("login uses PKCE and never sends a client secret to Slack", async () => {
+      const crypto = require("node:crypto");
+      let callback2, authorizeUrl2;
+      const server2 = { listen: (_port, _host, fn) => fn(), on: () => {}, close: () => {} };
+      const oauth2 = load("electron/slack.cjs", {
+        "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack },
+        "node:http": { createServer: (fn) => { callback2 = fn; return server2; } },
+      });
+      // Passing clientSecret here (like a stale caller would) must be a no-op — the function
+      // signature no longer reads it, and it must never reach Slack's token endpoint.
+      const promise2 = oauth2.loginWithBrowser({ clientId: "fake", clientSecret: "should-be-ignored", redirectUri: "http://localhost:3737/callback", port: 3737 }, (url) => { authorizeUrl2 = url; });
+      await Promise.resolve(); await Promise.resolve();
+      const url = new URL(authorizeUrl2);
+      const challenge = url.searchParams.get("code_challenge");
+      assert.equal(url.searchParams.get("code_challenge_method"), "S256");
+      assert.ok(challenge && challenge.length >= 43);
+      assert.equal(authorizeUrl2.includes("client_secret"), false);
+      const state2 = url.searchParams.get("state");
+      const res2 = { writeHead: () => res2, end: () => res2 };
+      const before = oauthAccessCalls.length;
+      await callback2({ url: "/callback?state=" + state2 + "&code=fake-code" }, res2);
+      await promise2;
+      const sent = oauthAccessCalls[oauthAccessCalls.length - 1];
+      assert.equal(oauthAccessCalls.length, before + 1);
+      assert.equal("client_secret" in sent, false);
+      assert.equal(typeof sent.code_verifier, "string");
+      // The verifier Slack received must actually match the challenge published on the
+      // authorize URL (S256), not just be present.
+      assert.equal(crypto.createHash("sha256").update(sent.code_verifier).digest("base64url"), challenge);
+    });
+
+    await test("template application is atomic and undo preserves attachment bytes", () => {
+      const tp = projects.createProject({ name: "template", channelId: "CA", channelName: "test" });
+      const one = projects.addItem(tp.id, { name: "one" }), two = projects.addItem(tp.id, { name: "two" });
+      const template = projects.saveTemplate({ name: "bad", fields: [{ label: "ok" }, { label: {} }] });
+      assert.throws(() => projects.applyTemplate(tp.id, template));
+      assert.equal(projects.getProject(tp.id).items.flatMap(i => i.replies).length, 0);
+      const file = path.join(temp, "undo.txt"); fs.writeFileSync(file, "undo");
+      projects.addItemFiles(two, [file]);
+      const merged = projects.mergeItems([one, two]);
+      const stored = projects.getProject(tp.id).items[0].files[0];
+      projects.removeItemFile(stored.id);
+      assert.equal(fs.existsSync(stored.stored_path), true);
+      projects.unmergeItems(merged.snapshot);
+      assert.equal(projects.getProject(tp.id).items.find(i => i.id === two).files[0].id, stored.id);
+      projects.removeItem(two);
+      projects.releaseUndo(tp.id);
+      assert.equal(fs.existsSync(stored.stored_path), false);
+    });
+  } finally {
+    db.close();
+    assert.equal(path.dirname(path.resolve(temp)), path.resolve(os.tmpdir()));
+    assert.ok(path.basename(temp).startsWith("slack-intake-test-"));
+    fs.rmSync(temp, { recursive: true, force: true });
+  }
+})().catch((error) => { console.error(error); process.exitCode = 1; });

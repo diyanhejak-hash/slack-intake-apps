@@ -1,0 +1,13 @@
+node_modules/
+dist/
+release/
+.env
+data/
+*.db
+*.db-journal
+
+.packaging/
+audit/
+audit-build/
+release-check/
+release-check*/

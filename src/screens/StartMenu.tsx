@@ -1,0 +1,277 @@
+import { useEffect, useState } from "react";
+import { FolderOpen, Plus, Upload, Hash, LogOut, Lock } from "lucide-react";
+import type { AuthStatus, ProjectSummary, SlackChannel, SlackUser } from "../global";
+import ChannelPicker from "./ChannelPicker";
+
+// Sama kayak UX asli Slack pas bikin channel: lowercase & spasi->dash langsung pas ngetik,
+// karakter gak valid ditolak (gak sekadar dibersihin pas submit). Cermin regex server-side
+// di slack.cjs createPrivateChannel, minus trim leading/trailing dash biar gak ganggu user
+// yang masih lagi ngetik.
+function sanitizeChannelInput(raw: string) {
+  return raw.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "");
+}
+
+export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; onOpenProject: (id: string) => void }) {
+  const [legacyCount, setLegacyCount] = useState(0);
+  const [projects, setProjects] = useState<ProjectSummary[]>([]);
+  const [channels, setChannels] = useState<SlackChannel[]>([]);
+  const [users, setUsers] = useState<SlackUser[]>([]);
+  const [showNew, setShowNew] = useState(false);
+  const [mode, setMode] = useState<"existing" | "new-channel">("existing");
+  const [newName, setNewName] = useState("");
+  const [newChannelId, setNewChannelId] = useState("");
+  const [newChannelName, setNewChannelName] = useState("");
+  const [newChannelMembers, setNewChannelMembers] = useState<Set<string>>(new Set());
+  const [loadingChannels, setLoadingChannels] = useState(false);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [updateUrl, setUpdateUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    window.api.project.legacyCount().then(setLegacyCount).catch((err) => setError(err.message));
+    window.api.project.list().then(setProjects).catch((err) => setError(err.message));
+    window.api.update.check().then((result) => {
+      if (result.available && result.url) setUpdateUrl(result.url);
+    }).catch(() => undefined);
+  }, []);
+
+  function openNewProjectForm() {
+    setShowNew(true);
+    setLoadingChannels(true);
+    window.api.slack
+      .listChannels()
+      .then(setChannels)
+      .catch((err) => setError(err.message))
+      .finally(() => setLoadingChannels(false));
+  }
+
+  function switchToNewChannelMode() {
+    setMode("new-channel");
+    if (!users.length) {
+      setLoadingUsers(true);
+      window.api.slack
+        .listUsers()
+        // Diri sendiri (yang login) dihilangkan dari daftar invite — udah otomatis jadi
+        // owner channel pas dibuat, conversations.invite nolak invite diri sendiri
+        // ("cant_invite_self") kalau kecentang.
+        .then((list) => setUsers(list.filter((u) => u.id !== auth.userId)))
+        .catch((err) => setError(err.message))
+        .finally(() => setLoadingUsers(false));
+    }
+  }
+
+  async function createProject() {
+    if (!newName.trim()) return;
+    setError(null);
+    setCreating(true);
+    try {
+      let channelId: string;
+      let channelName: string;
+
+      if (mode === "existing") {
+        const channel = channels.find((c) => c.id === newChannelId);
+        if (!channel) return;
+        channelId = channel.id;
+        channelName = channel.name;
+      } else {
+        if (!newChannelName.trim()) return;
+        const created = await window.api.slack.createChannel({
+          name: newChannelName.trim(),
+          memberIds: Array.from(newChannelMembers),
+        });
+        channelId = created.channelId;
+        channelName = created.name;
+      }
+
+      const project = await window.api.project.create({ name: newName.trim(), channelId, channelName });
+      onOpenProject(project.id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal buat project.");
+    } finally {
+      setCreating(false);
+    }
+  }
+
+  async function handleImport() {
+    const res = await window.api.project.import();
+    if (!res.canceled && res.projectId) onOpenProject(res.projectId);
+  }
+
+  const canSubmit = newName.trim() && (mode === "existing" ? !!newChannelId : newChannelName.trim());
+
+  async function recoverLegacy() {
+    await window.api.project.recoverLegacy();
+    setProjects(await window.api.project.list());
+    setLegacyCount(await window.api.project.legacyCount());
+  }
+
+  return (
+    <div style={{ maxWidth: 640, margin: "0 auto", padding: "48px 24px" }}>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
+        <h1>Slack Intake Apps</h1>
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <span className="caption">
+            {auth.userId} · {auth.team}
+          </span>
+          <button
+            className="icon-btn"
+            title="Logout"
+            onClick={async () => {
+              await window.api.auth.logout();
+              location.reload();
+            }}
+          >
+            <LogOut size={15} />
+          </button>
+        </div>
+      </div>
+
+      {legacyCount > 0 && <button className="btn" onClick={recoverLegacy}>Pulihkan {legacyCount} project lama</button>}
+      {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
+      {!showNew ? (
+        <div style={{ display: "flex", gap: 10, marginBottom: 28 }}>
+          <button className="btn btn-primary" onClick={openNewProjectForm}>
+            <Plus size={15} /> New Project
+          </button>
+          <button className="btn" onClick={handleImport}>
+            <Upload size={15} /> Import Project
+          </button>
+        </div>
+      ) : (
+        <div className="card" style={{ padding: 20, marginBottom: 28 }}>
+          <h2 style={{ marginBottom: 12 }}>New Project</h2>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>
+                Nama Project
+              </div>
+              <input style={{ width: "100%" }} value={newName} onChange={(e) => setNewName(e.target.value)} placeholder="mis. EP05 Batch" />
+            </div>
+
+            <div style={{ display: "flex", gap: 6, marginTop: 4 }}>
+              <button
+                className="btn"
+                style={{ flex: 1, justifyContent: "center", ...(mode === "existing" ? { borderColor: "var(--accent)", color: "var(--accent)" } : {}) }}
+                onClick={() => setMode("existing")}
+              >
+                Pilih Channel
+              </button>
+              <button
+                className="btn"
+                style={{ flex: 1, justifyContent: "center", ...(mode === "new-channel" ? { borderColor: "var(--accent)", color: "var(--accent)" } : {}) }}
+                onClick={switchToNewChannelMode}
+              >
+                <Lock size={13} /> Buat Channel Privat Baru
+              </button>
+            </div>
+
+            {mode === "existing" ? (
+              <div>
+                <div className="label" style={{ marginBottom: 4 }}>
+                  Channel Slack Tujuan
+                </div>
+                <ChannelPicker
+                  channels={channels}
+                  value={newChannelId}
+                  loading={loadingChannels}
+                  onChange={(c) => setNewChannelId(c.id)}
+                />
+              </div>
+            ) : (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div>
+                  <div className="label" style={{ marginBottom: 4 }}>
+                    Nama Channel Baru
+                  </div>
+                  <input
+                    style={{ width: "100%" }}
+                    value={newChannelName}
+                    onChange={(e) => setNewChannelName(sanitizeChannelInput(e.target.value))}
+                    placeholder="mis. ht-ep06 (otomatis di-lowercase, spasi jadi -)"
+                  />
+                </div>
+                <div>
+                  <div className="label" style={{ marginBottom: 4 }}>
+                    Invite Member ({newChannelMembers.size} dipilih)
+                  </div>
+                  {loadingUsers ? (
+                    <span className="caption">Memuat daftar member…</span>
+                  ) : (
+                    <div className="card" style={{ maxHeight: 160, overflow: "auto", padding: 8 }}>
+                      {users.map((u) => (
+                        <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
+                          <input
+                            type="checkbox"
+                            checked={newChannelMembers.has(u.id)}
+                            onChange={(e) => {
+                              setNewChannelMembers((prev) => {
+                                const next = new Set(prev);
+                                e.target.checked ? next.add(u.id) : next.delete(u.id);
+                                return next;
+                              });
+                            }}
+                          />
+                          {u.name}
+                        </label>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+
+            <div style={{ display: "flex", gap: 8, marginTop: 4 }}>
+              <button className="btn btn-primary" onClick={createProject} disabled={!canSubmit || creating}>
+                {creating ? "Membuat…" : "Buat Project"}
+              </button>
+              <button className="btn" onClick={() => setShowNew(false)}>
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="label" style={{ marginBottom: 10 }}>
+        Project Tersimpan
+      </div>
+      {updateUrl && (
+        <button className="btn" style={{ marginBottom: 10 }} onClick={() => window.api.shell.openExternal(updateUrl)}>
+          Update aplikasi tersedia
+        </button>
+      )}
+      {projects.length === 0 ? (
+        <div className="placeholder-box">
+          <FolderOpen size={22} />
+          <span className="caption">Belum ada project. Mulai dari "New Project" di atas.</span>
+        </div>
+      ) : (
+        <div className="card">
+          {projects.map((p) => (
+            <div
+              key={p.id}
+              onClick={() => onOpenProject(p.id)}
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                alignItems: "center",
+                padding: "12px 16px",
+                borderBottom: "1px solid var(--border)",
+                cursor: "pointer",
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 500 }}>{p.name}</div>
+                <div className="caption" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  <Hash size={11} /> {p.channel_name} · diubah {new Date(p.updated_at).toLocaleString("id-ID")}
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
