@@ -12,7 +12,7 @@
 // dari picker reaction — reactions.add WAJIB punya nama, beda dari insert teks reply yang cuma
 // perlu ":value:" doang.
 import { useEffect, useState } from "react";
-import { SmilePlus, X, Loader2 } from "lucide-react";
+import { SmilePlus, Loader2 } from "lucide-react";
 import type { EmojiPreset, ItemReaction } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
 import EmojiPresetModal from "./EmojiPresetModal";
@@ -79,10 +79,12 @@ function ReactionPresetButton({ preset, onClick }: { preset: EmojiPreset; onClic
 // Chip pending cuma nampilin teks (unicode karakter, atau ":nama:" buat custom) — item_reactions
 // gak nyimpen image_path (itu ada di emoji_presets), jadi gak coba nampilin thumbnail PNG di sini
 // biar gak perlu cross-reference-in ulang. ":nama:" doang udah cukup informatif buat antrean.
+// Poin revisi: gak ada tombol X lagi — klik CHIP-nya langsung (seluruh badge) = hapus dari antrean.
 function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove: () => void }) {
   return (
-    <span
-      title={`:${reaction.slack_shortcode}: — pending, dikirim bareng pas "Kirim ke Slack"`}
+    <button
+      onClick={onRemove}
+      title={`:${reaction.slack_shortcode}: — pending, klik buat batal (hapus dari antrean)`}
       style={{
         display: "inline-flex",
         alignItems: "center",
@@ -92,17 +94,25 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
         border: "1px dashed var(--border-strong)",
         background: "var(--surface-hover)",
         fontSize: 13,
+        cursor: "pointer",
       }}
     >
       {reaction.emoji_type === "unicode" ? reaction.emoji_value : `:${reaction.emoji_value}:`}
-      <button onClick={onRemove} title="Batal — hapus dari antrean" style={{ border: "none", background: "none", padding: 0, display: "flex", cursor: "pointer" }}>
-        <X size={10} className="muted" />
-      </button>
-    </span>
+    </button>
   );
 }
 
-export function ItemReactionBar({ projectId, itemId }: { projectId: string; itemId: string }) {
+// `variant`:
+//   - "inline" (default, Tab Reply — sebelah Pil Item) — icon SELALU KELIHATAN + chip pending
+//     sejajar (flow biasa).
+//   - "overlay" (Tab Table, poin revisi) — tombol jadi overlay (posisi sama kayak QuickSendButton
+//     variant "overlay", DI SEBELAH KANAN Instant Intake — left:16, bukan left:-8), cuma nongol
+//     pas hover cell (`.row-quicksend`). Chip pending pindah ke BAWAH (block, bukan sejajar) —
+//     poin revisi "hadirkan hasil input emoji react di bawah input nama item". Ini TETAP jalur
+//     pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
+// `hideButton` (overlay doang) — sembunyiin TOMBOLNYA aja pas cell lagi diedit (poin revisi,
+// sama kayak QuickSendButton), tapi CHIP tetap tampil (di bawah input, gak ganggu proses edit).
+export function ItemReactionBar({ projectId, itemId, variant = "inline", hideButton = false }: { projectId: string; itemId: string; variant?: "inline" | "overlay"; hideButton?: boolean }) {
   const [pending, setPending] = useState<ItemReaction[]>([]);
   const [open, setOpen] = useState(false);
   // Poin revisi: "React semua Item, atau React hanya item ini" — toggle scope SEBELUM milih
@@ -140,32 +150,65 @@ export function ItemReactionBar({ projectId, itemId }: { projectId: string; item
     refresh();
   }
 
+  const scopeToggle = (
+    <div className="card" style={{ display: "flex", gap: 2, padding: 3, marginBottom: 4, width: 200 }}>
+      <button
+        className="btn"
+        style={{ flex: 1, padding: "3px 0", justifyContent: "center", fontSize: 11, ...(scope === "item" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}) }}
+        onClick={() => setScope("item")}
+      >
+        Item ini
+      </button>
+      <button
+        className="btn"
+        style={{ flex: 1, padding: "3px 0", justifyContent: "center", fontSize: 11, ...(scope === "all" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}) }}
+        onClick={() => setScope("all")}
+      >
+        Semua item
+      </button>
+    </div>
+  );
+  const chips = pending.map((r) => <ReactionChip key={r.id} reaction={r} onRemove={() => removePending(r.id)} />);
+
+  if (variant === "overlay") {
+    return (
+      <>
+        {!hideButton && (
+          <button
+            className="row-quicksend quicksend-btn"
+            title="Tambah reaction (antre, dikirim bareng pas Kirim ke Slack) — BUKAN kirim instan"
+            onMouseDown={(e) => e.preventDefault()}
+            onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
+            style={{
+              position: "absolute", top: -8, left: 16, width: 22, height: 22, borderRadius: "50%",
+              background: "var(--accent)", border: "2px solid var(--surface)", color: "#fff",
+              display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
+              cursor: "pointer", zIndex: 2, boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
+            }}
+          >
+            <SmilePlus size={12} />
+          </button>
+        )}
+        {pending.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4 }}>{chips}</div>}
+        {open && (
+          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 16, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
+            {scopeToggle}
+            <ReactionPickerPopover onPick={addPending} style={{ position: "static" }} />
+          </div>
+        )}
+      </>
+    );
+  }
+
   return (
     <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
       <button className="icon-btn" title="Tambah reaction (antre, dikirim bareng pas Kirim ke Slack)" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((v) => !v)}>
         <SmilePlus size={14} />
       </button>
-      {pending.map((r) => (
-        <ReactionChip key={r.id} reaction={r} onRemove={() => removePending(r.id)} />
-      ))}
+      {chips}
       {open && (
         <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
-          <div className="card" style={{ display: "flex", gap: 2, padding: 3, marginBottom: 4, width: 200 }}>
-            <button
-              className="btn"
-              style={{ flex: 1, padding: "3px 0", justifyContent: "center", fontSize: 11, ...(scope === "item" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}) }}
-              onClick={() => setScope("item")}
-            >
-              Item ini
-            </button>
-            <button
-              className="btn"
-              style={{ flex: 1, padding: "3px 0", justifyContent: "center", fontSize: 11, ...(scope === "all" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}) }}
-              onClick={() => setScope("all")}
-            >
-              Semua item
-            </button>
-          </div>
+          {scopeToggle}
           <ReactionPickerPopover onPick={addPending} style={{ position: "static" }} />
         </div>
       )}
@@ -202,11 +245,11 @@ export function InstantReactionOverlay({ projectId, itemId }: { projectId: strin
         style={{
           position: "absolute",
           top: -8,
-          right: -8,
+          left: -8,
           width: 22,
           height: 22,
           borderRadius: "50%",
-          background: "var(--accent)",
+          background: "var(--success)",
           border: "2px solid var(--surface)",
           color: "#fff",
           display: "flex",
@@ -220,7 +263,7 @@ export function InstantReactionOverlay({ projectId, itemId }: { projectId: strin
       >
         {sending ? <Loader2 size={11} className="spin" /> : <SmilePlus size={12} />}
       </button>
-      {open && <ReactionPickerPopover onPick={sendInstant} style={{ top: "calc(100% + 4px)", right: 0 }} />}
+      {open && <ReactionPickerPopover onPick={sendInstant} style={{ top: "calc(100% + 4px)", left: 0 }} />}
     </>
   );
 }

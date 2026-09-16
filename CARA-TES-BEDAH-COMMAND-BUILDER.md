@@ -799,3 +799,40 @@ Checklist manual:
   pilih opsi tanpa ketutupan tombol. Klik keluar → overlay muncul lagi.
 - [ ] **Cell lain gak kepengaruh**: fokus di satu baris, cek baris LAIN overlay-nya tetap normal
   (hover-reveal biasa, gak ikut hilang).
+
+## 28. Emoji react pending di Tab Table + rapiin warna/posisi reaction di Tab Reply (2026-09-16) ✅ (siap dites)
+
+**Tab Table** — overlay Instant Intake di kolom Item sekarang punya TEMAN di sebelah kanannya:
+tombol emoji react baru (biru, `ItemReactionBar` variant `"overlay"`) yang NAMBAH ke antrean
+pending (item_reactions) — BUKAN kirim instan kayak `InstantReactionOverlay`. Hasil chip-nya
+tampil di BAWAH input nama item (block, bukan sejajar), tetap kelihatan walau input lagi
+diedit — cuma tombolnya yang sembunyi (`hideButton`), chip-nya enggak.
+
+**Tab Reply** — 3 rapihan reaction:
+- `InstantReactionOverlay` (pojok Pil Item) warnanya sekarang HIJAU (`var(--success)`, sama kayak
+  semua fitur kirim instan lain — Instant Intake dkk), sebelumnya biru (`var(--accent)`).
+- Posisi `InstantReactionOverlay` pindah ke KIRI pil (`left:-8`), sebelumnya kanan.
+- `ReactionChip` (badge pending di sebelah Pil Item) GAK ADA tombol X lagi — klik chip-nya
+  LANGSUNG (seluruh badge jadi tombol) buat hapus dari antrean.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 25 test
+regresi + smoke test + build) semua lulus.
+**BELUM**: smoke-test manual visual.
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Tab Table — overlay 2 tombol**: hover cell Item → muncul 2 lingkaran (hijau=Instant Intake
+  kiri, biru=emoji react kanan). Klik yang biru → popover emoji + toggle "Item ini"/"Semua item"
+  → pilih emoji → TIDAK kirim ke Slack, cuma nambah chip di bawah input.
+- [ ] **Chip pending kelihatan**: setelah nambah reaction di atas, chip muncul di bawah input nama
+  item (bukan ketutup/ilang), klik chip itu → langsung hilang (hapus dari antrean, gak ada X
+  terpisah).
+- [ ] **Chip tetap kelihatan pas edit**: klik ke input nama item (fokus) → tombol overlay ilang
+  TAPI chip pending yang udah ada tetap kelihatan di bawah.
+- [ ] **Reaction pending beneran kekirim**: kirim item itu ke Slack (lewat cara apa aja) → cek di
+  Slack, reaction emoji itu beneran muncul di pesan.
+- [ ] **Tab Reply — warna & posisi**: hover Pil Item nama → overlay reaction instan sekarang
+  HIJAU dan ada di KIRI pil (bukan kanan, bukan biru).
+- [ ] **Tab Reply — chip tanpa X**: icon SmilePlus di sebelah pil (pending) → tambah reaction →
+  chip muncul TANPA tombol X → klik chip-nya langsung → hilang.

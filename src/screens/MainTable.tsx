@@ -11,6 +11,7 @@ import ChannelPicker from "./ChannelPicker";
 import QuickSendButton from "./QuickSendButton";
 import EmojiPresetModal from "./EmojiPresetModal";
 import EmojiPicker from "./EmojiPicker";
+import { ItemReactionBar } from "./ItemReactions";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
 
 interface UndoCommand {
@@ -604,9 +605,21 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                             if (e.target.value !== item.name) handleRenameItem(item, e.target.value);
                           }}
                         />
-                        {!(editingCell?.itemId === item.id && editingCell.col === "item") && (
-                          <QuickSendButton title="Instant Intake — kirim nama item ini aja (gak ada artis/reply)" onClick={() => quickSend(item.id, "item")} />
-                        )}
+                        {(() => {
+                          const isEditing = editingCell?.itemId === item.id && editingCell.col === "item";
+                          return (
+                            <>
+                              {!isEditing && (
+                                <QuickSendButton title="Instant Intake — kirim nama item ini aja (gak ada artis/reply)" onClick={() => quickSend(item.id, "item")} />
+                              )}
+                              {/* Emoji react — poin revisi: overlay di SAMPING KANAN Instant Intake,
+                                  nambah ke antrean (pending), BUKAN kirim instan. Chip hasilnya
+                                  tampil di bawah input (tetap kelihatan walau lagi diedit — cuma
+                                  TOMBOLnya yang disembunyikan, bukan chip-nya). */}
+                              <ItemReactionBar projectId={projectId} itemId={item.id} variant="overlay" hideButton={isEditing} />
+                            </>
+                          );
+                        })()}
                       </td>
                       <td style={{ position: "relative" }}>
                         <select
