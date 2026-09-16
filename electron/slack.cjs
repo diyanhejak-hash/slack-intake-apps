@@ -103,6 +103,28 @@ function client(token) {
   return new WebClient(token, { retryConfig: { retries: 0 }, rejectRateLimitedCalls: true, timeout: 30 * 60 * 1000 });
 }
 
+// Throttle POSTING MESSAGE per channel (poin revisi, stress-test nemu "we are not displaying
+// some messages sent by this application") — dokumentasi Slack: "apps may post no more than
+// one message per second per channel... If you attempt bursts, there is no guarantee that
+// messages will be stored or displayed to users." Ini BUKAN error 429 biasa (WebClient gak
+// nge-throw, request-nya "sukses" dari sisi API), jadi gak ketangkep sama try/catch — pesannya
+// diam-diam ilang dari sisi user walau app kita nganggep semua berhasil. Fix: paksa jarak
+// MINIMAL antar panggilan chat.postMessage/files.uploadV2 ke channel yang SAMA (per-channel,
+// bukan global — channel lain gak ke-throttle bareng). 1100ms (dikit di atas 1 detik resmi
+// Slack) biar ada buffer, bukan pas-pasan di garis batas. Cuma buat "posting message"
+// (postMessage/uploadV2) — reactions.add beda tier/limit, gak kena masalah yang sama.
+const lastPostedAt = new Map();
+let minPostIntervalMs = 1100;
+// Cuma buat test regresi (poin revisi) — delay real 1.1 detik x puluhan panggilan di test bakal
+// bikin suite lambat banget. Production TETAP 1100ms, test set ke 0/kecil lewat ini.
+function setMinPostIntervalForTests(ms) { minPostIntervalMs = ms; }
+async function paceChannel(channelId) {
+  const last = lastPostedAt.get(channelId) || 0;
+  const wait = last + minPostIntervalMs - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastPostedAt.set(channelId, Date.now());
+}
+
 async function listChannels(token) {
   const c = client(token);
   const channels = [];
@@ -242,6 +264,7 @@ async function sendItem({ token, channelId, itemName, threadKey, artistId, posts
     save();
     async function request(phase, fn) {
       setPending.run(phase, key, channelId);
+      await paceChannel(channelId);
       try {
         const result = await fn();
         return result;
@@ -317,6 +340,7 @@ async function ensureRoot({ token, channelId, itemName, threadKey }) {
     ensureAttemptRow.run(key, channelId, new Date().toISOString());
     setPending.run("root", key, channelId);
     const c = client(token);
+    await paceChannel(channelId);
     let posted;
     try {
       posted = await c.chat.postMessage({ channel: channelId, text: `*${itemName}*` });
@@ -342,6 +366,7 @@ async function sendArtistMention({ token, channelId, threadKey, threadTs, artist
     ensureAttemptRow.run(key, channelId, new Date().toISOString());
     setPending.run("artist", key, channelId);
     const c = client(token);
+    await paceChannel(channelId);
     try {
       await c.chat.postMessage({ channel: channelId, thread_ts: threadTs, text: `<@${artistId}>` });
     } catch (error) {
@@ -382,6 +407,7 @@ async function sendReplies({ token, channelId, threadKey, threadTs, posts = [] }
     save();
     async function request(fn) {
       setPending.run("post", key, channelId);
+      await paceChannel(channelId);
       try {
         return await fn();
       } catch (error) {
@@ -448,4 +474,4 @@ async function createPrivateChannel({ token, name, memberIds = [] }) {
   return { channelId, name: safeName };
 }
 
-module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread };
+module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests };

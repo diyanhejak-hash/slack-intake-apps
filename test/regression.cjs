@@ -56,6 +56,10 @@ class MockSlack {
 }
 const slack = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
 const send = (itemName, channelId, posts = []) => slack.sendItem({ token: "MOCK", itemName, threadKey: itemName, channelId, posts });
+// Pacing per-channel produksi (poin revisi, 1100ms) bakal bikin suite ini lambat banget (puluhan
+// panggilan chat.postMessage ke channel "CA" yang sama di berbagai test) -- dimatiin di sini,
+// diaktifkan lagi sesaat buat test pacing-nya sendiri di bawah.
+slack.setMinPostIntervalForTests(0);
 
 async function test(name, fn) {
   await fn();
@@ -300,6 +304,26 @@ async function test(name, fn) {
       await slack.sendArtistMention({ token: "MOCK", channelId: "CA", threadKey: "phase-item", threadTs: r1.threadTs, artistId: "U1" });
       assert.equal(calls.filter((c) => c.text === "<@U1>" && c.thread_ts === r1.threadTs).length, 1);
       assert.equal(calls.length - before, 2); // 1x root + 1x mention, panggilan ke-2 dua-duanya no-op
+    });
+    await test("paceChannel (poin revisi, stress-test nemu \"pesan gak ditampilkan\") jaga jarak antar post ke channel sama", async () => {
+      // Dokumentasi Slack: max ~1 pesan/detik/channel, lewat itu pesan bisa DIAM-DIAM gak
+      // ditampilkan (bukan error 429 yang ketangkep try/catch). paceChannel maksa jarak minimal
+      // antar chat.postMessage/files.uploadV2 ke channel yang SAMA. Interval di-set kecil (150ms)
+      // di sini doang (default production 1100ms, dimatiin/0 buat test lain di atas) biar gak
+      // bikin suite lambat.
+      slack.setMinPostIntervalForTests(150);
+      try {
+        await slack.ensureRoot({ token: "MOCK", channelId: "CA", itemName: "pace-a", threadKey: "pace-a" });
+        const start = Date.now();
+        await slack.ensureRoot({ token: "MOCK", channelId: "CA", itemName: "pace-b", threadKey: "pace-b" });
+        assert.ok(Date.now() - start >= 130, "panggilan ke-2 ke channel sama harusnya nunggu ~150ms");
+        // Channel BEDA gak ikut ke-throttle bareng -- harusnya balik cepat, gak nunggu.
+        const start2 = Date.now();
+        await slack.ensureRoot({ token: "MOCK", channelId: "CB", itemName: "pace-c", threadKey: "pace-c" });
+        assert.ok(Date.now() - start2 < 100, "channel beda gak boleh ikut ke-throttle");
+      } finally {
+        slack.setMinPostIntervalForTests(0);
+      }
     });
     await test("sendReplies (poin revisi 4-fase) resume abis upload gagal, sama kayak sendItem", async () => {
       const file = path.join(temp, "phase-attach.txt"); fs.writeFileSync(file, "x");

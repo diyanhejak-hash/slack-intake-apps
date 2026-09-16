@@ -1352,3 +1352,41 @@ Checklist manual:
 - [ ] **Unmerge (Ctrl+Z) balik normal**: abis merge yang kepecah di atas → Ctrl+Z → 2 item balik
   terpisah seperti semula, masing-masing field-nya balik ke jumlah file asli (6 dan 7), field
   hasil split gak nyangkut/dobel.
+
+## 41. Pacing per-channel — fix "we are not displaying some messages" pas stress-test (2026-09-16) ✅ (siap dites)
+
+**Bug ketemu pas stress-test user**: kirim banyak item sekaligus → Slack nampilin notif "Due to a
+high volume of activity, we are not displaying some messages sent by this application." Ini
+PERSIS sesuai dokumentasi resmi Slack (https://docs.slack.dev/apis/web-api/rate-limits/, bagian
+"Limits when posting messages"): **maksimal ~1 pesan/detik/channel** — lewat itu, pesan bisa
+DIAM-DIAM gak ditampilkan ke user, BUKAN error 429 biasa yang ketangkep try/catch (API-nya tetap
+balikin "sukses"). Fase "root" di pipeline 4-fase (poin revisi §38) yang paling rawan — nge-post
+pesan utama SEMUA item terpilih back-to-back tanpa jeda sama sekali.
+
+**Fix**: `paceChannel(channelId)` (slack.cjs) — maksa jarak MINIMAL 1100ms antar
+`chat.postMessage`/`files.uploadV2` ke channel yang SAMA (per-channel, channel lain gak
+ke-throttle bareng). Dipasang di SEMUA titik posting pesan: `sendItem` (send:quick/Instant
+Intake) DAN `ensureRoot`/`sendArtistMention`/`sendReplies` (send:start 4-fase) — bukan cuma yang
+baru, tapi nutup celah yang udah ada dari awal juga. Reaction (`reactions.add`) TIDAK ikut
+di-pace — beda endpoint/tier limit, gak kena gejala yang sama.
+
+**Konsekuensi UX**: kirim banyak item sekaligus sekarang PASTI lebih lambat dari sebelumnya
+(sengaja) — worst case ~1.1 detik per langkah posting pesan. Progress text per-fase (§38) tetap
+jalan normal nunjukin lagi ngapain, jadi kelihatan "kerja", bukan "macet".
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 35 test regresi lulus (nambah 1 test baru
+— verifikasi 2 post ke channel SAMA jaraknya ≥130ms, TAPI channel BEDA gak ikut ke-throttle;
+interval di-set kecil di test ini doang biar suite tetap cepat ~0.7 detik total, production tetap
+1100ms), `vite build` bersih.
+**BELUM**: smoke-test manual visual — stress-test beneran kirim banyak item ke Slack asli.
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Stress-test gak kena notif lagi**: pilih banyak item sekaligus (10+) → "Kirim ke Slack" →
+  amati channel Slack-nya selama proses → TIDAK muncul lagi notif "we are not displaying some
+  messages..." di channel itu.
+- [ ] **Semua pesan beneran nongol**: abis proses kelar, scroll channel Slack-nya → jumlah
+  thread/pesan yang muncul SESUAI jumlah item yang dikirim, gak ada yang "hilang diam-diam".
+- [ ] **Instant Intake tetap kerasa instan buat 1 item**: klik Instant Intake 1 item — tetap
+  cepat kayak biasa (pacing cuma berasa kalau ngirim BANYAK ke channel yang sama beruntun).
