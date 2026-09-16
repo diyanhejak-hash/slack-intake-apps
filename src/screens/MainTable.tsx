@@ -588,38 +588,39 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                         {index + 1}
                       </td>
                       <td style={{ position: "relative" }}>
-                        <input
-                          // key ikut item.name: input uncontrolled (defaultValue) gak update
-                          // sendiri kalau nilainya berubah dari LUAR (merge/bulk-paste/undo) —
-                          // React reuse DOM node yang sama karena item.id gak berubah, jadi
-                          // defaultValue lama nyangkut sampai remount. Paksa remount kalau nama
-                          // berubah dari luar, ini bug yang dilaporkan ("baru kelihatan bener
-                          // setelah reopen project").
-                          key={`${item.id}:${item.name}`}
-                          defaultValue={item.name}
-                          placeholder="Nama item…"
-                          style={{ border: "1px solid var(--border)", borderRadius: 4, background: "transparent", width: "100%", padding: "4px 6px", cursor: "pointer" }}
-                          onFocus={() => setEditingCell({ itemId: item.id, col: "item" })}
-                          onBlur={(e) => {
-                            setEditingCell((c) => (c?.itemId === item.id && c.col === "item" ? null : c));
-                            if (e.target.value !== item.name) handleRenameItem(item, e.target.value);
-                          }}
-                        />
-                        {(() => {
-                          const isEditing = editingCell?.itemId === item.id && editingCell.col === "item";
-                          return (
-                            <>
-                              {!isEditing && (
-                                <QuickSendButton title="Instant Intake — kirim nama item ini aja (gak ada artis/reply)" onClick={() => quickSend(item.id, "item")} />
-                              )}
-                              {/* Emoji react — poin revisi: overlay di SAMPING KANAN Instant Intake,
-                                  nambah ke antrean (pending), BUKAN kirim instan. Chip hasilnya
-                                  tampil di bawah input (tetap kelihatan walau lagi diedit — cuma
-                                  TOMBOLnya yang disembunyikan, bukan chip-nya). */}
-                              <ItemReactionBar projectId={projectId} itemId={item.id} variant="overlay" hideButton={isEditing} />
-                            </>
-                          );
-                        })()}
+                        {/* Kolom Item dibagi 2 (poin revisi) kalau ada reaction pending — input
+                            flex:1 (nyusut sendiri), chip reaction nempel di KANAN input dalam 1
+                            baris (bukan di bawah lagi). ItemReactionBar sendiri yang nge-render
+                            chip-nya (in-flow, jadi flex item alami) — tombol+popover-nya TETAP
+                            absolute (gak kepengaruh flex, resolve ke <td> ini). */}
+                        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                          <input
+                            // key ikut item.name: input uncontrolled (defaultValue) gak update
+                            // sendiri kalau nilainya berubah dari LUAR (merge/bulk-paste/undo) —
+                            // React reuse DOM node yang sama karena item.id gak berubah, jadi
+                            // defaultValue lama nyangkut sampai remount. Paksa remount kalau nama
+                            // berubah dari luar, ini bug yang dilaporkan ("baru kelihatan bener
+                            // setelah reopen project").
+                            key={`${item.id}:${item.name}`}
+                            defaultValue={item.name}
+                            placeholder="Nama item…"
+                            style={{ border: "1px solid var(--border)", borderRadius: 4, background: "transparent", flex: 1, minWidth: 0, padding: "4px 6px", cursor: "pointer" }}
+                            onFocus={() => setEditingCell({ itemId: item.id, col: "item" })}
+                            onBlur={(e) => {
+                              setEditingCell((c) => (c?.itemId === item.id && c.col === "item" ? null : c));
+                              if (e.target.value !== item.name) handleRenameItem(item, e.target.value);
+                            }}
+                          />
+                          <ItemReactionBar
+                            projectId={projectId}
+                            itemId={item.id}
+                            variant="overlay"
+                            hideButton={editingCell?.itemId === item.id && editingCell.col === "item"}
+                          />
+                        </div>
+                        {!(editingCell?.itemId === item.id && editingCell.col === "item") && (
+                          <QuickSendButton title="Instant Intake — kirim nama item ini aja (gak ada artis/reply)" onClick={() => quickSend(item.id, "item")} />
+                        )}
                       </td>
                       <td style={{ position: "relative" }}>
                         <select

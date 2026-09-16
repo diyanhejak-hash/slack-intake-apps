@@ -79,7 +79,8 @@ function ReactionPresetButton({ preset, onClick }: { preset: EmojiPreset; onClic
 // Chip pending cuma nampilin teks (unicode karakter, atau ":nama:" buat custom) — item_reactions
 // gak nyimpen image_path (itu ada di emoji_presets), jadi gak coba nampilin thumbnail PNG di sini
 // biar gak perlu cross-reference-in ulang. ":nama:" doang udah cukup informatif buat antrean.
-// Poin revisi: gak ada tombol X lagi — klik CHIP-nya langsung (seluruh badge) = hapus dari antrean.
+// Poin revisi: gak ada tombol X lagi — klik CHIP-nya langsung (seluruh badge) = hapus dari
+// antrean. Poin revisi lagi: gak ada border/background lagi — cukup tampilin react-nya doang.
 function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove: () => void }) {
   return (
     <button
@@ -88,12 +89,10 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
       style={{
         display: "inline-flex",
         alignItems: "center",
-        gap: 3,
-        padding: "2px 5px",
-        borderRadius: 999,
-        border: "1px dashed var(--border-strong)",
-        background: "var(--surface-hover)",
-        fontSize: 13,
+        border: "none",
+        background: "none",
+        padding: 2,
+        fontSize: 15,
         cursor: "pointer",
       }}
     >
@@ -107,11 +106,12 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
 //     sejajar (flow biasa).
 //   - "overlay" (Tab Table, poin revisi) — tombol jadi overlay (posisi sama kayak QuickSendButton
 //     variant "overlay", DI SEBELAH KANAN Instant Intake — left:16, bukan left:-8), cuma nongol
-//     pas hover cell (`.row-quicksend`). Chip pending pindah ke BAWAH (block, bukan sejajar) —
-//     poin revisi "hadirkan hasil input emoji react di bawah input nama item". Ini TETAP jalur
+//     pas hover cell (`.row-quicksend`). Chip pending di-render IN-FLOW (bukan absolute) — caller
+//     (MainTable.tsx) yang bungkus <input>+komponen ini dalam satu flex row, jadi chip otomatis
+//     nempel di KANAN input (poin revisi: "kolom Item dibagi 2 kalau ada react"). Ini TETAP jalur
 //     pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
 // `hideButton` (overlay doang) — sembunyiin TOMBOLNYA aja pas cell lagi diedit (poin revisi,
-// sama kayak QuickSendButton), tapi CHIP tetap tampil (di bawah input, gak ganggu proses edit).
+// sama kayak QuickSendButton), tapi CHIP tetap tampil (gak ganggu proses edit).
 export function ItemReactionBar({ projectId, itemId, variant = "inline", hideButton = false }: { projectId: string; itemId: string; variant?: "inline" | "overlay"; hideButton?: boolean }) {
   const [pending, setPending] = useState<ItemReaction[]>([]);
   const [open, setOpen] = useState(false);
@@ -189,7 +189,10 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             <SmilePlus size={12} />
           </button>
         )}
-        {pending.length > 0 && <div style={{ display: "flex", flexWrap: "wrap", gap: 3, marginTop: 4 }}>{chips}</div>}
+        {/* In-flow (BUKAN absolute) — sengaja, biar jadi flex item alami di samping <input> pas
+            dibungkus flex row sama caller (poin revisi: "kolom Item dibagi 2 kalau ada react",
+            chip di KANAN input, bukan di bawah lagi). */}
+        {pending.length > 0 && <div style={{ display: "flex", flexShrink: 0, gap: 3 }}>{chips}</div>}
         {open && (
           <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 16, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
             {scopeToggle}

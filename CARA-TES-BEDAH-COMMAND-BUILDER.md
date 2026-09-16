@@ -836,3 +836,29 @@ Checklist manual:
   HIJAU dan ada di KIRI pil (bukan kanan, bukan biru).
 - [ ] **Tab Reply — chip tanpa X**: icon SmilePlus di sebelah pil (pending) → tambah reaction →
   chip muncul TANPA tombol X → klik chip-nya langsung → hilang.
+
+## 29. Chip react di Tab Table pindah ke SAMPING input (bukan bawah), chip polos tanpa border (2026-09-16) ✅ (siap dites)
+
+**Kolom Item dibagi 2 kalau ada react** — chip reaction pending di Tab Table (§28) sebelumnya
+tampil di BAWAH input nama item (block, dorong tinggi row). Sekarang pindah jadi SEJAJAR di
+KANAN input dalam satu baris (flex row: input `flex:1` nyusut sendiri, chip nempel di ujung
+kanan) — cuma kepake kalau emang ADA reaction pending; kalau kosong, input tetap penuh 1 kolom.
+
+**Chip polos** — `ReactionChip` (dipakai di Tab Table DAN Tab Reply, komponen sama) sebelumnya
+pil dengan border putus-putus + background. Sekarang polos — border/background dihapus, cuma
+tampilin emoji/`:nama:`-nya doang, tetap bisa diklik buat hapus (title tooltip tetap ada).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 25 test
+regresi + smoke test + build) semua lulus.
+**BELUM**: smoke-test manual visual.
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Chip di samping, bukan bawah**: tambah reaction pending ke suatu item (Tab Table) → chip
+  muncul SEJAJAR di kanan input nama item (row height GAK berubah/tinggi kayak biasa), bukan di
+  baris baru di bawahnya.
+- [ ] **Input nyusut wajar**: kolom Item yang ada chip-nya, input-nya keliatan lebih sempit dikit
+  (ngasih tempat buat chip), bukan ketutupan/ke-push keluar kolom.
+- [ ] **Chip polos**: chip reaction (di Tab Table MAUPUN Tab Reply) sekarang TANPA border
+  putus-putus/background pil — cuma emoji-nya doang, masih bisa diklik buat hapus.
