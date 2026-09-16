@@ -79,7 +79,10 @@
       "icon": "Asset/HB5_new.png"
     },
     "mac": {
-      "target": "dmg",
+      "target": {
+        "target": "dmg",
+        "arch": ["x64", "arm64"]
+      },
       "identity": null,
       "icon": "Asset/HB5_new.png"
     }
