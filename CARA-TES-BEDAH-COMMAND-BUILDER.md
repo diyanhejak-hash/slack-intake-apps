@@ -1456,3 +1456,32 @@ Checklist manual:
 - [ ] **Tambah PNG baru lewat "Kelola preset..."**: di popover emoji yang sama, klik "Kelola
   preset..." → tambah custom emoji baru (upload PNG) → tutup → buka lagi popovernya → emoji baru
   itu muncul di grid, bisa dipilih buat artis ini.
+
+## 44. Bulk Paste Artis: nickname prefill + match (2026-09-16) ✅ (siap dites)
+
+**Bug ketemu**: prefill kolom Artis di Bulk Paste nampilin `item.artist_name` (username Slack
+asli — nickname CUMA tampilan dropdown, gak pernah tersimpan ke situ). Kalau user gak ubah
+apa-apa dari prefill itu dan klik Terapkan, matching-nya (exact-match ke username doang) bisa
+`match` normal KARENA prefill-nya emang username — tapi begitu kolom tabel Artis sendiri UDAH
+nampilin nickname (beda dari prefill), user gampang ke-mind kalau nickname itu "nilai yang
+benar" buat di-paste ulang, padahal exact-match lama nolak nickname.
+
+**Fix**: prefill sekarang ambil nickname (dari preset artis) dulu, fallback ke username. Matching
+pas "Terapkan" juga diupdate — cocok ke NICKNAME ATAU username (bukan username doang), jadi nilai
+yang di-prefill/di-paste "apa adanya" langsung kepake, gak silent-skip.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 37 test regresi lulus (gak ada perubahan
+backend), `vite build` bersih.
+**BELUM**: smoke-test manual visual.
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Prefill nickname**: kasih 1 artis nickname di Preset Artis → assign ke 1 item → klik
+  header kolom Artis (bulk paste) → baris item itu di textarea nampilin NICKNAME-nya, bukan
+  username Slack asli.
+- [ ] **Terapkan tanpa ubah apa-apa = gak silent-skip**: buka Bulk Paste Artis → LANGSUNG klik
+  Terapkan tanpa ngedit apa pun → assignment artis TETAP SAMA kayak sebelumnya (gak ke-lepas /
+  ilang), bukti nickname ke-match bener.
+- [ ] **Paste username manual juga tetap jalan**: ganti 1 baris pakai username Slack asli (bukan
+  nickname) → Terapkan → assignment ke-apply ke artis yang bener.
