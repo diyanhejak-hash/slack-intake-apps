@@ -32,6 +32,11 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
   // update.check yang butuh internet/GitHub API (bisa gagal kalau offline) — ini murni lokal,
   // jadi user SELALU bisa liat versi yang lagi jalan, terlepas dari ada update baru atau gak.
   const [version, setVersion] = useState<string | null>(null);
+  // Papan status HB Apps (poin revisi, hasil diskusi rate-limit) — modal opsional, SEKALI per
+  // proses app (main.cjs yang nentuin, bukan state lokal — biar gak nongol lagi kalau user
+  // navigasi keluar-masuk Start Menu dalam sesi yang sama).
+  const [showHbModal, setShowHbModal] = useState(false);
+  const [hbBusy, setHbBusy] = useState(false);
 
   useEffect(() => {
     window.api.project.legacyCount().then(setLegacyCount).catch((err) => setError(err.message));
@@ -40,6 +45,7 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
     window.api.update.check().then((result) => {
       if (result.available && result.url) setUpdateUrl(result.url);
     }).catch(() => undefined);
+    window.api.hbStatus.shouldShowModal().then(setShowHbModal).catch(() => undefined);
   }, []);
 
   function openNewProjectForm() {
@@ -119,6 +125,20 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
     if (!confirm(`Hapus project "${name}"? Ini gak bisa dibatalkan.`)) return;
     await window.api.project.delete(id);
     setProjects((prev) => prev.filter((p) => p.id !== id));
+  }
+
+  async function goOnline() {
+    setHbBusy(true);
+    try {
+      await window.api.hbStatus.goOnline();
+    } finally {
+      setHbBusy(false);
+      setShowHbModal(false);
+    }
+  }
+  async function skipHbModal() {
+    setShowHbModal(false);
+    await window.api.hbStatus.skip();
   }
 
   return (
@@ -298,6 +318,27 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
               </button>
             </div>
           ))}
+        </div>
+      )}
+
+      {showHbModal && (
+        <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div className="card" style={{ padding: 16, width: 360, background: "var(--surface)" }}>
+            <h3 style={{ marginBottom: 8 }}>Mulai Sesi Bersama HB Apps</h3>
+            <p className="caption" style={{ marginBottom: 12 }}>
+              Kasih tau Koor lain kalau kamu lagi pakai app ini — biar bisa saling koordinasi
+              (kirim bareng bisa rebutan rate-limit Slack) lewat channel <code>sia-status</code>.
+              Opsional, boleh dilewati.
+            </p>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-primary" style={{ flex: 1, justifyContent: "center" }} disabled={hbBusy} onClick={goOnline}>
+                {hbBusy ? "Mengirim…" : "Mulai Sesi"}
+              </button>
+              <button className="btn" disabled={hbBusy} onClick={skipHbModal}>
+                Lewati
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>

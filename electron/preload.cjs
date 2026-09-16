@@ -119,6 +119,16 @@ contextBridge.exposeInMainWorld("api", {
   app: {
     version: () => ipcRenderer.invoke("app:version"),
   },
+  hbStatus: {
+    shouldShowModal: () => ipcRenderer.invoke("hbStatus:shouldShowModal"),
+    goOnline: () => ipcRenderer.invoke("hbStatus:goOnline"),
+    skip: () => ipcRenderer.invoke("hbStatus:skip"),
+    onClosing: (cb) => {
+      const listener = () => cb();
+      ipcRenderer.on("hbStatus:closing", listener);
+      return () => ipcRenderer.removeListener("hbStatus:closing", listener);
+    },
+  },
   shell: {
     openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
     openSlackMessage: (payload) => ipcRenderer.invoke("shell:openSlackMessage", payload),

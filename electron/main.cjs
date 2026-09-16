@@ -22,6 +22,7 @@ const authStore = require("./auth-store.cjs");
 const slack = require("./slack.cjs");
 const projects = require("./projects.cjs");
 const { checkForUpdate } = require("./updater.cjs");
+const hbStatus = require("./hbStatus.cjs");
 
 const isDev = !!process.env.VITE_DEV;
 const { pathToFileURL } = require("node:url");
@@ -57,6 +58,13 @@ let tray = null;
 let cancelRequested = false;
 let activeSend = null;
 let authenticating = false;
+// Papan status HB Apps (poin revisi) — isOnline TRUE cuma kalau user klik "Mulai Sesi" di modal
+// Start Menu (bisa di-skip, opsional). sessionModalShown biar modal cuma nongol SEKALI per
+// proses app (bukan tiap balik ke Start Menu dari dalam project — itu navigasi SPA, bukan
+// launch baru), gak ke-reset selama app-nya masih jalan.
+let hbOnline = false;
+let sessionModalShown = false;
+let hbQuitting = false;
 
 // Windows grouping taskbar/notifikasi berdasarkan AppUserModelID, bukan cuma nama proses —
 // tanpa ini, Windows kadang nge-grup sebagai "Electron" generik (shared sama app Electron lain
@@ -203,6 +211,28 @@ function createWindow() {
   // X = benar-benar tutup app. Minimize (-) = perilaku normal Windows (tetap di taskbar,
   // klik buat balikin) — BUKAN hide-to-tray. Tray icon tetap ada buat akses cepat/Keluar,
   // terpisah dari tombol minimize (poin 6, tapi gak nyulik tombol minimize bawaan OS).
+
+  // Papan status HB Apps (poin revisi) — kalau user PERNAH online (klik "Mulai Sesi"), pas
+  // ditutup: tahan close-nya sebentar, kasih tau renderer buat nampilin modal "Menutup sesi..."
+  // (loading = proses kirim pesan Offline ini), baru bener-bener ditutup. Kalau user gak pernah
+  // online (skip modal-nya), close jalan normal tanpa hambatan/pesan sama sekali. Timeout 5
+  // detik jaga-jaga (network lambat/mati) — app TETAP ditutup abis itu walau pesan belum kekirim.
+  win.on("close", (e) => {
+    if (!hbOnline || hbQuitting) return;
+    e.preventDefault();
+    hbQuitting = true;
+    win?.webContents.send("hbStatus:closing");
+    (async () => {
+      try {
+        await Promise.race([
+          hbStatus.postStatus(slack, currentToken(), ":yawning_face: Offline"),
+          new Promise((resolve) => setTimeout(resolve, 5000)),
+        ]);
+      } finally {
+        win?.destroy();
+      }
+    })();
+  });
 }
 
 function createTray() {
@@ -502,6 +532,12 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
 
     openSlack({ channelId: targetChannelId });
 
+    // Papan status HB Apps (poin revisi, himbauan MUTLAK — jalan terlepas dari user klik
+    // "Mulai Sesi"/skip pas Start Menu) — kasih tau user lain kalau lagi ada job jalan, biar
+    // gak rebutan rate-limit workspace bareng (reactions.add dkk berbagi kuota per-workspace).
+    const estimateMinutes = hbStatus.estimateSendMinutes({ targets, scope, assignMode: projects.getArtistAssignMode(), presetByMember, projects });
+    await hbStatus.postStatus(slack, token, `Eksekusi ${targets.length} job, estimasi ${estimateMinutes} menit`);
+
     const itemState = new Map(targets.map((item) => [item.id, {}]));
     async function runPass(phase, label, fn) {
       for (let i = 0; i < targets.length; i++) {
@@ -603,6 +639,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
 
     const okCount = results.filter((r) => r.status === "berhasil").length;
   projects.addLog("info", `Kirim selesai (${project.name}): ${okCount}/${results.length} berhasil.`);
+  await hbStatus.postStatus(slack, token, "Job selesai");
   if (Notification.isSupported()) {
     new Notification({
       title: "Slack Intake Apps",
@@ -701,6 +738,19 @@ handle("update:check", () => checkForUpdate(process.env.GITHUB_REPO, process.env
 // (bisa gagal/reason kalau offline). Ini murni baca app.getVersion() lokal, jadi user SELALU
 // bisa liat versi yang lagi jalan walau lagi gak ada koneksi.
 handle("app:version", () => app.getVersion());
+
+// ---------- Papan status HB Apps (poin revisi, hasil diskusi rate-limit) ----------
+// Modal "Mulai Sesi Bersama HB Apps" — opsional, SEKALI per proses app. "Lewati" cuma nutup
+// modalnya (hbOnline TETAP false, gak ada pesan Online DAN gak ada pesan Offline pas app
+// ditutup nanti) — beda dari post status "Eksekusi job"/"Job selesai" pas kirim, yang WAJIB
+// jalan terlepas dari status online/skip ini (himbauan mutlak, lihat send:start).
+handle("hbStatus:shouldShowModal", () => !sessionModalShown);
+handle("hbStatus:goOnline", async () => {
+  sessionModalShown = true;
+  hbOnline = true;
+  await hbStatus.postStatus(slack, currentToken(), ":raised_hands: Online");
+});
+handle("hbStatus:skip", () => { sessionModalShown = true; });
 
 // ---------- Saran install Slack Desktop (poin revisi) ----------
 // Cek EKSISTENSI FILE di lokasi install baku Slack per-platform — lebih reliable daripada

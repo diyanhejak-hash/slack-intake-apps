@@ -1485,3 +1485,57 @@ Checklist manual:
   ilang), bukti nickname ke-match bener.
 - [ ] **Paste username manual juga tetap jalan**: ganti 1 baris pakai username Slack asli (bukan
   nickname) → Terapkan → assignment ke-apply ke artis yang bener.
+
+## 45. Papan status "HB Apps" — channel sia-status buat Online/Offline/Eksekusi job (2026-09-16) ✅ (siap dites)
+
+**Fitur baru** (hasil diskusi rate-limit — `reactions.add` berbagi kuota per-workspace-per-app,
+BUKAN per-channel, jadi 2+ Koor kirim bersamaan bisa gak sadar rebutan). Solusinya: 1 channel
+Slack biasa (`sia-status`) jadi papan pengumuman, biar user lain tau & bisa koordinasi manual
+lewat DM Slack — TANPA server/infrastruktur baru sama sekali, murni numpang channel + token yang
+udah ada.
+
+**Alur:**
+1. Buka app → modal "Mulai Sesi Bersama HB Apps" (SEKALI per proses app, opsional — bisa
+   "Lewati"). Klik "Mulai Sesi" → post `:raised_hands: Online` ke channel `sia-status`.
+2. Klik "Kirim ke Slack" (tombol batch, BUKAN Instant Intake) → **wajib** post
+   `Eksekusi {N} job, estimasi {M} menit` — jalan terlepas dari status Online/Lewati di atas
+   (himbauan mutlak ke semua member). Estimasi-nya REAL, ngikutin pacing 4-fase yang beneran
+   jalan (bukan tebakan kasar).
+3. Abis proses selesai → post `Job selesai` (mandatory juga, teks polos tanpa ringkasan).
+4. Tutup app: kalau sesi ini PERNAH online → modal "Menutup sesi..." (loading) nongol, post
+   `:yawning_face: Offline` (timeout 5 detik jaga-jaga), BARU app bener-bener ketutup. Kalau gak
+   pernah online (skip modal-nya), app ketutup normal tanpa hambatan/pesan apa pun.
+
+**Channel ditemukan lewat NAMA** (`sia-status`, di-scan dari daftar channel yang token bisa lihat)
+— bukan ID hardcode (beda tiap workspace), di-cache 1x per proses app. Kalau channel gak ketemu
+(belum dibikin, dsb), SEMUA fungsi status ini diam-diam skip (best-effort, gak pernah nge-block
+alur utama — login/kirim/tutup app tetap jalan normal walau papan status gagal).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 42 test regresi lulus (5 test baru: cari
+channel by nama + cache, best-effort gak throw pas channel/post gagal, estimasi menit akurat
+ngikutin pacing — termasuk skala buat banyak item, bukan kebetulan pembulatan 1 menit), `vite
+build` bersih.
+**BELUM**: smoke-test manual visual — WAJIB channel `sia-status` beneran dibikin dulu di
+workspace sebelum bisa dites penuh.
+
+Checklist manual:
+
+- [ ] **Restart app dulu. Bikin channel `sia-status` dulu di workspace** (nama PERSIS itu).
+- [ ] **Modal muncul sekali**: buka app → modal "Mulai Sesi" muncul. Klik "Lewati" → balik ke
+  Start Menu → navigasi ke project lalu balik lagi ke Start Menu → modal TIDAK muncul lagi.
+- [ ] **Klik "Mulai Sesi" beneran post ke channel**: klik tombol itu → cek channel `sia-status`
+  di Slack → muncul pesan `:raised_hands: Online` dari akun kamu.
+- [ ] **Kirim job selalu lapor, meski skip modal**: restart app → skip modal "Mulai Sesi" → tetap
+  klik "Kirim ke Slack" (bukan Instant Intake) → channel `sia-status` TETAP dapet pesan
+  "Eksekusi N job, estimasi M menit" walau kamu gak pernah "online".
+- [ ] **Estimasi masuk akal**: bandingin angka menit di pesan itu sama waktu beneran yang
+  kepake buat proses selesai — harusnya deket (estimasi berbasis pacing asli, bukan ngasal).
+- [ ] **"Job selesai" muncul abis proses kelar**.
+- [ ] **Offline pas tutup app (kalau online)**: klik "Mulai Sesi" dulu → tutup app (klik X) →
+  modal "Menutup sesi..." muncul sebentar → app ketutup → cek channel, ada pesan
+  `:yawning_face: Offline`.
+- [ ] **Gak ada Offline kalau gak pernah online**: buka app baru → skip modal "Mulai Sesi" →
+  tutup app langsung (klik X) → app ketutup LANGSUNG tanpa modal "Menutup sesi", DAN channel
+  `sia-status` gak dapet pesan Offline apa pun.
+- [ ] **Instant Intake TIDAK ikut lapor**: klik tombol Instant Intake (bukan "Kirim ke Slack") →
+  channel `sia-status` TIDAK dapet pesan "Eksekusi job" apa pun (cuma buat kirim batch).

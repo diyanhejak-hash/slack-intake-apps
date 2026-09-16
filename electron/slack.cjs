@@ -488,6 +488,17 @@ async function addReaction({ token, channelId, timestamp, name }) {
   }
 }
 
+// Post SEDERHANA ke channel (poin revisi, papan status "HB Apps online/kirim/selesai/offline")
+// — BUKAN bagian dari alur kirim item (gak ada thread-tracking/idempotensi kayak ensureRoot dst,
+// tiap panggilan SELALU pesan baru), tetap lewat paceChannel+withRetry yang SAMA biar konsisten
+// sopan ke rate-limit channel itu.
+async function postSimpleMessage({ token, channelId, text }) {
+  if (!token || !channelId || !text) throw new Error("Token, channel, dan teks wajib diisi.");
+  const c = client(token);
+  await paceChannel(channelId);
+  return withRetry(() => c.chat.postMessage({ channel: channelId, text }));
+}
+
 // Reuse persis Phase 0 lib/slack-channel.js — bikin channel privat lalu invite member,
 // sebagai user yang login (jadi owner channel). Scope groups:write sudah cukup, sudah
 // dibuktikan jalan di Phase 0, gak perlu scope baru.
@@ -508,4 +519,4 @@ async function createPrivateChannel({ token, name, memberIds = [] }) {
   return { channelId, name: safeName };
 }
 
-module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests, setReactionIntervalForTests };
+module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, postSimpleMessage, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests, setReactionIntervalForTests };

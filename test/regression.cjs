@@ -497,6 +497,9 @@ async function test(name, fn) {
           addReaction: async ({ name }) => { reactionCalls.push(name); },
           sendReplies: async ({ threadKey: key }) => { callLog.push(`post:${key}`); return { permalink: undefined }; },
         },
+        // Papan status HB Apps (poin revisi) -- best-effort, gak diuji detailnya di sini (ada
+        // test terpisah buat estimateSendMinutes/postStatus), cukup no-op biar send:start jalan.
+        hbStatus: { estimateSendMinutes: () => 1, postStatus: async () => {} },
       };
       vm.runInNewContext(block, context);
       const { results } = await handler({ sender: { isDestroyed: () => false, send: () => {} } }, { projectId: "P", itemIds: ["A", "B"], scope: undefined });
@@ -576,6 +579,55 @@ async function test(name, fn) {
       const restored = projects.getProject(mp.id);
       assert.equal(restored.items.find((i) => i.id === one).replies.find((r) => r.category === "Reference").files.length, 6);
       assert.equal(restored.items.find((i) => i.id === two).replies.find((r) => r.category === "Reference").files.length, 7);
+    });
+    await test("hbStatus.findStatusChannel cari channel by nama, cache hasil, gak scan ulang", async () => {
+      const hb = load("electron/hbStatus.cjs", {});
+      let listCalls = 0;
+      const mockSlack = { listChannels: async () => { listCalls++; return [{ id: "C-OTHER", name: "random" }, { id: "C-STATUS", name: hb.STATUS_CHANNEL_NAME }]; } };
+      assert.equal(await hb.findStatusChannel(mockSlack, "TOKEN"), "C-STATUS");
+      assert.equal(await hb.findStatusChannel(mockSlack, "TOKEN"), "C-STATUS");
+      assert.equal(listCalls, 1); // cache -- cuma scan sekali per proses
+    });
+    await test("hbStatus.findStatusChannel/postStatus best-effort kalau channel gak ketemu (gak throw)", async () => {
+      const hb = load("electron/hbStatus.cjs", {});
+      let listCalls = 0;
+      const mockSlack = {
+        listChannels: async () => { listCalls++; return [{ id: "C-OTHER", name: "bukan-status" }]; },
+        postSimpleMessage: async () => { throw new Error("harusnya gak sampai sini, channel gak ketemu"); },
+      };
+      assert.equal(await hb.findStatusChannel(mockSlack, "TOKEN"), null);
+      await hb.postStatus(mockSlack, "TOKEN", "test"); // gak boleh throw walau channel gak ketemu
+      assert.equal(await hb.findStatusChannel(mockSlack, "TOKEN"), null);
+      assert.equal(listCalls, 1); // gak scan ulang terus-terusan walau gagal ketemu
+    });
+    await test("hbStatus.postStatus best-effort kalau postSimpleMessage gagal (gak throw)", async () => {
+      const hb = load("electron/hbStatus.cjs", {});
+      const mockSlack = {
+        listChannels: async () => [{ id: "C-STATUS", name: hb.STATUS_CHANNEL_NAME }],
+        postSimpleMessage: async () => { throw new Error("network error"); },
+      };
+      await hb.postStatus(mockSlack, "TOKEN", "test"); // gak boleh throw -- status gak boleh nge-block alur utama
+    });
+    await test("hbStatus.estimateSendMinutes ngitung sesuai pacing 4-fase (root+mention+react+post)", () => {
+      const hb = load("electron/hbStatus.cjs", {});
+      const mockProjects = { listItemReactions: (itemId) => (itemId === "A" ? [{ id: "R1", slack_shortcode: "artis-a" }] : []) };
+      const presetByMember = new Map([["U1", { code_name: "artis-a" }]]);
+      const targets = [
+        { id: "A", artist_id: "U1", files: [{ id: "f1" }], replies: [{ title: "Ref", text_value: "x", files: [] }] },
+        { id: "B", artist_id: null, files: [], replies: [] },
+      ];
+      // A: root 1.1 + mention 1.1 + react-artis 1.2 + post (file+reply = 2 panggilan) 2.2 = 5.6
+      // B: root 1.1 doang (gak ada artis/reply/file)
+      const expectedSeconds = 1.1 + 1.1 + 1.2 + 2.2 + 1.1;
+      assert.equal(hb.estimateSendMinutes({ targets, scope: undefined, assignMode: "mention", presetByMember, projects: mockProjects }), Math.max(1, Math.ceil(expectedSeconds / 60)));
+    });
+    await test("hbStatus.estimateSendMinutes skala bener buat banyak item (bukan cuma kebetulan floor 1 menit)", () => {
+      const hb = load("electron/hbStatus.cjs", {});
+      const mockProjects = { listItemReactions: () => [] };
+      const presetByMember = new Map();
+      // 60 item, masing-masing root(1.1)+mention(1.1) = 2.2s -> total 132s -> ceil(132/60) = 3 menit.
+      const targets = Array.from({ length: 60 }, (_, i) => ({ id: `I${i}`, artist_id: "U1", files: [], replies: [] }));
+      assert.equal(hb.estimateSendMinutes({ targets, scope: undefined, assignMode: "mention", presetByMember, projects: mockProjects }), 3);
     });
     await test("template application is atomic and undo preserves attachment bytes", () => {
       const tp = projects.createProject({ name: "template", channelId: "CA", channelName: "test" });

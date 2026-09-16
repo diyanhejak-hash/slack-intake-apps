@@ -4,6 +4,7 @@ import Login from "./screens/Login";
 import StartMenu from "./screens/StartMenu";
 import MainTable from "./screens/MainTable";
 import SlackDesktopSuggestion from "./screens/SlackDesktopSuggestion";
+import HbSessionClosing from "./screens/HbSessionClosing";
 
 export default function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
@@ -66,6 +67,7 @@ export default function App() {
       {/* Poin revisi: saran install Slack Desktop — CUMA muncul setelah login (biar gak ganggu
           layar Login), non-blocking, sekali doang per komputer. */}
       <SlackDesktopSuggestion />
+      <HbSessionClosing />
     </>
   );
 }

@@ -319,6 +319,21 @@ declare global {
       app: {
         version: () => Promise<string>;
       };
+      /** Papan status HB Apps (poin revisi, hasil diskusi rate-limit) — channel "sia-status"
+       * jadi tempat broadcast Online/Offline/Eksekusi-job/Job-selesai, biar user lain tau
+       * siapa lagi pakai app (koordinasi manual lewat DM Slack, kurangin rebutan rate-limit). */
+      hbStatus: {
+        /** True cuma SEKALI per proses app (belum pernah "Mulai Sesi"/"Lewati" di sesi ini). */
+        shouldShowModal: () => Promise<boolean>;
+        /** Post ":raised_hands: Online" ke channel status, tandain sesi ini online (dipakai buat
+         * keputusan post ":yawning_face: Offline" pas app ditutup). */
+        goOnline: () => Promise<void>;
+        /** Modal di-skip — gak ada pesan Online, dan gak akan ada pesan Offline pas ditutup. */
+        skip: () => Promise<void>;
+        /** Nyala pas app mau ditutup DAN sesi ini online — renderer nampilin modal loading,
+         * proses kirim pesan Offline jalan di balik layar sebelum app bener-bener ditutup. */
+        onClosing: (cb: () => void) => () => void;
+      };
       shell: {
         openExternal: (url: string) => Promise<void>;
         openSlackMessage: (payload: { channelId: string; ts?: string }) => Promise<void>;
