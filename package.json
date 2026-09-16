@@ -69,6 +69,10 @@
     "directories": {
       "output": "release"
     },
+    "protocols": {
+      "name": "Slack Intake Apps",
+      "schemes": ["slackintakeapps"]
+    },
     "publish": {
       "provider": "github",
       "owner": "diyanhejak-hash",

@@ -1,4 +1,3 @@
-const http = require("node:http");
 const fs = require("node:fs");
 const crypto = require("node:crypto");
 const { WebClient } = require("@slack/web-api");
@@ -21,11 +20,20 @@ function pkcePair() {
   return { codeVerifier, codeChallenge };
 }
 
-// Alur sama seperti Phase 0 lib/slack-login.js — reuse langsung, cuma port/redirect dari config app ini.
-function loginWithBrowser({ clientId, redirectUri, port }, openUrl) {
+// Redirect via custom URI scheme (slackintakeapps://callback), BUKAN server HTTP lokal —
+// syarat "Use HTTPS For Your Features" di Manage Distribution Slack nolak http://localhost
+// (itu dianggap redirect buat development doang). Custom URI scheme "always treated as desktop
+// redirect" dan didukung penuh sama PKCE (https://docs.slack.dev/authentication/using-pkce/),
+// ini jalur resmi buat app desktop yang didistribusikan. OS yang antar `slackintakeapps://...`
+// balik ke app ini (app.on("open-url") / "second-instance" di main.cjs), main.cjs manggil
+// completeLoginFromUrl() di bawah begitu link itu nyampe.
+let pendingLogin = null;
+
+function loginWithBrowser({ clientId, redirectUri }, openUrl) {
   if (!clientId || !redirectUri) {
     throw new Error("Client ID dan Redirect URI wajib diisi (cek .env).");
   }
+  if (pendingLogin) throw new Error("Login sedang berjalan.");
 
   const state = crypto.randomBytes(24).toString("base64url");
   const { codeVerifier, codeChallenge } = pkcePair();
@@ -37,74 +45,52 @@ function loginWithBrowser({ clientId, redirectUri, port }, openUrl) {
     `&state=${state}`;
 
   return new Promise((resolve, reject) => {
-    let settled = false;
-    let exchanging = false;
-    const finish = (error, value) => {
-      if (settled) return;
-      settled = true;
+    const timer = setTimeout(() => {
+      pendingLogin = null;
+      reject(new Error("Login Slack kedaluwarsa. Coba login lagi."));
+    }, 5 * 60 * 1000);
+    pendingLogin = { clientId, redirectUri, state, codeVerifier, resolve, reject, timer };
+    Promise.resolve().then(() => openUrl(authorizeUrl)).catch((error) => {
       clearTimeout(timer);
-      server.close();
-      error ? reject(error) : resolve(value);
-    };
-    const timer = setTimeout(() => finish(new Error("Login Slack kedaluwarsa. Coba login lagi.")), 5 * 60 * 1000);
-    const server = http.createServer(async (req, res) => {
-      const url = new URL(req.url, `http://localhost:${port}`);
-      if (url.pathname !== "/callback") {
-        res.writeHead(404).end();
-        return;
-      }
-
-      const code = url.searchParams.get("code");
-      const error = url.searchParams.get("error");
-      if (url.searchParams.get("state") !== state) { res.writeHead(400).end("Callback login tidak valid."); return; }
-      if (error) {
-        res.writeHead(400).end(`Login dibatalkan/gagal: ${error}`);
-        finish(new Error(`Login dibatalkan/gagal: ${error}`));
-        return;
-      }
-      if (!code || url.searchParams.get("state") !== state) {
-        res.writeHead(400).end("Callback login tidak valid.");
-        // Invalid callbacks must not cancel the legitimate login.
-        return;
-      }
-
-      if (exchanging || settled) { res.writeHead(409).end("Login sedang diproses."); return; }
-      exchanging = true;
-      try {
-        const client = new WebClient();
-        const result = await client.oauth.v2.access({
-          client_id: clientId,
-          code_verifier: codeVerifier,
-          code,
-          redirect_uri: redirectUri,
-        });
-
-        const userToken = result.authed_user?.access_token;
-        if (!userToken) throw new Error("Tidak ada authed_user.access_token — cek User Token Scopes di App.");
-
-        console.log("[debug] oauth.v2.access result.team =", JSON.stringify(result.team));
-
-        const info = {
-          accessToken: userToken,
-          userId: result.authed_user.id,
-          team: result.team?.name,
-          teamId: result.team?.id, // buat deep-link slack://channel?team=...&id=... pas kirim
-          savedAt: new Date().toISOString(),
-        };
-
-        res.writeHead(200, { "Content-Type": "text/html" }).end(
-          `<h2>Login berhasil sebagai ${info.userId} di ${info.team}.</h2><p>Boleh tutup tab ini.</p>`
-        );
-        finish(null, info);
-      } catch (err) {
-        res.writeHead(500).end("Gagal tukar code jadi token.");
-        finish(err);
-      }
+      pendingLogin = null;
+      reject(error);
     });
-
-    server.listen(Number(port) || 3737, "127.0.0.1", () => Promise.resolve().then(() => openUrl(authorizeUrl)).catch(finish));
-    server.on("error", finish);
   });
+}
+
+// Dipanggil dari main.cjs tiap OS ngirim balik URL slackintakeapps://... . Callback asing/salah
+// state DIABAIKAN (return diam-diam) — gak boleh nge-cancel login yang lagi beneran berjalan.
+async function completeLoginFromUrl(urlString) {
+  if (!pendingLogin) return;
+  let url;
+  try { url = new URL(urlString); } catch { return; }
+  if (url.searchParams.get("state") !== pendingLogin.state) return;
+
+  const { clientId, redirectUri, codeVerifier, resolve, reject, timer } = pendingLogin;
+  clearTimeout(timer);
+  pendingLogin = null;
+
+  const error = url.searchParams.get("error");
+  const code = url.searchParams.get("code");
+  if (error) { reject(new Error(`Login dibatalkan/gagal: ${error}`)); return; }
+  if (!code) { reject(new Error("Callback login tidak valid.")); return; }
+
+  try {
+    const client = new WebClient();
+    const result = await client.oauth.v2.access({ client_id: clientId, code_verifier: codeVerifier, code, redirect_uri: redirectUri });
+    const userToken = result.authed_user?.access_token;
+    if (!userToken) throw new Error("Tidak ada authed_user.access_token — cek User Token Scopes di App.");
+    console.log("[debug] oauth.v2.access result.team =", JSON.stringify(result.team));
+    resolve({
+      accessToken: userToken,
+      userId: result.authed_user.id,
+      team: result.team?.name,
+      teamId: result.team?.id, // buat deep-link slack://channel?team=...&id=... pas kirim
+      savedAt: new Date().toISOString(),
+    });
+  } catch (err) {
+    reject(new Error(`${err.message} Gagal tukar code jadi token.`));
+  }
 }
 
 function client(token) {
@@ -325,4 +311,4 @@ async function createPrivateChannel({ token, name, memberIds = [] }) {
   return { channelId, name: safeName };
 }
 
-module.exports = { loginWithBrowser, client, listChannels, listUsers, sendItem, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread };
+module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread };

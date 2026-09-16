@@ -28,7 +28,6 @@ jobs:
     env:
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
       SLACK_REDIRECT_URI: ${{ secrets.SLACK_REDIRECT_URI }}
-      OAUTH_PORT: ${{ secrets.OAUTH_PORT }}
       GITHUB_REPO: ${{ secrets.RELEASE_REPO }}
       GITHUB_RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
       GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -256,34 +256,26 @@ async function test(name, fn) {
     });
 
     await test("OAuth ignores wrong-state callbacks and finishes the legitimate callback", async () => {
-      let callback, authorizeUrl, closed = false;
-      const server = { listen: (_port, _host, fn) => fn(), on: () => {}, close: () => { closed = true; } };
-      const oauth = load("electron/slack.cjs", {
-        "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack },
-        "node:http": { createServer: (fn) => { callback = fn; return server; } },
-      });
-      const promise = oauth.loginWithBrowser({ clientId: "fake", clientSecret: "fake", redirectUri: "http://localhost:3737/callback", port: 3737 }, (url) => { authorizeUrl = url; });
+      let authorizeUrl;
+      const oauth = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
+      const promise = oauth.loginWithBrowser({ clientId: "fake", redirectUri: "slackintakeapps://callback" }, (url) => { authorizeUrl = url; });
       await Promise.resolve(); await Promise.resolve();
-      const res = { writeHead: () => res, end: () => res };
-      await callback({ url: "/callback?state=wrong&error=denied" }, res);
-      assert.equal(closed, false);
+      // A callback with the wrong state (e.g. a stray/foreign deep-link) must be ignored, not
+      // cancel the legitimate login still in flight.
+      await oauth.completeLoginFromUrl("slackintakeapps://callback?state=wrong&error=denied");
       const state = new URL(authorizeUrl).searchParams.get("state");
       const rejected = assert.rejects(promise, /denied/);
-      await callback({ url: "/callback?state=" + state + "&error=denied" }, res);
-      await rejected; assert.equal(closed, true);
+      await oauth.completeLoginFromUrl("slackintakeapps://callback?state=" + state + "&error=denied");
+      await rejected;
     });
 
     await test("login uses PKCE and never sends a client secret to Slack", async () => {
       const crypto = require("node:crypto");
-      let callback2, authorizeUrl2;
-      const server2 = { listen: (_port, _host, fn) => fn(), on: () => {}, close: () => {} };
-      const oauth2 = load("electron/slack.cjs", {
-        "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack },
-        "node:http": { createServer: (fn) => { callback2 = fn; return server2; } },
-      });
+      let authorizeUrl2;
+      const oauth2 = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
       // Passing clientSecret here (like a stale caller would) must be a no-op — the function
       // signature no longer reads it, and it must never reach Slack's token endpoint.
-      const promise2 = oauth2.loginWithBrowser({ clientId: "fake", clientSecret: "should-be-ignored", redirectUri: "http://localhost:3737/callback", port: 3737 }, (url) => { authorizeUrl2 = url; });
+      const promise2 = oauth2.loginWithBrowser({ clientId: "fake", clientSecret: "should-be-ignored", redirectUri: "slackintakeapps://callback" }, (url) => { authorizeUrl2 = url; });
       await Promise.resolve(); await Promise.resolve();
       const url = new URL(authorizeUrl2);
       const challenge = url.searchParams.get("code_challenge");
@@ -291,9 +283,8 @@ async function test(name, fn) {
       assert.ok(challenge && challenge.length >= 43);
       assert.equal(authorizeUrl2.includes("client_secret"), false);
       const state2 = url.searchParams.get("state");
-      const res2 = { writeHead: () => res2, end: () => res2 };
       const before = oauthAccessCalls.length;
-      await callback2({ url: "/callback?state=" + state2 + "&code=fake-code" }, res2);
+      await oauth2.completeLoginFromUrl("slackintakeapps://callback?state=" + state2 + "&code=fake-code");
       await promise2;
       const sent = oauthAccessCalls[oauthAccessCalls.length - 1];
       assert.equal(oauthAccessCalls.length, before + 1);

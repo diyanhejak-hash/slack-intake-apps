@@ -4,6 +4,20 @@ const fs = require("node:fs");
 if (app.isPackaged) Object.assign(process.env, JSON.parse(fs.readFileSync(path.join(process.resourcesPath, "runtime-config.json"), "utf8")));
 else require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
 
+// Redirect login Slack (PKCE) lewat custom URI scheme slackintakeapps://callback, bukan server
+// HTTP lokal — lihat catatan di electron/slack.cjs. OS ngirim balik URL ini ke app yang UDAH
+// jalan lewat "open-url" (Mac) atau ngebuka instance BARU yang argv-nya berisi URL itu (Windows/
+// Linux) — single-instance lock di bawah nangkep instance baru itu lewat "second-instance" terus
+// nutup diri sendiri, biar gak muncul window kedua.
+const PROTOCOL_SCHEME = "slackintakeapps";
+if (!app.isPackaged && process.platform === "win32") {
+  app.setAsDefaultProtocolClient(PROTOCOL_SCHEME, process.execPath, [path.resolve(process.argv[1])]);
+} else {
+  app.setAsDefaultProtocolClient(PROTOCOL_SCHEME);
+}
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) app.quit();
+
 const authStore = require("./auth-store.cjs");
 const slack = require("./slack.cjs");
 const projects = require("./projects.cjs");
@@ -202,6 +216,25 @@ function createTray() {
   tray.on("click", () => win?.show());
 }
 
+function handleDeepLink(url) {
+  if (!url || !url.startsWith(`${PROTOCOL_SCHEME}://`)) return;
+  slack.completeLoginFromUrl(url);
+  if (win) { if (win.isMinimized()) win.restore(); win.show(); win.focus(); }
+}
+
+// Windows/Linux: klik link slackintakeapps:// pas app UDAH jalan bukan buka window baru, OS
+// buka INSTANCE BARU proses ini dengan URL di argv — single-instance lock di atas bikin instance
+// baru itu langsung berhenti sendiri dan ngirim argv-nya ke instance pertama lewat event ini.
+app.on("second-instance", (_event, argv) => {
+  handleDeepLink(argv.find((arg) => arg.startsWith(`${PROTOCOL_SCHEME}://`)));
+});
+// macOS: link slackintakeapps:// nyampe langsung ke instance yang jalan lewat event ini.
+app.on("open-url", (event, url) => {
+  event.preventDefault();
+  if (app.isReady()) handleDeepLink(url);
+  else app.whenReady().then(() => handleDeepLink(url));
+});
+
 app.whenReady().then(() => {
   appIcon = nativeImage.createFromPath(iconPath);
   if (process.platform === "darwin") app.dock.setIcon(appIcon); // dock Mac = taskbar Windows, butuh di-set eksplisit juga
@@ -235,11 +268,7 @@ handle("auth:login", async () => {
   authenticating = true;
   try {
   const info = await slack.loginWithBrowser(
-    {
-      clientId: process.env.SLACK_CLIENT_ID,
-      redirectUri: process.env.SLACK_REDIRECT_URI,
-      port: process.env.OAUTH_PORT,
-    },
+    { clientId: process.env.SLACK_CLIENT_ID, redirectUri: process.env.SLACK_REDIRECT_URI },
     (url) => shell.openExternal(url)
   );
   authStore.saveToken(info);
