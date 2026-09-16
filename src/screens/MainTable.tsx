@@ -327,15 +327,30 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     onBackToStartMenu();
   }
 
-  function doSend(itemIds: string[], channelId: string) {
+  function doSend(itemIds: string[], channelId: string, scope?: "item" | "artist" | "replies") {
     setShowPreview(false);
     setSending(true);
     setResults(null);
-    window.api.send.start({ projectId, itemIds, channelId }).catch((err) => {
+    window.api.send.start({ projectId, itemIds, channelId, scope }).catch((err) => {
       setSending(false);
       setProgress(null);
       setResults(itemIds.map((itemId) => ({ itemId, itemName: project?.items.find((i) => i.id === itemId)?.name || itemId, status: "gagal", reason: err instanceof Error ? err.message : "Gagal mengirim." })));
     });
+  }
+
+  // Instant Intake per-KOLOM (poin revisi: overlay di header tabel, bukan cuma per-row) — kirim
+  // scope yang sama (item/artist/replies) ke SEMUA item terpilih (atau semua item kalau gak ada
+  // yang dicentang, sama seperti tombol "Preview & Kirim") sekaligus, lewat send:start (progress
+  // bar + satu openSlack doang, bukan spam buka Slack per item).
+  // async biar cocok sama tipe onClick QuickSendButton (=> Promise) — doSend sendiri fire-and-
+  // forget (progress/hasil ditangani state sending/progress/results yang udah ada, bukan spinner
+  // lokal tombol ini), jadi promise di sini nyelesai begitu proses kirim DIMULAI, bukan selesai.
+  async function quickSendColumn(scope: "item" | "artist" | "replies", label: string) {
+    const ids = effectiveItemIds;
+    if (!ids.length || !project) return;
+    const target = selected.size === 0 ? "SEMUA item" : `${ids.length} item terpilih`;
+    if (!confirm(`Instant Intake — kirim kolom "${label}" ke ${target}?`)) return;
+    doSend(ids, project.channel_id, scope);
   }
 
   async function handleCancel() {
@@ -507,17 +522,20 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                     {selected.size === project.items.length && project.items.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
                   </th>
                   <th style={{ width: 34 }}>No</th>
-                  <th onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste">
+                  <th style={{ position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste">
                     Item <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
+                    <QuickSendButton title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />
                   </th>
-                  <th style={{ width: 200 }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste">
+                  <th style={{ width: 200, position: "relative" }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste">
                     Artis <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
+                    <QuickSendButton title="Instant Intake — mention artis SEMUA item" onClick={() => quickSendColumn("artist", "Artis")} />
                   </th>
                   {/* B4 — klik header kolom Reply (bubble icon) = pilih Template buat diterapkan
                       ke SEMUA item sekaligus, bukan cuma per-item lewat Tab Reply. Reply dipindah
                       ke sebelum X (poin revisi urutan kolom: ..., Artis, Reply, X). */}
-                  <th style={{ width: 50 }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item">
+                  <th style={{ width: 50, position: "relative" }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item">
                     <LayoutTemplate size={12} style={{ display: "inline" }} />
+                    <QuickSendButton title="Instant Intake — kirim semua reply/field SEMUA item" onClick={() => quickSendColumn("replies", "Reply")} />
                   </th>
                   <th style={{ width: 40 }} />
                 </tr>

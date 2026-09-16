@@ -255,7 +255,11 @@ declare global {
       };
       send: {
         recover: (payload: {projectId: string; itemId: string; channelId?: string; threadLink?: string}) => Promise<{message?: string; needsThreadLink?: boolean}>;
-        start: (payload: { projectId: string; itemIds: string[]; channelId?: string }) => Promise<{ results: SendResult[] }>;
+        /** `scope` opsional — Instant Intake per-KOLOM (poin revisi, overlay di header tabel):
+         * terapkan ke SEMUA itemIds sekaligus lewat loop send:start yang sama (progress/cancel/
+         * satu openSlack doang), bukan panggil `quick` berkali-kali. Gak diisi = perilaku lama
+         * (kirim semuanya: file+reply+artis). */
+        start: (payload: { projectId: string; itemIds: string[]; channelId?: string; scope?: "item" | "artist" | "replies" }) => Promise<{ results: SendResult[] }>;
         /** "Instant Intake" — kirim langsung TANPA modal preview, scoped ke sebagian item aja
          * (bukan full send:start). "field" wajib disertai replyId. */
         quick: (payload: {

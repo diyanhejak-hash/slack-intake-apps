@@ -287,6 +287,13 @@ td:hover > .row-quicksend {
   transition-delay: 0.5s;
   pointer-events: auto;
 }
+/* Overlay Instant Intake di HEADER kolom (poin revisi) — klik = kirim kolom itu ke SEMUA/item
+   terpilih sekaligus. Pola hover/delay sama persis kayak per-cell, cuma hover-zone-nya `th`. */
+th:hover > .row-quicksend {
+  opacity: 1;
+  transition-delay: 0.5s;
+  pointer-events: auto;
+}
 /* Overlay reaction INSTAN (poin revisi) di Pil Item Tab Reply — pola sama persis kayak Instant
    Intake, delay 0.5s, cuma hover-zone-nya bukan `td` (pil bukan cell tabel). */
 .pill-hover-zone:hover > .row-quicksend {

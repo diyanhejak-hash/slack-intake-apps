@@ -713,3 +713,43 @@ Checklist manual:
   → card TIDAK muncul lagi (biarpun Slack Desktop masih belum ke-install).
 - [ ] **Gak blocking**: pas card muncul, coba klik-klik bagian lain app (Table/Reply/dst) → tetap
   bisa dipakai normal, card cuma nemplok di pojok, gak nutup layar/ngeblok interaksi.
+
+## 26. Instant Intake di header kolom (Item/Artis/Reply) + Kelola Preset di semua modal emoji (2026-09-16) ✅ (siap dites)
+
+**Instant Intake per-kolom** — overlay pesawat sekarang juga muncul di HEADER kolom Item/Artis/
+Reply (Tab Table), bukan cuma per-row. Klik = kirim scope itu (item/artis/reply) ke SEMUA item,
+atau ke item yang lagi dicentang aja kalau ada yang dicentang (sama aturan seperti "Preview &
+Kirim"), lewat konfirmasi dulu. Beda dari per-row: dijalankan lewat `send:start` (loop yang udah
+ada — progress bar, notifikasi selesai, bisa cancel, SATU `openSlack` doang di awal), bukan
+manggil `send:quick` berkali-kali (itu bakal buka Slack berkali-kali, satu per item — jelek).
+`send:start` sekarang terima `scope` opsional (`item`/`artist`/`replies`) — gak diisi = perilaku
+lama (kirim file+reply+artis lengkap), jadi caller lama (SlackViewPreview) gak kepengaruh.
+
+**Kelola Preset di semua modal emoji** — popover reaction (`ReactionPickerPopover` di
+`ItemReactions.tsx`, dipakai di ItemReactionBar pending DAN InstantReactionOverlay) sebelumnya
+gak punya tombol "Kelola preset...", beda dari `EmojiPicker.tsx` yang udah ada dari awal. Sekarang
+konsisten — ketiga tempat munculnya picker emoji (EmojiPicker toolbar/Prefix, ItemReactionBar,
+InstantReactionOverlay) sama-sama punya akses ke `EmojiPresetModal`.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 25 test
+regresi + smoke test Electron sungguhan + build) semua lulus.
+**BELUM**: smoke-test manual visual (restart app dulu).
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Hover header kolom Item** → overlay pesawat muncul (delay ~0.5 detik) → klik → dialog
+  konfirmasi → Yes → kirim nama SEMUA item (gak ada artis/reply) → progress bar muncul di bawah
+  → selesai, cek di Slack semua item punya thread tapi TANPA mention artis/reply.
+- [ ] **Hover header kolom Artis** → klik overlay → kirim mention artis ke SEMUA item yang UDAH
+  ada artisnya (item TANPA artis harusnya masuk hasil "gagal", bukan bikin seluruh proses gagal).
+- [ ] **Hover header kolom Reply** (icon template) → klik overlay pesawatnya (BUKAN icon
+  template-nya — dua-duanya di header yang sama, harus gak saling nge-trigger) → kirim semua
+  reply/field ke SEMUA item.
+- [ ] **Centang sebagian item dulu**, baru klik overlay header → dialog konfirmasi nyebut "item
+  terpilih" (bukan "SEMUA item") → cuma item yang dicentang yang kekirim.
+- [ ] **Buka reaction popover** (icon SmilePlus di sebelah Pil Item, Tab Reply) → ada tombol
+  "Kelola preset..." di bawah grid emoji → klik → modal Kelola Preset kebuka, bisa
+  tambah/hapus preset, nutup modal → grid emoji di popover ke-refresh otomatis.
+- [ ] **Sama buat overlay reaction instan** (hover Pil Item, icon SmilePlus muncul) → cek
+  "Kelola preset..." juga ada di popover-nya.

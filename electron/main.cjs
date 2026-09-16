@@ -457,7 +457,12 @@ function replyToPost(reply) {
   return null;
 }
 
-handle("send:start", async (event, { projectId, itemIds, channelId }) => {
+// `scope` (poin revisi: overlay Instant Intake di HEADER kolom Item/Artis/Reply) — sama seperti
+// send:quick, tapi diterapkan ke SEMUA item terpilih sekaligus lewat loop send:start yang udah
+// ada (progress bar, notifikasi selesai, cancel, satu openSlack doang di awal — bukan spam buka
+// Slack per item kayak kalau send:quick dipanggil berkali-kali). undefined = perilaku lama
+// (semua: file+reply+artis), gak ada breaking change buat caller lama (SlackViewPreview).
+handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => {
   if (activeSend) throw new Error("Masih ada proses kirim yang berjalan.");
   const jobId = require("node:crypto").randomUUID();
   activeSend = jobId;
@@ -482,17 +487,28 @@ handle("send:start", async (event, { projectId, itemIds, channelId }) => {
     const item = targets[i];
     if (!event.sender.isDestroyed()) event.sender.send("send:progress", { projectId, jobId, index: i, total: targets.length, itemName: item.name });
     try {
-      // posts berurutan: attach langsung dulu (kompatibilitas item_files lama), lalu tiap
-      // Reply (Batch File/Drawer/Template) sesuai sort_order — teks jadi 1 pesan, file jadi
-      // 1 upload (+ caption judul reply-nya).
-      const posts = [];
-      if (!item.files.every((f) => projects.isManagedFile(f.stored_path))) throw new Error("Attachment item tidak berada dalam penyimpanan project.");
-      if (item.files.length) {
-        posts.push({ files: item.files.map((f) => ({ path: f.stored_path, filename: f.original_name })) });
-      }
-      for (const reply of item.replies) {
-        const post = replyToPost(reply);
-        if (post) posts.push(post);
+      let artistId = item.artist_id;
+      let posts = [];
+      if (scope === "item") {
+        artistId = null; // cuma mastiin/bikin thread `*itemName*`, gak ada artis/reply/file.
+      } else if (scope === "artist") {
+        if (!artistId) throw new Error("Item ini belum ada artis yang ditugaskan.");
+      } else if (scope === "replies") {
+        artistId = null;
+        posts = item.replies.map(replyToPost).filter(Boolean);
+      } else {
+        // Default (gak ada scope, dipakai SlackViewPreview/"Preview & Kirim") — kirim SEMUANYA:
+        // attach langsung dulu (kompatibilitas item_files lama), lalu tiap Reply (Batch File/
+        // Drawer/Template) sesuai sort_order — teks jadi 1 pesan, file jadi 1 upload (+ caption
+        // judul reply-nya).
+        if (!item.files.every((f) => projects.isManagedFile(f.stored_path))) throw new Error("Attachment item tidak berada dalam penyimpanan project.");
+        if (item.files.length) {
+          posts.push({ files: item.files.map((f) => ({ path: f.stored_path, filename: f.original_name })) });
+        }
+        for (const reply of item.replies) {
+          const post = replyToPost(reply);
+          if (post) posts.push(post);
+        }
       }
 
       await confirmLegacyThread(projectId, item, targetChannelId);
@@ -501,7 +517,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId }) => {
         channelId: targetChannelId,
         itemName: item.name,
         threadKey: threadKey(projectId, item.id),
-        artistId: item.artist_id,
+        artistId,
         posts,
       });
       results.push({ itemId: item.id, itemName: item.name, status: "berhasil", isNew, threadTs, permalink, channelId: targetChannelId });

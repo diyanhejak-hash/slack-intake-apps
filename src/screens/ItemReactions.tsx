@@ -15,11 +15,20 @@ import { useEffect, useState } from "react";
 import { SmilePlus, X, Loader2 } from "lucide-react";
 import type { EmojiPreset, ItemReaction } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
+import EmojiPresetModal from "./EmojiPresetModal";
 
+// "Kelola preset..." (poin revisi: wajib ada di TIAP modal emoji, bukan cuma EmojiPicker.tsx) —
+// popover ini dipakai 2 tempat (ItemReactionBar pending DAN InstantReactionOverlay), taruh di
+// sini sekali biar dua-duanya konsisten dapet akses Kelola Preset yang sama.
 function ReactionPickerPopover({ onPick, style }: { onPick: (preset: EmojiPreset) => void; style?: React.CSSProperties }) {
   const [presets, setPresets] = useState<EmojiPreset[]>([]);
-  useEffect(() => {
+  const [showManage, setShowManage] = useState(false);
+
+  function refresh() {
     window.api.emojiPreset.list().then((list) => setPresets(list.filter((p) => p.slack_shortcode)));
+  }
+  useEffect(() => {
+    refresh();
   }, []);
 
   return (
@@ -34,6 +43,21 @@ function ReactionPickerPopover({ onPick, style }: { onPick: (preset: EmojiPreset
             <ReactionPresetButton key={p.id} preset={p} onClick={() => onPick(p)} />
           ))}
         </div>
+      )}
+      <button
+        className="btn"
+        style={{ width: "100%", marginTop: 6, justifyContent: "center", fontSize: 11, padding: "4px 0" }}
+        onClick={() => setShowManage(true)}
+      >
+        Kelola preset...
+      </button>
+      {showManage && (
+        <EmojiPresetModal
+          onClose={() => {
+            setShowManage(false);
+            refresh();
+          }}
+        />
       )}
     </div>
   );
