@@ -610,6 +610,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                               setEditingCell((c) => (c?.itemId === item.id && c.col === "item" ? null : c));
                               if (e.target.value !== item.name) handleRenameItem(item, e.target.value);
                             }}
+                            onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                           />
                           <ItemReactionBar
                             projectId={projectId}
@@ -628,6 +629,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                           onChange={(e) => handleArtistChange(item, e.target.value)}
                           onFocus={() => setEditingCell({ itemId: item.id, col: "artist" })}
                           onBlur={() => setEditingCell((c) => (c?.itemId === item.id && c.col === "artist" ? null : c))}
+                          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
                           style={{ width: "100%" }}
                         >
                           <option value="">Belum ditugaskan</option>
