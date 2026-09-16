@@ -597,7 +597,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                           key={`${item.id}:${item.name}`}
                           defaultValue={item.name}
                           placeholder="Nama item…"
-                          style={{ border: "none", width: "100%", padding: "4px 0", cursor: "pointer" }}
+                          style={{ border: "1px solid var(--border)", borderRadius: 4, background: "transparent", width: "100%", padding: "4px 6px", cursor: "pointer" }}
                           onFocus={() => setEditingCell({ itemId: item.id, col: "item" })}
                           onBlur={(e) => {
                             setEditingCell((c) => (c?.itemId === item.id && c.col === "item" ? null : c));
