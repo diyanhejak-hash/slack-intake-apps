@@ -254,6 +254,36 @@ async function test(name, fn) {
       finish(Error("network")); await assert.rejects(first, /network/);
       assert.equal(context.activeSend, null);
     });
+    await test("quick-send also flushes pending reactions after sendItem succeeds", async () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
+      const addedReactions = [];
+      const removedIds = [];
+      let handler;
+      const context = {
+        activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
+        projects: {
+          getProject: () => ({ channel_id: "CA", items: [{ id: "I", name: "item", replies: [] }] }),
+          addLog: () => {},
+          listItemReactions: () => [{ id: "R1", slack_shortcode: "tada" }, { id: "R2", slack_shortcode: "fire" }],
+          removeItemReaction: (id) => removedIds.push(id),
+        },
+        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+        slack: {
+          findThreadChannel: () => null,
+          // sendItem IDEMPOTEN (thread lama dipakai ulang kalau ada) -- test ini gak bedain
+          // "pesan belum ada" vs "pesan udah ada", dua-duanya lewat sendItem yang sama; yang
+          // dites di sini murni "reaction pending ikut ke-flush abis sendItem sukses".
+          sendItem: async () => ({ threadTs: "1234.0001", isNew: true, permalink: undefined }),
+          addReaction: async (args) => { addedReactions.push(args); },
+        },
+      };
+      vm.runInNewContext(quick, context);
+      await handler({}, { projectId: "P", itemId: "I", scope: "item" });
+      assert.deepEqual(addedReactions.map((a) => a.name), ["tada", "fire"]);
+      assert.ok(addedReactions.every((a) => a.channelId === "CA" && a.timestamp === "1234.0001"));
+      assert.deepEqual(removedIds, ["R1", "R2"]);
+    });
 
     await test("OAuth ignores wrong-state callbacks and finishes the legitimate callback", async () => {
       let authorizeUrl;

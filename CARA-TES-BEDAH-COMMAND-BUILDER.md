@@ -862,3 +862,44 @@ Checklist manual:
   (ngasih tempat buat chip), bukan ketutupan/ke-push keluar kolom.
 - [ ] **Chip polos**: chip reaction (di Tab Table MAUPUN Tab Reply) sekarang TANPA border
   putus-putus/background pil — cuma emoji-nya doang, masih bisa diklik buat hapus.
+
+## 30. Audit delay overlay (CSS->JS timer) + Instant Intake ikut ngirim reaction pending (2026-09-16) ✅ (siap dites)
+
+**Audit delay overlay** — user laporan berulang: delay overlay (Instant Intake/Add React/Reaction
+instan) dicoba dari 0.5s sampai 4s, tetap "keliatan sama aja, langsung muncul". CSS lama
+(`transition-delay` di rule `:hover`) itu trik yang valid secara teori, tapi gak kerasa efeknya di
+real-world testing (kemungkinan re-render React ganggu transition, gak bisa dipastikan tanpa
+devtools browser). Diganti ke timer JS deterministik (`src/lib/hoverDelay.ts`) — class
+`hover-ready` ditambah manual lewat `setTimeout` pas mouseenter, dicabut LANGSUNG pas mouseleave.
+Delay balik ke 0.5s (nilai sebelum semua eksperimen 1s/4s/item-khusus).
+
+**Instant Intake ikut ngirim reaction pending** — alur baru: user tambah reaction (Add React,
+antre) → klik Instant Intake (item mana pun, scope apa pun) → `sendItem` jalan seperti biasa
+(idempoten: bikin thread BARU kalau belum ada, atau reuse thread LAMA kalau udah ada) → abis itu
+SEMUA reaction pending buat item itu langsung di-`reactions.add` ke thread-nya, lalu dihapus dari
+antrean. Jadi: "pesan belum ada" → Instant Intake bikin pesan + reaction sekaligus. "Pesan udah
+ada" → Instant Intake gak bikin pesan baru (reuse), tapi reaction pending tetap ke-flush. Chip di
+UI (Tab Table) ikut ke-refresh otomatis (`refreshToken`) abis quickSend/send:start sukses, biar
+gak nyangkut keliatan pending padahal udah kekirim.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 26 test
+regresi — 1 test baru buat reaction-flush — + smoke test + build) semua lulus.
+**BELUM**: smoke-test manual visual (delay JS timer & alur reaction+Instant Intake beneran ke
+Slack).
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Delay overlay beneran kerasa**: hover cell Item/Artis/Reply → overlay BENERAN nongol
+  setelah ~0.5 detik diam (bukan langsung), geser mouse keluar SEBELUM 0.5 detik → overlay TIDAK
+  muncul sama sekali (timer ke-cancel).
+- [ ] **Overlay hilang instan pas mouse keluar**: overlay yang UDAH muncul, geser mouse keluar →
+  hilang LANGSUNG (gak ada delay buat ilang).
+- [ ] **Instant Intake bikin pesan + reaction (item belum pernah dikirim)**: tambah 1-2 reaction
+  pending ke item baru → klik Instant Intake (kolom Item) → cek di Slack: thread baru dibikin DAN
+  reaction-nya langsung nempel di pesan itu.
+- [ ] **Instant Intake nambah reaction ke pesan yang UDAH ADA**: item yang udah pernah dikirim
+  (ada thread) → tambah reaction baru → klik Instant Intake lagi → cek di Slack: TIDAK ada pesan
+  duplikat, reaction baru nempel ke pesan yang SAMA.
+- [ ] **Chip ilang dari UI abis kekirim**: setelah Instant Intake sukses, chip reaction yang tadi
+  pending ILANG dari bawah input (bukan nyangkut keliatan padahal udah terkirim).

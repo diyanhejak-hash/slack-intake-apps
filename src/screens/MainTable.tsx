@@ -52,6 +52,11 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   // revisi) — dropdown Artis kebuka misalnya, overlay yang numpuk di pojok bisa ganggu klik opsi.
   // Cuma per (item, kolom) yang lagi fokus, bukan seluruh tabel.
   const [editingCell, setEditingCell] = useState<{ itemId: string; col: "item" | "artist" } | null>(null);
+  // Poin revisi: Instant Intake sekarang JUGA ngirim reaction pending (lihat send:quick di
+  // main.cjs) — chip di ItemReactionBar (state INTERNAL komponen itu sendiri, fetch sendiri lewat
+  // itemId) gak otomatis tau reaction-nya udah kekirim/kehapus dari server abis quickSend selesai.
+  // Tick ini di-passing ke ItemReactionBar biar dia refetch ulang begitu ada quickSend sukses.
+  const [reactionTick, setReactionTick] = useState(0);
 
   const undoStack = useRef<UndoCommand[]>([]);
   const redoStack = useRef<UndoCommand[]>([]);
@@ -82,6 +87,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
       setSending(false);
       setProgress(null);
       refresh();
+      setReactionTick((v) => v + 1); // send:start juga nge-flush reaction pending (main.cjs)
     });
     return () => {
       offProgress();
@@ -400,7 +406,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   // nentuin (channel tempat item ini SUDAH punya thread kalau ada, baru fallback ke default
   // project; nyegah bikin thread duplikat di channel yang salah, bug yang dilaporkan user).
   function quickSend(itemId: string, scope: "item" | "artist" | "replies" | "field", replyId?: string) {
-    return window.api.send.quick({ projectId, itemId, scope, replyId }).then(() => refresh()).catch((err) => {
+    return window.api.send.quick({ projectId, itemId, scope, replyId }).then(() => { refresh(); setReactionTick((v) => v + 1); }).catch((err) => {
       setResults([{ itemId, itemName: project?.items.find((i) => i.id === itemId)?.name || itemId, status: "gagal", reason: err.message }]);
       throw err;
     });
@@ -618,6 +624,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                             itemId={item.id}
                             variant="overlay"
                             hideButton={editingCell?.itemId === item.id && editingCell.col === "item"}
+                            refreshToken={reactionTick}
                           />
                         </div>
                         {!(editingCell?.itemId === item.id && editingCell.col === "item") && (

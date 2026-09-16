@@ -125,7 +125,7 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
 //     TETAP jalur pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
 // `hideButton` (overlay doang) — sembunyiin TOMBOLNYA aja pas cell lagi diedit (poin revisi,
 // sama kayak QuickSendButton), tapi CHIP tetap tampil (gak ganggu proses edit).
-export function ItemReactionBar({ projectId, itemId, variant = "inline", hideButton = false }: { projectId: string; itemId: string; variant?: "inline" | "overlay"; hideButton?: boolean }) {
+export function ItemReactionBar({ projectId, itemId, variant = "inline", hideButton = false, refreshToken }: { projectId: string; itemId: string; variant?: "inline" | "overlay"; hideButton?: boolean; refreshToken?: unknown }) {
   const [pending, setPending] = useState<ItemReaction[]>([]);
   const [open, setOpen] = useState(false);
   // Poin revisi: "React semua Item, atau React hanya item ini" — toggle scope SEBELUM milih
@@ -136,9 +136,13 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
   function refresh() {
     window.api.itemReaction.list(itemId).then(setPending);
   }
+  // refreshToken (poin revisi) — Instant Intake (send:quick) DAN full send (send:start) sekarang
+  // sama-sama nge-flush reaction pending ke Slack di server, tapi state `pending` di sini fetch
+  // SENDIRI (gak otomatis tau). Caller (MainTable.tsx) bump refreshToken abis kirim sukses biar
+  // chip yang udah kekirim ilang dari UI, bukan nyangkut keliatan pending padahal udah terkirim.
   useEffect(() => {
     refresh();
-  }, [itemId]);
+  }, [itemId, refreshToken]);
 
   async function addPending(preset: EmojiPreset) {
     if (!preset.slack_shortcode) return;

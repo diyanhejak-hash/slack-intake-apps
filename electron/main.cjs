@@ -598,6 +598,21 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
   await confirmLegacyThread(projectId, item, targetChannelId);
   const { threadTs, isNew, permalink } = await slack.sendItem({ token, channelId: targetChannelId, itemName: item.name, threadKey: threadKey(projectId, item.id), artistId, posts });
   projects.addLog("info", `Instant Intake (${scope}) "${item.name}": berhasil.`);
+
+  // Poin revisi: Instant Intake JUGA nge-flush reaction pending (item_reactions) — sama kayak
+  // send:start. sendItem() di atas IDEMPOTEN (thread yang UDAH ADA gak di-post ulang, dipakai
+  // ulang), jadi alurnya otomatis: "pesan belum ada" -> sendItem bikin thread baru DULU baru
+  // reaction nyusul; "pesan udah ada" -> sendItem gak ngapa-ngapain (threadTs lama dipakai),
+  // efeknya cuma reaction pending yang beneran kekirim.
+  for (const reaction of projects.listItemReactions(item.id)) {
+    try {
+      await slack.addReaction({ token, channelId: targetChannelId, timestamp: threadTs, name: reaction.slack_shortcode });
+      projects.removeItemReaction(reaction.id);
+    } catch (err) {
+      projects.addLog("error", `Gagal kasih reaction :${reaction.slack_shortcode}: ke "${item.name}": ${err.message}`);
+    }
+  }
+
   // Buka LANGSUNG ke thread pesan yang baru/di-update (bukan cuma channel-nya doang kayak
   // send:start) — instant-send 1 aksi, jadi hasilnya juga langsung ketauan, gak perlu scroll
   // nyari sendiri (poin revisi: "sama seperti kirim ke slack dan langsung new window").
