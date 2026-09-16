@@ -323,7 +323,8 @@ handle("project:import", async () => {
     properties: ["openFile"],
   });
   if (canceled || !filePaths.length) return { canceled: true };
-  if (fs.statSync(filePaths[0]).size > 140 * 1024 * 1024) throw new Error("File import maksimal 140 MB.");
+  // Gak ada batas ukuran sendiri lagi (poin revisi, "ikuti aturan slack, tidak ada batasan") —
+  // sama kayak attachment/export lain, biarin aja gede sesuai isi project-nya.
   const payload = JSON.parse(await fs.promises.readFile(filePaths[0], "utf8"));
   const newId = projects.importProject(payload);
   return { canceled: false, projectId: newId };

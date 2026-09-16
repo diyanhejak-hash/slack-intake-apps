@@ -125,6 +125,39 @@ async function paceChannel(channelId) {
   lastPostedAt.set(channelId, Date.now());
 }
 
+// Throttle reactions.add (poin revisi lanjutan) — beda tier dari posting message (Tier 3,
+// "50+ per minute", bukan 1/detik ketat + gak ada gejala "diam-diam ilang" yang didokumentasiin
+// buat ini). Dipace GLOBAL (bukan per-channel) — limitnya per method/workspace, dan app ini cuma
+// punya 1 token/workspace aktif per sesi, jadi 1 pacer bareng udah cukup akurat. ~1200ms (60000/50)
+// biar aman di bawah 50/menit dengan buffer dikit.
+let lastReactionAt = 0;
+let minReactionIntervalMs = 1200;
+function setReactionIntervalForTests(ms) { minReactionIntervalMs = ms; }
+async function paceReactions() {
+  const wait = lastReactionAt + minReactionIntervalMs - Date.now();
+  if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
+  lastReactionAt = Date.now();
+}
+
+// Auto-retry pas kena rate-limit (poin revisi) — WebClient (rejectRateLimitedCalls:true,
+// retryConfig:{retries:0}) sengaja MATIIN retry bawaan SDK (biar gak nunggu diam-diam gak jelas
+// berapa lama di dalam 1 await) — begitu Slack balikin 429, error yang nyampe ke kita punya
+// `.code === "slack_webapi_rate_limited_error"` DAN `.retryAfter` (detik, dari header resmi
+// Retry-After Slack — dicek langsung dari source @slack/web-api, bukan tebakan). Sebelumnya:
+// user langsung lihat error, harus retry manual. Sekarang: tunggu PERSIS sesuai retryAfter
+// (+buffer dikit), coba lagi otomatis — maksimal beberapa kali, biar gak infinite loop kalau
+// Slack-nya beneran bermasalah terus-terusan.
+async function withRetry(fn, maxAttempts = 4) {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (error?.code !== "slack_webapi_rate_limited_error" || attempt >= maxAttempts) throw error;
+      await new Promise((resolve) => setTimeout(resolve, (error.retryAfter + 0.5) * 1000));
+    }
+  }
+}
+
 async function listChannels(token) {
   const c = client(token);
   const channels = [];
@@ -266,7 +299,7 @@ async function sendItem({ token, channelId, itemName, threadKey, artistId, posts
       setPending.run(phase, key, channelId);
       await paceChannel(channelId);
       try {
-        const result = await fn();
+        const result = await withRetry(fn);
         return result;
       } catch (error) {
         // A platform rejection of a single chat call is definitive. UploadV2 is multi-step.
@@ -343,7 +376,7 @@ async function ensureRoot({ token, channelId, itemName, threadKey }) {
     await paceChannel(channelId);
     let posted;
     try {
-      posted = await c.chat.postMessage({ channel: channelId, text: `*${itemName}*` });
+      posted = await withRetry(() => c.chat.postMessage({ channel: channelId, text: `*${itemName}*` }));
     } catch (error) {
       throw new Error(`${error.message} Hasil kirim perlu diperiksa di Slack sebelum retry.`);
     }
@@ -368,7 +401,7 @@ async function sendArtistMention({ token, channelId, threadKey, threadTs, artist
     const c = client(token);
     await paceChannel(channelId);
     try {
-      await c.chat.postMessage({ channel: channelId, thread_ts: threadTs, text: `<@${artistId}>` });
+      await withRetry(() => c.chat.postMessage({ channel: channelId, thread_ts: threadTs, text: `<@${artistId}>` }));
     } catch (error) {
       throw new Error(`${error.message} Hasil kirim perlu diperiksa di Slack sebelum retry.`);
     }
@@ -409,7 +442,7 @@ async function sendReplies({ token, channelId, threadKey, threadTs, posts = [] }
       setPending.run("post", key, channelId);
       await paceChannel(channelId);
       try {
-        return await fn();
+        return await withRetry(fn);
       } catch (error) {
         throw new Error(`${error.message} Hasil kirim perlu diperiksa di Slack sebelum retry.`);
       }
@@ -446,8 +479,9 @@ async function addReaction({ token, channelId, timestamp, name }) {
   if (!token) throw new Error("Belum login ke Slack.");
   if (!channelId || !timestamp) throw new Error("Belum ada pesan buat di-react (item ini belum pernah dikirim).");
   const c = client(token);
+  await paceReactions();
   try {
-    await c.reactions.add({ channel: channelId, timestamp, name });
+    await withRetry(() => c.reactions.add({ channel: channelId, timestamp, name }));
   } catch (err) {
     if (err?.data?.error === "already_reacted") return;
     throw err;
@@ -474,4 +508,4 @@ async function createPrivateChannel({ token, name, memberIds = [] }) {
   return { channelId, name: safeName };
 }
 
-module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests };
+module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests, setReactionIntervalForTests };

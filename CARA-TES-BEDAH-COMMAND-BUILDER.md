@@ -1390,3 +1390,36 @@ Checklist manual:
   thread/pesan yang muncul SESUAI jumlah item yang dikirim, gak ada yang "hilang diam-diam".
 - [ ] **Instant Intake tetap kerasa instan buat 1 item**: klik Instant Intake 1 item — tetap
   cepat kayak biasa (pacing cuma berasa kalau ngirim BANYAK ke channel yang sama beruntun).
+
+## 42. Pace reactions.add + auto-retry pas kena rate-limit (2026-09-16) ✅ (siap dites)
+
+Lanjutan §41 (pacing chat.postMessage/files.uploadV2), 2 penguatan tambahan:
+
+- **`paceReactions()`** — `reactions.add` (tier beda dari posting pesan, ~50+/menit) sekarang
+  juga dikasih jarak minimal (~1200ms), GLOBAL bukan per-channel (limitnya per method/workspace,
+  app ini cuma 1 token aktif per sesi).
+- **`withRetry()`** — sebelumnya kalau Slack balikin 429 (rate-limited), app langsung nge-throw
+  error ke user, harus retry manual. Sekarang: dicek `error.code === "slack_webapi_rate_limited_error"`
+  + `error.retryAfter` (detik, dari header resmi `Retry-After` Slack — dicek langsung dari source
+  `@slack/web-api` biar bukan tebakan), nunggu PERSIS segitu (+buffer 0.5 detik), coba lagi
+  otomatis — maksimal 4x percobaan sebelum akhirnya nyerah & munculin error ke user.
+
+Dipasang di SEMUA titik panggilan Slack (chat.postMessage, files.uploadV2, reactions.add) —
+`sendItem` (quick-send/Instant Intake) DAN `ensureRoot`/`sendArtistMention`/`sendReplies`/
+`addReaction` (batch 4-fase).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 37 test regresi lulus (nambah 2 test baru
+— jarak antar reactions.add, DAN auto-retry beneran nunggu sesuai retryAfter+buffer sebelum
+retry sukses), `vite build` bersih. Interval pacing & simulasi rate-limit di-mock kecil khusus
+buat test-nya sendiri, suite total masih ~1.3 detik.
+**BELUM**: smoke-test manual — butuh Slack asli buat beneran mancing 429 (susah disimulasikan
+manual di luar stress-test).
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Reaction gak numpuk kena limit**: item dengan BANYAK reaction pending (artis + manual,
+  10+) → kirim → semua reaction akhirnya nongol, gak ada yang "gagal" karena rate-limit
+  (cek Message Log kalau ada error "Gagal kasih reaction").
+- [ ] **Kalau tetap kena 429 (jarang, butuh volume gede)**: app nunggu otomatis lalu retry —
+  BUKAN langsung nampilin error ke user pas rate-limit pertama kali kena.

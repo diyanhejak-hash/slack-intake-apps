@@ -33,9 +33,14 @@ const projects = load("electron/projects.cjs", { "./db.cjs": dbModule });
 projects.setScope("U-TEST", "T-TEST");
 
 const calls = [];
+const reactionCalls = [];
 const oauthAccessCalls = [];
 let failUpload = false;
 let failPermalink = false;
+// Simulasi 429 SEKALI doang (poin revisi, test auto-retry) -- angka = retryAfter (detik) yang
+// dikasih ke error, flag auto-reset ke false abis 1x throw (jadi panggilan berikutnya sukses,
+// meniru "kena rate-limit sekali, retry otomatis berhasil").
+let rateLimitReactionOnce = false;
 let serial = 0;
 class MockSlack {
   constructor() { this.userPage = 0; this.channelPage = 0; }
@@ -44,6 +49,18 @@ class MockSlack {
     getPermalink: async () => { if (failPermalink) throw Error("mock permalink failure"); return { permalink: "https://example.invalid/thread" }; },
   };
   files = { uploadV2: async (args) => { for (const f of args.file_uploads || []) for await (const _ of f.file) {} if (failUpload) throw Error("mock upload failure"); } };
+  reactions = {
+    add: async (args) => {
+      if (rateLimitReactionOnce) {
+        rateLimitReactionOnce = false;
+        const err = new Error("mock rate limited");
+        err.code = "slack_webapi_rate_limited_error";
+        err.retryAfter = 0.05;
+        throw err;
+      }
+      reactionCalls.push(args);
+    },
+  };
   oauth = { v2: { access: async (args) => { oauthAccessCalls.push(args); return { authed_user: { access_token: "xoxp-mock", id: "U-MOCK" }, team: { name: "Mock Team", id: "T-MOCK" } }; } } };
   users = {
     list: async () => (++this.userPage === 1
@@ -56,10 +73,11 @@ class MockSlack {
 }
 const slack = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
 const send = (itemName, channelId, posts = []) => slack.sendItem({ token: "MOCK", itemName, threadKey: itemName, channelId, posts });
-// Pacing per-channel produksi (poin revisi, 1100ms) bakal bikin suite ini lambat banget (puluhan
-// panggilan chat.postMessage ke channel "CA" yang sama di berbagai test) -- dimatiin di sini,
-// diaktifkan lagi sesaat buat test pacing-nya sendiri di bawah.
+// Pacing produksi (poin revisi, 1100ms message / 1200ms reaction) bakal bikin suite ini lambat
+// banget (puluhan panggilan chat.postMessage/reactions.add di berbagai test) -- dimatiin di
+// sini, diaktifkan lagi sesaat buat test pacing-nya sendiri di bawah.
 slack.setMinPostIntervalForTests(0);
+slack.setReactionIntervalForTests(0);
 
 async function test(name, fn) {
   await fn();
@@ -324,6 +342,30 @@ async function test(name, fn) {
       } finally {
         slack.setMinPostIntervalForTests(0);
       }
+    });
+    await test("paceReactions (poin revisi lanjutan) jaga jarak antar reactions.add", async () => {
+      const root = await slack.ensureRoot({ token: "MOCK", channelId: "CD", itemName: "pace-react", threadKey: "pace-react" });
+      slack.setReactionIntervalForTests(150);
+      try {
+        await slack.addReaction({ token: "MOCK", channelId: "CD", timestamp: root.threadTs, name: "tada" });
+        const start = Date.now();
+        await slack.addReaction({ token: "MOCK", channelId: "CD", timestamp: root.threadTs, name: "fire" });
+        assert.ok(Date.now() - start >= 130, "reaction ke-2 harusnya nunggu ~150ms");
+      } finally {
+        slack.setReactionIntervalForTests(0);
+      }
+    });
+    await test("withRetry (poin revisi lanjutan) otomatis coba lagi abis kena rate-limit, respect retryAfter", async () => {
+      const root = await slack.ensureRoot({ token: "MOCK", channelId: "CE", itemName: "retry-react", threadKey: "retry-react" });
+      rateLimitReactionOnce = true;
+      const before = reactionCalls.length;
+      const start = Date.now();
+      await slack.addReaction({ token: "MOCK", channelId: "CE", timestamp: root.threadTs, name: "tada" });
+      const elapsed = Date.now() - start;
+      // withRetry nunggu (retryAfter + 0.5) detik -- mock retryAfter=0.05s, jadi ~550ms.
+      assert.ok(elapsed >= 500, `harusnya nunggu ~550ms (retryAfter mock 0.05s + buffer 0.5s), cuma ${elapsed}ms`);
+      assert.equal(reactionCalls.length, before + 1); // panggilan pertama gagal (gak tercatat), retry ke-2 sukses
+      assert.equal(rateLimitReactionOnce, false); // flag mock udah kepake/reset
     });
     await test("sendReplies (poin revisi 4-fase) resume abis upload gagal, sama kayak sendItem", async () => {
       const file = path.join(temp, "phase-attach.txt"); fs.writeFileSync(file, "x");
