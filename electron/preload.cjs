@@ -79,7 +79,6 @@ contextBridge.exposeInMainWorld("api", {
     list: () => ipcRenderer.invoke("artistPreset:list"),
     save: (payload) => ipcRenderer.invoke("artistPreset:save", payload),
     remove: (id) => ipcRenderer.invoke("artistPreset:remove", id),
-    pickImage: () => ipcRenderer.invoke("artistPreset:pickImage"),
   },
   artistAssignMode: {
     get: () => ipcRenderer.invoke("artistAssignMode:get"),

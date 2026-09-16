@@ -255,14 +255,14 @@ declare global {
         /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
         pickImage: () => Promise<string | null>;
       };
-      /** Artis Preset (poin revisi) — nickname/code_name/PNG per Slack member. */
+      /** Artis Preset (poin revisi) — nickname/code_name/PNG per Slack member. `sourcePath`
+       * (poin revisi) sekarang diisi dari image_path preset emoji custom yang dipilih lewat
+       * EmojiPicker, bukan dialog file langsung lagi. */
       artistPreset: {
         list: () => Promise<ArtistPreset[]>;
         /** `id` dikasih = update; gak dikasih = insert baru (member_id wajib belum punya preset). */
         save: (payload: { id?: string; memberId: string; nickname?: string; codeName?: string; sourcePath?: string }) => Promise<string>;
         remove: (id: string) => Promise<void>;
-        /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
-        pickImage: () => Promise<string | null>;
       };
       /** Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis, singleton. */
       artistAssignMode: {

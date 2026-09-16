@@ -846,7 +846,9 @@ function removeArtistPreset(id) {
   db.prepare(`DELETE FROM artist_presets WHERE id = ?`).run(id);
 }
 
-const ARTIST_ASSIGN_MODES = ["mention", "react", "both", "none"];
+// "both" DIHAPUS (poin revisi) — mode assign sekarang HARUS salah satu (Mention ATAU React),
+// gak boleh dua-duanya aktif sekaligus. "none" tetap ada buat kasus "matiin dua-duanya".
+const ARTIST_ASSIGN_MODES = ["mention", "react", "none"];
 
 // Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis (bukan per-artis/per-item
 // lagi). Singleton 1 baris di artist_assign_mode (id selalu 1, di-seed 'mention' pas migrasi).

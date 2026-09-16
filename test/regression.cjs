@@ -233,15 +233,18 @@ async function test(name, fn) {
       assert.equal(projects.listArtistPresets().find((p) => p.id === id), undefined);
       assert.equal(fs.existsSync(storedImagePath), false);
     });
-    await test("artist assign mode is a single global switch (poin revisi, bukan per-artis)", () => {
+    await test("artist assign mode is a single global switch (poin revisi, bukan per-artis), Mention ATAU React aja", () => {
       // Default 'mention' (di-seed pas migrasi db.cjs).
       assert.equal(projects.getArtistAssignMode(), "mention");
-      assert.equal(projects.setArtistAssignMode("both"), "both");
-      assert.equal(projects.getArtistAssignMode(), "both");
+      assert.equal(projects.setArtistAssignMode("react"), "react");
+      assert.equal(projects.getArtistAssignMode(), "react");
+      // "both" gak boleh lagi (poin revisi) -- Mention ATAU React, gak boleh dua-duanya sekaligus.
+      assert.throws(() => projects.setArtistAssignMode("both"), /Mode assign/);
+      assert.equal(projects.getArtistAssignMode(), "react"); // gagal set -> nilai lama gak berubah
       // Berlaku global -- gak ada konsep "per artis" lagi, cek 2 preset beda tetap baca nilai SAMA.
       const idA = projects.saveArtistPreset({ memberId: "U-GLOBAL-A", nickname: "A" });
       const idB = projects.saveArtistPreset({ memberId: "U-GLOBAL-B", nickname: "B" });
-      assert.equal(projects.getArtistAssignMode(), "both");
+      assert.equal(projects.getArtistAssignMode(), "react");
       projects.removeArtistPreset(idA);
       projects.removeArtistPreset(idB);
       assert.throws(() => projects.setArtistAssignMode("bukan-mode-valid"), /Mode assign/);

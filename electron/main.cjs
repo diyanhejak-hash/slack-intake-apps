@@ -116,7 +116,7 @@ function handle(channel, fn) {
       validateAccess(channel, args);
       const result = await fn(event, ...args);
       if (/:pickFiles$/.test(channel)) allowFiles(result || []);
-      if ((channel === "emojiPreset:pickImage" || channel === "artistPreset:pickImage") && result) allowFiles([result]);
+      if (channel === "emojiPreset:pickImage" && result) allowFiles([result]);
       return result;
     } catch (err) {
       projects.addLog("error", `${channel}: ${err.message}`);
@@ -389,10 +389,8 @@ handle("emojiPreset:pickImage", async () => {
 handle("artistPreset:list", () => projects.listArtistPresets());
 handle("artistPreset:save", (_e, { id, memberId, nickname, codeName, sourcePath }) => projects.saveArtistPreset({ id, memberId, nickname, codeName, sourcePath }));
 handle("artistPreset:remove", (_e, id) => projects.removeArtistPreset(id));
-handle("artistPreset:pickImage", async () => {
-  const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: [{ name: "Gambar", extensions: ["png"] }] });
-  return canceled ? null : filePaths[0];
-});
+// artistPreset:pickImage DIHAPUS (poin revisi) — PNG artis sekarang dipilih lewat EmojiPicker
+// (preset custom emoji, upload-nya lewat "Kelola preset..."), bukan dialog file langsung lagi.
 // Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis, singleton (bukan per-preset).
 handle("artistAssignMode:get", () => projects.getArtistAssignMode());
 handle("artistAssignMode:set", (_e, mode) => projects.setArtistAssignMode(mode));

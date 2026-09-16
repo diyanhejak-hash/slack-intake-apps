@@ -1423,3 +1423,36 @@ Checklist manual:
   (cek Message Log kalau ada error "Gagal kasih reaction").
 - [ ] **Kalau tetap kena 429 (jarang, butuh volume gede)**: app nunggu otomatis lalu retry —
   BUKAN langsung nampilin error ke user pas rate-limit pertama kali kena.
+
+## 43. Mode assign Mention ATAU React (bukan Dan), PNG artis via fitur Emoji (2026-09-16) ✅ (siap dites)
+
+**Mode assign eksklusif**: "both" (Mention+React aktif bareng) DIHAPUS — sekarang cuma bisa salah
+satu. Klik icon Mention/React di section "2a. Mode assign" langsung PINDAH kesitu (yang lain
+otomatis nonaktif), klik yang lagi aktif = matiin (balik ke "none"). Validasi juga di backend
+(`setArtistAssignMode("both")` sekarang nge-throw) — bukan cuma dibatasi di UI.
+
+**PNG artis via fitur Emoji**: section "1. Info Artis" — tombol "Pilih PNG" (dialog file langsung)
+DIHAPUS, diganti popover EmojiPicker yang SAMA persis kayak "Add React" di tabel/reply. Pilih
+emoji custom (punya PNG) → code_name DAN gambar preview artis ke-isi otomatis dari preset itu.
+Pilih emoji unicode → code_name ke-isi, gak ada gambar (preview unicode-nya doang). Butuh PNG yang
+belum ada di preset? Klik "Kelola preset..." di DALAM popover yang sama (bukan pindah ke tempat
+lain) buat tambah custom emoji baru, baru pilih lagi. Manfaat: code_name sekarang PASTI valid
+(gak bisa lagi salah ketik nama emoji yang gak ada di workspace).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 37 test regresi lulus (test lama yang
+nyoba set "both" diupdate jadi expect throw), `vite build` bersih.
+**BELUM**: smoke-test manual visual.
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Mode eksklusif**: buka Preset Artis → klik icon React → Mention otomatis nonaktif (cuma
+  1 yang aktif kapan pun, gak pernah dua-duanya nyala bareng).
+- [ ] **Matiin dua-duanya**: klik icon yang LAGI aktif → nonaktif, gak ada satu pun yang aktif
+  (assign gak ngapa-ngapain — gak mention, gak react).
+- [ ] **Pilih PNG lewat Emoji**: klik Edit di 1 artis → klik tombol emoji (bukan lagi tombol
+  upload) → pilih emoji custom yang punya PNG → avatar preview di baris itu langsung keganti
+  sesuai PNG emoji itu, code_name ke-isi otomatis.
+- [ ] **Tambah PNG baru lewat "Kelola preset..."**: di popover emoji yang sama, klik "Kelola
+  preset..." → tambah custom emoji baru (upload PNG) → tutup → buka lagi popovernya → emoji baru
+  itu muncul di grid, bisa dipilih buat artis ini.

@@ -6,10 +6,11 @@
 //      per-artis lagi, koreksi dari percobaan sebelumnya) — satu switch, berlaku ke semua
 //      assignment di seluruh app.
 import { useEffect, useState } from "react";
-import { X, Upload, Trash2, ChevronDown, ChevronRight, AtSign, SmilePlus, CheckSquare, Square, Plus } from "lucide-react";
-import type { ArtistAssignMode, ArtistGroup, ArtistPreset, SlackUser } from "../global";
+import { X, Trash2, ChevronDown, ChevronRight, AtSign, SmilePlus, CheckSquare, Square, Plus } from "lucide-react";
+import type { ArtistAssignMode, ArtistGroup, ArtistPreset, EmojiPreset, SlackUser } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
+import EmojiPicker from "./EmojiPicker";
 
 export default function ArtistPresetModal({
   users,
@@ -45,12 +46,11 @@ export default function ArtistPresetModal({
 
   const presetByMember = new Map(presets.map((p) => [p.member_id, p]));
 
+  // Poin revisi: Mention ATAU React, gak boleh dua-duanya (dulu bisa "both") — klik salah satu
+  // langsung PINDAH kesitu (matiin yang lain otomatis). Klik yang LAGI aktif = matiin (balik ke
+  // "none", dua-duanya nonaktif).
   async function toggleAssignMode(which: "mention" | "react") {
-    const mentionOn = assignMode === "mention" || assignMode === "both";
-    const reactOn = assignMode === "react" || assignMode === "both";
-    const nextMention = which === "mention" ? !mentionOn : mentionOn;
-    const nextReact = which === "react" ? !reactOn : reactOn;
-    const next = nextMention && nextReact ? "both" : nextMention ? "mention" : nextReact ? "react" : "none";
+    const next = assignMode === which ? "none" : which;
     setAssignMode(next);
     await window.api.artistAssignMode.set(next);
   }
@@ -76,7 +76,7 @@ export default function ArtistPresetModal({
           {infoOpen && (
             <>
               <p className="caption" style={{ margin: "0 0 8px" }}>
-                Nickname = nama di dropdown. Code name = shortcode emoji Slack (pastikan ada di workspace). PNG cuma preview lokal.
+                Nickname = nama di dropdown. Emoji = dipakai buat assign-via-reaction — pilih dari preset, atau tambah custom (PNG) lewat "Kelola preset...".
               </p>
               {users.map((u) => (
                 <ArtistInfoRow key={u.id} user={u} preset={presetByMember.get(u.id) || null} onSaved={refreshPresets} />
@@ -89,22 +89,22 @@ export default function ArtistPresetModal({
             <>
               <div className="label" style={{ marginBottom: 4 }}>2a. Mode assign (Global)</div>
               <p className="caption" style={{ margin: "0 0 8px" }}>
-                Global — berlaku ke semua artis sekaligus. Default: Mention aktif.
+                Global — berlaku ke semua artis sekaligus. Mention ATAU React, gak bisa dua-duanya. Default: Mention aktif.
               </p>
               <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
                 <button
                   className="icon-btn"
-                  title={`Mention (@artis di-post pas kirim) — ${["mention", "both"].includes(assignMode) ? "aktif" : "nonaktif"}`}
+                  title={`Mention (@artis di-post pas kirim) — ${assignMode === "mention" ? "aktif" : "nonaktif"}`}
                   onClick={() => toggleAssignMode("mention")}
-                  style={["mention", "both"].includes(assignMode) ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
+                  style={assignMode === "mention" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
                 >
                   <AtSign size={14} />
                 </button>
                 <button
                   className="icon-btn"
-                  title={`Reaction (antre code name artis, gak ada mention) — ${["react", "both"].includes(assignMode) ? "aktif" : "nonaktif"}`}
+                  title={`Reaction (antre code name artis, gak ada mention) — ${assignMode === "react" ? "aktif" : "nonaktif"}`}
                   onClick={() => toggleAssignMode("react")}
-                  style={["react", "both"].includes(assignMode) ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
+                  style={assignMode === "react" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
                 >
                   <SmilePlus size={14} />
                 </button>
@@ -196,15 +196,25 @@ function ArtistInfoDisplayRow({ user, preset, onEdit, onRemoved }: { user: Slack
 
 function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser; preset: ArtistPreset | null; onDone: () => void; onCancel: () => void }) {
   const [nickname, setNickname] = useState(preset?.nickname || "");
-  // Titik dua di-strip otomatis di backend (saveArtistPreset), aman user mau nulis pake atau
-  // tanpa titik dua — ditampilin DENGAN titik dua di sini biar jelas ini shortcode ala Slack.
-  const [codeName, setCodeName] = useState(preset?.code_name ? `:${preset.code_name}:` : "");
+  const [codeName, setCodeName] = useState(preset?.code_name || "");
+  // Poin revisi: code_name + PNG gak lagi diketik/upload manual — dipilih lewat EmojiPicker
+  // (SAMA persis kayak popover "Add React"), biar code_name-nya PASTI valid (cocok sama emoji
+  // beneran, bukan hasil ketik salah) dan PNG-nya otomatis ikut kalau preset-nya custom. Butuh
+  // PNG yang belum ada di preset? Tambah dulu lewat "Kelola preset..." di dalam picker yang sama.
   const [pickedPath, setPickedPath] = useState<string | null>(null);
+  const [pickedUnicode, setPickedUnicode] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function pickImage() {
-    const filePath = await window.api.artistPreset.pickImage();
-    if (filePath) setPickedPath(filePath);
+  function pickEmojiPreset(emojiPreset: EmojiPreset) {
+    if (!emojiPreset.slack_shortcode) return;
+    setCodeName(emojiPreset.slack_shortcode);
+    if (emojiPreset.type === "custom" && emojiPreset.image_path) {
+      setPickedPath(emojiPreset.image_path);
+      setPickedUnicode(null);
+    } else {
+      setPickedPath(null);
+      setPickedUnicode(emojiPreset.value);
+    }
   }
 
   async function save() {
@@ -228,15 +238,18 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <ArtistAvatar user={user} imagePath={preset?.image_path} />
+        <ArtistAvatar user={user} imagePath={pickedPath || preset?.image_path} />
         <div className="caption" style={{ width: 100, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.name}>
           {user.name}
         </div>
         <input autoFocus placeholder="Nickname" value={nickname} onChange={(e) => setNickname(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-        <input placeholder=":code_name:" value={codeName} onChange={(e) => setCodeName(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-        <button className="icon-btn" title="Pilih PNG" onClick={pickImage}>
-          <Upload size={13} />
-        </button>
+        <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 4 }}>
+          <span className="caption" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {pickedUnicode && `${pickedUnicode} `}
+            {codeName ? `:${codeName}:` : <span className="muted">— pilih emoji —</span>}
+          </span>
+          <EmojiPicker onPick={(_text, emojiPreset) => pickEmojiPreset(emojiPreset)} />
+        </div>
         <button className="btn btn-primary" disabled={busy} onClick={save} style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}>
           Simpan
         </button>
@@ -244,7 +257,6 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
           Batal
         </button>
       </div>
-      {pickedPath && <div className="caption" style={{ paddingLeft: 34 }}>PNG baru: {pickedPath.split(/[\\/]/).pop()}</div>}
     </div>
   );
 }
