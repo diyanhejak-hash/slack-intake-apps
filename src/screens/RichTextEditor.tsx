@@ -15,7 +15,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { $isListNode, ListItemNode, ListNode, INSERT_UNORDERED_LIST_COMMAND, INSERT_ORDERED_LIST_COMMAND } from "@lexical/list";
 import { LinkNode, $createLinkNode } from "@lexical/link";
 import { $convertFromMarkdownString, $convertToMarkdownString } from "@lexical/markdown";
-import { $getSelection, $isRangeSelection, $createTextNode, FORMAT_TEXT_COMMAND, type LexicalEditor } from "lexical";
+import { $getSelection, $isRangeSelection, $setSelection, $createTextNode, FORMAT_TEXT_COMMAND, type LexicalEditor, type RangeSelection } from "lexical";
 import { SLACK_TRANSFORMERS } from "../lib/slackMarkdown";
 import { $createEmojiImageNode, EmojiImageNode } from "../lib/EmojiImageNode";
 
@@ -53,6 +53,26 @@ function EditorCapture({ editorRef }: { editorRef: React.MutableRefObject<Lexica
   useEffect(() => {
     editorRef.current = editor;
   }, [editor, editorRef]);
+  return null;
+}
+
+// Nyimpen selection VALID TERAKHIR (poin revisi, fix bug "insert link gak kerja") — PromptModal
+// (dipakai buat isi URL link) auto-focus input-nya sendiri begitu kebuka, nyolong focus dari
+// contentEditable ini. $getSelection() abis itu udah gak balikin RangeSelection lagi, jadi
+// insertLink yang ngandelin live selection silent no-op (gak ada error, cuma gak ke-insert).
+// Fix: rekam CLONE selection tiap kali valid (update listener, pola sama kayak
+// ActiveFormatsPlugin di bawah), insertLink pakai clone ini buat restore selection kalau live
+// selection udah ilang pas balik dari modal.
+function LastSelectionPlugin({ lastSelectionRef }: { lastSelectionRef: React.MutableRefObject<RangeSelection | null> }) {
+  const [editor] = useLexicalComposerContext();
+  useEffect(() => {
+    return editor.registerUpdateListener(({ editorState }) => {
+      editorState.read(() => {
+        const selection = $getSelection();
+        if ($isRangeSelection(selection)) lastSelectionRef.current = selection.clone();
+      });
+    });
+  }, [editor, lastSelectionRef]);
   return null;
 }
 
@@ -106,6 +126,7 @@ const RichTextEditor = forwardRef<
 >(function RichTextEditor({ defaultValue, placeholder = "", onBlurValue, onFocusEditor, onEnterSubmit, onActiveFormatsChange }, ref) {
   const editorRef = useRef<LexicalEditor | null>(null);
   const lastSavedRef = useRef(defaultValue);
+  const lastSelectionRef = useRef<RangeSelection | null>(null);
 
   useImperativeHandle(
     ref,
@@ -124,7 +145,13 @@ const RichTextEditor = forwardRef<
       },
       insertLink(url, label) {
         editorRef.current?.update(() => {
-          const selection = $getSelection();
+          let selection = $getSelection();
+          // Fallback ke selection valid terakhir (poin revisi) — PromptModal nyolong focus,
+          // live selection udah null/bukan RangeSelection lagi pas fungsi ini kepanggil.
+          if (!$isRangeSelection(selection) && lastSelectionRef.current) {
+            $setSelection(lastSelectionRef.current);
+            selection = $getSelection();
+          }
           if (!$isRangeSelection(selection)) return;
           const text = label || selection.getTextContent() || url;
           const linkNode = $createLinkNode(url);
@@ -184,6 +211,7 @@ const RichTextEditor = forwardRef<
       }}
     >
       <EditorCapture editorRef={editorRef} />
+      <LastSelectionPlugin lastSelectionRef={lastSelectionRef} />
       <div className="lexical-editor-wrap">
         <RichTextPlugin
           contentEditable={

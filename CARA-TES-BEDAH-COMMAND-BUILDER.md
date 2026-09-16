@@ -1288,3 +1288,36 @@ Checklist manual (WAJIB dites hati-hati, ini pipeline kirim intinya):
   react/both aktif) DAN ada reaction manual lain (dari tombol Add React) → di Slack, react
   code_name artis nongol duluan (bareng fase assign), react manual nongol belakangan (fase
   terpisah) — dua-duanya akhirnya nongol semua, cuma beda urutan/waktu.
+
+## 39. Fix "insert link gak kerja" di Tab Reply (2026-09-16) ✅ (siap dites)
+
+**Root cause ketemu**: tombol "Link" di toolbar reply buka `PromptModal` buat isi URL —
+input di modal itu `autoFocus`, jadi begitu modal kebuka, focus KECOLONG dari editor
+Lexical (contentEditable). Begitu `onSubmit` manggil `insertLink(url)`, `$getSelection()`
+Lexical udah gak balikin seleksi valid lagi (ke-reset pas kehilangan focus) — `insertLink`
+punya guard `if (!$isRangeSelection(selection)) return;` yang bikin ini SILENT NO-OP: gak ada
+error, cuma gak ada apa-apa yang ke-insert. File `PromptModal.tsx` sendiri sebenarnya UDAH
+punya komentar yang nyurigain ini dari sesi sebelumnya ("(potensial) tombol Link di toolbar
+reply") tapi gak pernah dikonfirmasi/diperbaiki.
+
+**Fix**: `RichTextEditor.tsx` sekarang rekam CLONE seleksi valid TERAKHIR terus-menerus (plugin
+baru `LastSelectionPlugin`, update listener — pola sama kayak `ActiveFormatsPlugin` yang udah
+ada). `insertLink` sekarang: kalau live selection udah gak valid (kasus abis modal nyolong
+focus), restore dulu clone seleksi terakhir itu (`$setSelection`) sebelum nge-insert link node
+— gak nunggu selection benar-benar hilang buat gagal diam-diam.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 33 test regresi lulus, `vite build`
+bersih. **BELUM**: smoke-test manual — ini bug behavior Lexical/DOM-focus, gak ada automated
+test buat ini (butuh browser beneran).
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Insert link kerja**: di Tab Reply, blok/seleksi sebagian teks di field → klik tombol
+  Link di toolbar → isi URL → Sisipkan → teks yang diblok tadi LANGSUNG jadi hyperlink (warna
+  beda/underline, biru khas link), BUKAN diam gak ada perubahan.
+- [ ] **Insert link tanpa seleksi teks**: klik tombol Link TANPA blok teks apa pun dulu (kursor
+  cuma nempatkan posisi) → isi URL → Sisipkan → link ke-insert di posisi kursor (teks link-nya
+  = URL itu sendiri, karena gak ada teks yang diseleksi buat jadi label).
+- [ ] **Link yang ke-insert beneran tersimpan**: abis insert link → klik keluar field (blur) →
+  buka lagi field itu → link tetap ada (gak ilang pas reload).
