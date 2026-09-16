@@ -105,8 +105,8 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
 //   - "inline" (default, Tab Reply — sebelah Pil Item) — icon SELALU KELIHATAN + chip pending
 //     sejajar (flow biasa).
 //   - "overlay" (Tab Table, poin revisi) — tombol jadi overlay (posisi sama kayak QuickSendButton
-//     variant "overlay", DI SEBELAH KANAN Instant Intake — left:16, bukan left:-8), cuma nongol
-//     pas hover cell (`.row-quicksend`). Chip pending di-render IN-FLOW (bukan absolute) — caller
+//     variant "overlay", DI BAWAH Instant Intake — top:16/left:-8, nempel tepat di bawahnya),
+//     cuma nongol pas hover cell (`.row-quicksend`). Chip pending di-render IN-FLOW (bukan absolute) — caller
 //     (MainTable.tsx) yang bungkus <input>+komponen ini dalam satu flex row, jadi chip otomatis
 //     nempel di KANAN input (poin revisi: "kolom Item dibagi 2 kalau ada react"). Ini TETAP jalur
 //     pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
@@ -180,7 +180,9 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             onMouseDown={(e) => e.preventDefault()}
             onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
             style={{
-              position: "absolute", top: -8, left: 16, width: 22, height: 22, borderRadius: "50%",
+              // Di BAWAH tombol Instant Intake (poin revisi) — Instant Intake di top:-8/left:-8
+              // (22px), jadi tombol ini nempel tepat di bawahnya (top:16), left sama biar rata.
+              position: "absolute", top: 16, left: -8, width: 22, height: 22, borderRadius: "50%",
               background: "var(--accent)", border: "2px solid var(--surface)", color: "#fff",
               display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
               cursor: "pointer", zIndex: 2, boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
@@ -194,7 +196,7 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             chip di KANAN input, bukan di bawah lagi). */}
         {pending.length > 0 && <div style={{ display: "flex", flexShrink: 0, gap: 3 }}>{chips}</div>}
         {open && (
-          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 16, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
+          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: -8, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
             {scopeToggle}
             <ReactionPickerPopover onPick={addPending} style={{ position: "static" }} />
           </div>
