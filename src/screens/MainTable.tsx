@@ -881,6 +881,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
           column={bulkPasteCol}
           project={project}
           users={users}
+          presetByMember={presetByMember}
           onClose={() => setBulkPasteCol(null)}
           onSubmitItems={async (lines) => {
             const rows = project.items;
@@ -914,8 +915,11 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
             const rows = project.items;
             const changes: Array<{ id: string; oldArtistId: string | null; oldArtistName: string | null; newArtistId: string | null; newArtistName: string | null }> = [];
             for (let i = 0; i < Math.min(lines.length, rows.length); i++) {
-              const line = lines[i].trim();
-              const u = line ? users.find((u) => u.name.toLowerCase() === line.toLowerCase()) : null;
+              const line = lines[i].trim().toLowerCase();
+              // Cocokin ke nickname DULU (poin revisi — prefill sekarang nampilin nickname kalau
+              // ada), fallback ke username asli — biar paste nilai apa adanya (baik nickname
+              // maupun username) tetap ke-resolve, bukan cuma exact-match username kayak dulu.
+              const u = line ? users.find((u) => (presetByMember.get(u.id)?.nickname || "").toLowerCase() === line || u.name.toLowerCase() === line) : null;
               if (line && !u) continue; // nama gak ketemu di roster, dibiarin (gak nulis data salah)
               const newArtistId = u ? u.id : null;
               const newArtistName = u ? u.name : null;
@@ -1047,6 +1051,7 @@ function BulkPasteModal({
   column,
   project,
   users,
+  presetByMember,
   onClose,
   onSubmitItems,
   onSubmitArtists,
@@ -1054,14 +1059,19 @@ function BulkPasteModal({
   column: "item" | "artis";
   project: Project;
   users: SlackUser[];
+  presetByMember: Map<string, ArtistPreset>;
   onClose: () => void;
   onSubmitItems: (lines: string[]) => void;
   onSubmitArtists: (lines: string[]) => void;
 }) {
   // Prefill dari nilai item yang sekarang (poin 3) — user tinggal edit, "Terapkan" nge-overwrite
-  // baris tabel sesuai posisi baris teks, bukan selalu nambah item baru.
+  // baris tabel sesuai posisi baris teks, bukan selalu nambah item baru. Kolom Artis (poin revisi):
+  // ambil nickname kalau ada, fallback ke username asli — sama urutan yang dipake buat nge-resolve
+  // pas Terapkan, jadi apa yang keliatan di sini emang bisa langsung diterapkan ulang apa adanya.
   const [text, setText] = useState(() =>
-    column === "item" ? project.items.map((i) => i.name).join("\n") : project.items.map((i) => i.artist_name || "").join("\n")
+    column === "item"
+      ? project.items.map((i) => i.name).join("\n")
+      : project.items.map((i) => (i.artist_id && presetByMember.get(i.artist_id)?.nickname) || i.artist_name || "").join("\n")
   );
   const lines = text.split("\n");
   const filledCount = lines.filter((l) => l.trim()).length;
@@ -1078,7 +1088,7 @@ function BulkPasteModal({
         <p className="caption" style={{ marginBottom: 8 }}>
           {column === "item"
             ? "Baris sudah diisi nilai sekarang — edit lalu Terapkan buat overwrite baris tabel sesuai posisi. Baris tambahan di bawah jadi item baru."
-            : `Baris sudah diisi artis sekarang — edit lalu Terapkan buat overwrite (baris kosong = lepas assignment). Nama harus cocok exact dengan salah satu dari ${users.length} member.`}
+            : `Baris sudah diisi artis sekarang — edit lalu Terapkan buat overwrite (baris kosong = lepas assignment). Nama harus cocok exact dengan nickname atau username salah satu dari ${users.length} member.`}
         </p>
         <textarea value={text} onChange={(e) => setText(e.target.value)} rows={10} style={{ width: "100%" }} />
         <div style={{ display: "flex", justifyContent: "space-between", marginTop: 10 }}>
