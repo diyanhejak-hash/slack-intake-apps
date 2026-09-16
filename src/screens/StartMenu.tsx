@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Plus, Upload, Hash, LogOut, Lock } from "lucide-react";
+import { FolderOpen, Plus, Upload, Hash, LogOut, Lock, Trash2 } from "lucide-react";
 import type { AuthStatus, ProjectSummary, SlackChannel, SlackUser } from "../global";
 import ChannelPicker from "./ChannelPicker";
 
@@ -110,6 +110,15 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
     await window.api.project.recoverLegacy();
     setProjects(await window.api.project.list());
     setLegacyCount(await window.api.project.legacyCount());
+  }
+
+  // Poin revisi: hapus project langsung dari Start Menu (dulu cuma bisa lewat menu File di
+  // dalam project) — icon doang (Trash2), gak ada teks. Sama pola konfirmasi kayak
+  // handleDeleteProject di MainTable.tsx.
+  async function handleDeleteProject(id: string, name: string) {
+    if (!confirm(`Hapus project "${name}"? Ini gak bisa dibatalkan.`)) return;
+    await window.api.project.delete(id);
+    setProjects((prev) => prev.filter((p) => p.id !== id));
   }
 
   return (
@@ -277,6 +286,16 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
                   <Hash size={11} /> {p.channel_name} · diubah {new Date(p.updated_at).toLocaleString("id-ID")}
                 </div>
               </div>
+              <button
+                className="icon-btn"
+                title="Hapus project"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleDeleteProject(p.id, p.name);
+                }}
+              >
+                <Trash2 size={15} />
+              </button>
             </div>
           ))}
         </div>
