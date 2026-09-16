@@ -319,7 +319,7 @@ declare global {
       app: {
         version: () => Promise<string>;
       };
-      /** Papan status HB Apps (poin revisi, hasil diskusi rate-limit) — channel "sia-status"
+      /** Papan status HB Apps (poin revisi, hasil diskusi rate-limit) — channel "hb-apps"
        * jadi tempat broadcast Online/Offline/Eksekusi-job/Job-selesai, biar user lain tau
        * siapa lagi pakai app (koordinasi manual lewat DM Slack, kurangin rebutan rate-limit). */
       hbStatus: {

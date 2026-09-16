@@ -327,7 +327,7 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
             <h3 style={{ marginBottom: 8 }}>Mulai Sesi Bersama HB Apps</h3>
             <p className="caption" style={{ marginBottom: 12 }}>
               Kasih tau Koor lain kalau kamu lagi pakai app ini — biar bisa saling koordinasi
-              (kirim bareng bisa rebutan rate-limit Slack) lewat channel <code>sia-status</code>.
+              (kirim bareng bisa rebutan rate-limit Slack) lewat channel <code>hb-apps</code>.
               Opsional, boleh dilewati.
             </p>
             <div style={{ display: "flex", gap: 8 }}>

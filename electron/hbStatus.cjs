@@ -8,7 +8,11 @@
 // SEKALI per proses app biar gak scan ulang (listChannels) tiap mau post. Semua fungsi di sini
 // BEST-EFFORT — gagal post (channel gak ketemu, network error, dst) TIDAK BOLEH nge-block/
 // nggagalin alur utama app (login, kirim ke Slack, atau nutup app).
-const STATUS_CHANNEL_NAME = "sia-status";
+//
+// "HB-Apps" (poin revisi, nama yang diminta user) — Slack SELALU nyimpen nama channel huruf
+// kecil semua (buat channel via UI/API otomatis di-lowercase, gak bisa mixed-case), jadi channel
+// beneran di Slack namanya "hb-apps". Matching tetep case-insensitive buat jaga-jaga.
+const STATUS_CHANNEL_NAME = "hb-apps";
 
 let cachedChannelId = null;
 let scanned = false;
@@ -19,7 +23,7 @@ async function findStatusChannel(slack, token) {
   scanned = true;
   try {
     const channels = await slack.listChannels(token);
-    const found = channels.find((c) => c.name === STATUS_CHANNEL_NAME);
+    const found = channels.find((c) => c.name.toLowerCase() === STATUS_CHANNEL_NAME);
     if (found) cachedChannelId = found.id;
   } catch { /* best-effort */ }
   return cachedChannelId;
