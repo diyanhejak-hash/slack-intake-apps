@@ -1194,3 +1194,46 @@ Checklist manual:
   TIDAK ADA kotak highlight/border oren aneh yang nongol di baris-baris di antaranya.
 - [ ] **Tombol Kirim ke Slack pindah**: cek MenuBar (File/Edit/View/Settings/Help) → tombol Slack
   GAK ADA di situ lagi → cek baris tab Table/Reply → tombol Slack ada di situ, rata kanan.
+
+## 37. Overlay poke dikurangi + fix popover nyangkut Tab Reply + hapus menu Edit + auto-list nyala lagi (2026-09-16) ✅ (siap dites)
+
+- **Overlay row poke -8 → -3**: root cause "overlay ketutup header" — sticky header SELALU nempel
+  pas (0 gap) sama baris manapun yang lagi paling atas pas discroll, gak ada cara CSS murni nyisain
+  jarak permanen di situ. Poke -8px selalu kepotong ~1/3 lingkaran (patah). -3px bikin worst-case
+  clip minim, baris lain tetap dapet efek "nongol dikit dari pojok". Berlaku di `QuickSendButton`
+  DAN tombol trigger "Add React" (`ItemReactions.tsx`).
+- **Masking strip header**: `thead th::after` — strip opaque nempel di ATAS tepi header (bukan di
+  bawah — sempat kebalik, dikoreksi), nutupin sisa poke tombol Instant Intake header sendiri.
+- **Popover "Add React" & "Reaction Instan" (pil item Tab Reply) nyangkut**: sebelumnya CUMA bisa
+  ketutup lewat re-klik tombol trigger-nya sendiri. Sekarang klik DI LUAR popover (dokumen mousedown
+  listener, pola sama kayak MenuBar) otomatis nutup — berlaku di `ItemReactionBar` (overlay & inline
+  variant) DAN `InstantReactionOverlay`. `InstantReactionOverlay` juga baru dapet `closeSignal` (ikut
+  ketutup pas pill-hover-zone-nya ilang mouse-out) — sebelumnya cuma `ItemReactionBar` yang punya ini.
+- **Menu Edit disederhanain**: "Undo (Ctrl+Z)", "Redo (Ctrl+Shift+Z)", "Hapus Item Terpilih (Delete)"
+  dihapus dari daftar menu Edit — SHORTCUT KEYBOARD-nya (Ctrl+Z/Ctrl+Shift+Z/Delete) TETAP jalan
+  normal, cuma entry menunya yang dihapus. "Preset Emoji..." & "Preset Artis..." tetap ada.
+- **Auto-list pas ngetik nyala lagi**: `LIVE_TYPING_TRANSFORMERS` (filter yang BUANG list transformer
+  dari live-typing shortcut, dibikin sesi sebelumnya) dihapus — sekarang `MarkdownShortcutPlugin`
+  pakai `SLACK_TRANSFORMERS` yang sama kayak convert save/load, jadi "- " dan "1. " auto-convert ke
+  bullet/numbered list pas ngetik lagi (sebelumnya sengaja dimatiin, sekarang diaktifin ulang atas
+  permintaan eksplisit).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 30 test regresi lulus, `vite build` bersih.
+**BELUM**: smoke-test manual visual (termasuk auto-list, karena ini behavior Lexical/rich-text yang
+gak ada automated test-nya — perlu ngetik langsung di Tab Reply buat verifikasi).
+
+Checklist manual:
+
+- [ ] **Overlay row gak separah kepotong**: scroll tabel biar row manapun jadi baris paling atas →
+  tombol hijau/biru di row itu cuma kepotong TIPIS (nyaris gak keliatan), bukan setengah lingkaran
+  ilang kayak sebelumnya.
+- [ ] **Popover Add React (Tab Table & Tab Reply) nutup sendiri**: buka popover → klik di tempat
+  LAIN (bukan tombol trigger-nya) → popover ketutup otomatis, gak perlu re-klik tombol yang sama.
+- [ ] **Popover Reaction Instan (pil item Tab Reply) nutup sendiri**: sama kayak di atas, buat
+  tombol "Reaction instan" di pil nama item Tab Reply.
+- [ ] **Menu Edit ringkas**: buka menu Edit di MenuBar → cuma ada "Preset Emoji..." dan
+  "Preset Artis..." → Ctrl+Z/Ctrl+Shift+Z/Delete (pas ada item ke-select) TETAP jalan normal.
+- [ ] **Auto-bullet**: di Tab Reply, ketik "- " (dash+spasi) di awal baris field → LANGSUNG jadi
+  bullet list, gak perlu klik tombol toolbar List.
+- [ ] **Auto-number**: ketik "1. " (angka+titik+spasi) di awal baris field → LANGSUNG jadi
+  numbered list, gak perlu klik tombol toolbar ListOrdered.

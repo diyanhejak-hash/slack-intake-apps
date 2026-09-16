@@ -57,13 +57,7 @@ const EMOJI_IMAGE: Transformer = {
 
 // ORDERED_LIST ditambah (poin "list bernomor" revisi UI) — Slack render "1. item" sama persis
 // kayak Markdown standar, jadi reuse transformer bawaan @lexical/markdown, gak perlu custom.
-// Dipakai buat convert full (load isi tersimpan <-> markdown pas save) — list tetap kebaca/kesave
-// bener meskipun shortcut LIVE-nya (di bawah) dimatiin.
+// Dipakai buat convert full (load isi tersimpan <-> markdown pas save) DAN buat live-typing
+// shortcut ("- "/"1. " auto-convert pas ngetik, poin revisi — sempet dimatiin karena dianggap
+// ganggu, sekarang diaktifin lagi/dipastikan jalan atas permintaan eksplisit).
 export const SLACK_TRANSFORMERS: Transformer[] = [UNORDERED_LIST, ORDERED_LIST, SLACK_BOLD, ITALIC_UNDERSCORE, SLACK_LINK, EMOJI_IMAGE];
-
-// Poin revisi: matiin auto-format LIVE pas ngetik "- "/"1. " jadi bullet/numbered list (ganggu,
-// gak diinginkan) — tapi list yang UDAH ada (dari markdown tersimpan, atau dibikin manual lewat
-// tombol toolbar List/ListOrdered) tetap harus kebaca/render/tersave bener, makanya UNORDERED_LIST
-// & ORDERED_LIST TETAP ada di SLACK_TRANSFORMERS di atas, cuma DIKELUARIN dari transformer yang
-// dikasih ke MarkdownShortcutPlugin (live-typing shortcut).
-export const LIVE_TYPING_TRANSFORMERS: Transformer[] = SLACK_TRANSFORMERS.filter((t) => t !== UNORDERED_LIST && t !== ORDERED_LIST);

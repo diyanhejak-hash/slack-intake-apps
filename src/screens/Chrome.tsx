@@ -47,9 +47,6 @@ export interface MenuBarActions {
   onSaveAs: () => void;
   onDeleteProject: () => void;
   onBackToStartMenu: () => void;
-  onUndo: () => void;
-  onRedo: () => void;
-  onRemoveSelected: () => void;
   mergeSeparator: "," | "-";
   onMergeSeparatorChange: (separator: "," | "-") => void;
   onToggleWorkload: () => void;
@@ -96,9 +93,6 @@ export function MenuBar(a: MenuBarActions) {
       { label: "Kembali ke Start Menu", onClick: a.onBackToStartMenu },
     ],
     Edit: [
-      { label: "Undo (Ctrl+Z)", onClick: a.onUndo },
-      { label: "Redo (Ctrl+Shift+Z)", onClick: a.onRedo },
-      { label: "Hapus Item Terpilih (Delete)", onClick: a.onRemoveSelected },
       { label: "Preset Emoji...", onClick: a.onEmojiPresetManager },
       { label: "Preset Artis...", onClick: a.onArtistPresetManager },
     ],

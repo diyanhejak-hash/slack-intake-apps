@@ -495,9 +495,6 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
         onSaveAs={handleSaveAs}
         onDeleteProject={handleDeleteProject}
         onBackToStartMenu={onBackToStartMenu}
-        onUndo={handleUndo}
-        onRedo={handleRedo}
-        onRemoveSelected={handleRemoveSelected}
         mergeSeparator={mergeSeparator}
         onMergeSeparatorChange={setMergeSeparator}
         onToggleWorkload={() => setShowWorkload((v) => !v)}

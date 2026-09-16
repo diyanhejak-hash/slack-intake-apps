@@ -11,7 +11,7 @@
 // Preset TANPA slack_shortcode (harusnya gak ada lagi buat preset baru, tapi jaga-jaga) DIFILTER
 // dari picker reaction — reactions.add WAJIB punya nama, beda dari insert teks reply yang cuma
 // perlu ":value:" doang.
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { SmilePlus, Loader2 } from "lucide-react";
 import type { EmojiPreset, ItemReaction } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
@@ -141,6 +141,22 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
   useEffect(() => {
     setOpen(false);
   }, [closeSignal]);
+  // Klik di luar popover = tutup (poin revisi — sebelumnya cuma bisa ketutup lewat re-klik
+  // tombol trigger-nya sendiri, "nyangkut" kalau user klik/gerak di tempat lain). Pola sama kayak
+  // MenuBar (Chrome.tsx). containerRef bungkus TRIGGER+popover jadi 1 (display:contents, gak
+  // ganggu layout absolute-nya) — klik tombol trigger sendiri masih di DALAM container, jadi gak
+  // ke-treat sebagai "klik luar" (gak race sama toggle onClick-nya).
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        setOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
   // Poin revisi: "React semua Item, atau React hanya item ini" — toggle scope SEBELUM milih
   // emoji, biar 1 klik emoji langsung nentuin ke mana reaction-nya keantre. Default "item"
   // (paling aman) tiap kali popover dibuka lagi.
@@ -202,7 +218,7 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
 
   if (variant === "overlay") {
     return (
-      <>
+      <div ref={containerRef} style={{ display: "contents" }}>
         {!hideButton && (
           <button
             className="row-quicksend quicksend-btn"
@@ -236,12 +252,12 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             <ReactionPickerPopover onPick={addPending} style={{ position: "static" }} />
           </div>
         )}
-      </>
+      </div>
     );
   }
 
   return (
-    <div style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
+    <div ref={containerRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
       <button className="icon-btn" title="Tambah reaction (antre, dikirim bareng pas Kirim ke Slack)" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((v) => !v)}>
         <SmilePlus size={14} />
       </button>
@@ -256,9 +272,22 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
   );
 }
 
-export function InstantReactionOverlay({ projectId, itemId }: { projectId: string; itemId: string }) {
+export function InstantReactionOverlay({ projectId, itemId, closeSignal }: { projectId: string; itemId: string; closeSignal?: unknown }) {
   const [open, setOpen] = useState(false);
   const [sending, setSending] = useState(false);
+  // Sama pola kayak ItemReactionBar (poin revisi, audit): closeSignal ikut ketutup pas
+  // pill-hover-zone-nya ilang (mouse out), DAN klik di luar popover ini nutup sendiri —
+  // sebelumnya cuma bisa ketutup lewat re-klik tombol trigger, nyangkut kalau lupa.
+  useEffect(() => { setOpen(false); }, [closeSignal]);
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (!open) return;
+    function onDocMouseDown(e: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [open]);
 
   async function sendInstant(preset: EmojiPreset) {
     if (!preset.slack_shortcode || sending) return;
@@ -274,7 +303,7 @@ export function InstantReactionOverlay({ projectId, itemId }: { projectId: strin
   }
 
   return (
-    <>
+    <div ref={containerRef} style={{ display: "contents" }}>
       <button
         className="row-quicksend quicksend-btn"
         title="Reaction instan — kirim langsung ke Slack"
@@ -304,6 +333,6 @@ export function InstantReactionOverlay({ projectId, itemId }: { projectId: strin
         {sending ? <Loader2 size={11} className="spin" /> : <SmilePlus size={12} />}
       </button>
       {open && <ReactionPickerPopover onPick={sendInstant} style={{ top: "calc(100% + 4px)", left: 0 }} />}
-    </>
+    </div>
   );
 }

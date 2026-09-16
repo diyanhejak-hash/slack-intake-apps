@@ -98,6 +98,9 @@ export default function Drawer({
   instantIntakeEnabled: boolean;
 }) {
   const isMaximized = useIsWindowMaximized();
+  // Popover Reaction Instan (pil item) ikut ketutup pas pill-hover-zone-nya ilang (mouse out) —
+  // pola sama kayak MainTable.tsx punya reactionCloseTick, audit poin revisi.
+  const [pillCloseTick, setPillCloseTick] = useState(0);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedReplyIds, setSelectedReplyIds] = useState<Set<string>>(new Set());
   const [showTemplateBuilder, setShowTemplateBuilder] = useState(false);
@@ -227,7 +230,7 @@ export default function Drawer({
               tapi NAMA ITEM-nya sendiri yang dibungkus pil. Dibungkus lagi "pill-hover-zone" —
               poin revisi fitur Reaction: overlay reaction INSTAN nongol di pojok pil pas di-hover
               (pola sama kayak Instant Intake, delay 0.5s lewat CSS `.row-quicksend`). */}
-          <div className="pill-hover-zone" style={{ position: "relative", display: "inline-block" }} {...hoverDelayHandlers()}>
+          <div className="pill-hover-zone" style={{ position: "relative", display: "inline-block" }} {...hoverDelayHandlers(undefined, () => setPillCloseTick((v) => v + 1))}>
             <span
               style={{
                 fontWeight: 800,
@@ -240,7 +243,7 @@ export default function Drawer({
             >
               {item.name}
             </span>
-            {instantIntakeEnabled && <InstantReactionOverlay projectId={projectId} itemId={item.id} />}
+            {instantIntakeEnabled && <InstantReactionOverlay projectId={projectId} itemId={item.id} closeSignal={pillCloseTick} />}
           </div>
           {/* Icon reaction PENDING — selalu kelihatan (beda dari overlay di atas), nambah ke
               antrean yang dikirim bareng pas "Kirim ke Slack" biasa. */}

@@ -16,7 +16,7 @@ import { $isListNode, ListItemNode, ListNode, INSERT_UNORDERED_LIST_COMMAND, INS
 import { LinkNode, $createLinkNode } from "@lexical/link";
 import { $convertFromMarkdownString, $convertToMarkdownString } from "@lexical/markdown";
 import { $getSelection, $isRangeSelection, $createTextNode, FORMAT_TEXT_COMMAND, type LexicalEditor } from "lexical";
-import { SLACK_TRANSFORMERS, LIVE_TYPING_TRANSFORMERS } from "../lib/slackMarkdown";
+import { SLACK_TRANSFORMERS } from "../lib/slackMarkdown";
 import { $createEmojiImageNode, EmojiImageNode } from "../lib/EmojiImageNode";
 
 export interface ActiveFormats {
@@ -208,12 +208,10 @@ const RichTextEditor = forwardRef<
       <HistoryPlugin />
       <ListPlugin />
       <LinkPlugin />
-      {/* Auto-format LIVE pas ngetik — poin revisi TERBARU: "- "->bullet dan "1. "->numbered list
-          auto-format DIMATIIN (ganggu), tapi "*teks*"->bold dan "_teks_"->italic tetap jalan.
-          List yang mau dibikin sekarang HARUS lewat tombol toolbar (List/ListOrdered), bukan lagi
-          auto-detect ketikan. Isi yang UDAH ada listnya (dari markdown lama) tetap kebaca normal
-          — lihat LIVE_TYPING_TRANSFORMERS di slackMarkdown.ts. */}
-      <MarkdownShortcutPlugin transformers={LIVE_TYPING_TRANSFORMERS} />
+      {/* Auto-format LIVE pas ngetik: "- "->bullet, "1. "->numbered list, "*teks*"->bold,
+          "_teks_"->italic — pakai SLACK_TRANSFORMERS yang sama dengan convert save/load, biar
+          list beneran auto-jalan pas ngetik (poin revisi, dipastikan aktif). */}
+      <MarkdownShortcutPlugin transformers={SLACK_TRANSFORMERS} />
       <ActiveFormatsPlugin onChange={onActiveFormatsChange} />
     </LexicalComposer>
   );
