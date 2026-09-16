@@ -959,3 +959,39 @@ Checklist manual:
   Distribution di bawah nama artis yang di-assign (artist_id tetap tersimpan).
 - [ ] **Hapus preset**: di modal, klik ikon hapus (trash) di satu baris → konfirmasi → preset
   hilang, dropdown balik nampilin nama Slack asli buat member itu.
+
+## 32. Artis Picker — satukan pilih-artis + toggle Mention/React + Kelola Preset jadi 1 popover (2026-09-16) ✅ (siap dites)
+
+Ganti native `<select>` Artis (Tab Table & Tab Reply) jadi komponen custom `ArtistPicker` — satu
+tombol yang pas diklik buka POPOVER berisi: daftar artis (klik = assign, sama kayak dropdown
+lama), toggle Mention/React (cuma kalau udah ada artis), dan tombol "Kelola preset artis..." yang
+langsung buka modal Kelola Preset — SEMUA jadi 1 sesi, gak perlu buka menu Edit terpisah lagi.
+
+**Toggle Mention/React** — poin revisi: dari 3 tombol radio (Mention/React/Keduanya) jadi **2
+tombol ICON independen** (AtSign buat Mention, SmilePlus buat React — gak ada teks, cuma tooltip).
+Aktifin dua-duanya = mode "both" (perilaku sama kayak sebelumnya). Bisa juga NONAKTIFIN
+dua-duanya sekarang (mode baru "none" — gak ada mention MAUPUN reaction pas kirim, artist_id
+tetap tersimpan). Default tetap Mention aktif buat item baru.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 28 test
+regresi + smoke test + build) semua lulus — behavior backend (mention suppression dkk) gak
+berubah, ini murni rombak UI-nya doang.
+**BELUM**: smoke-test manual visual (popover baru, toggle icon, akses Kelola Preset dari dalamnya).
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Klik tombol Artis** (Tab Table & Tab Reply) → popover kebuka, bukan dropdown native lagi.
+  Klik salah satu artis → ke-assign, popover nutup otomatis.
+- [ ] **Toggle icon muncul setelah assign**: buka lagi popover buat item yang udah ada artisnya →
+  ada 2 icon (@ dan senyum) di bawah daftar, "@" ke-highlight (default Mention aktif).
+- [ ] **Toggle independen**: klik icon React (senyum) → dua-duanya (Mention+React) aktif
+  bersamaan, popover TETAP terbuka (bukan langsung nutup). Klik lagi icon Mention buat matiin →
+  cuma React yang aktif.
+- [ ] **Matiin dua-duanya**: klik icon yang lagi aktif sampai dua-duanya nonaktif → kirim item
+  itu → cek di Slack: TIDAK ada mention, TIDAK ada reaction (tapi item tetap kekirim, thread tetap
+  kebuat).
+- [ ] **"Kelola preset artis..." dari dalam popover**: klik tombol itu di bagian bawah popover →
+  modal Kelola Preset Artis kebuka LANGSUNG (gak perlu ke menu Edit).
+- [ ] **Overlay Instant Intake gak numpuk**: pas popover Artis kebuka, overlay Instant Intake di
+  cell yang sama TETAP hilang (sama kayak dulu pas dropdown native lagi fokus).

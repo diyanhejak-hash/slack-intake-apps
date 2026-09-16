@@ -54,9 +54,10 @@ export interface ProjectItem {
   name: string;
   artist_id: string | null;
   artist_name: string | null;
-  /** Mode assign Artis Preset (poin revisi) — 'mention' (default, perilaku lama, <@artist_id>
-   * pas kirim), 'react' (gak ada mention, cuma antre reaction pakai code_name-nya), 'both'. */
-  artist_mode: "mention" | "react" | "both";
+  /** Mode assign Artis Preset (poin revisi) — 2 toggle independen (Mention/React), bukan radio.
+   * 'mention' (default) | 'react' | 'both' (dua-duanya aktif) | 'none' (dua-duanya nonaktif,
+   * artist_id tetap tersimpan tapi gak ada mention/reaction pas kirim). */
+  artist_mode: "mention" | "react" | "both" | "none";
   source: "manual" | "folder-import";
   sort_order: number;
   files: ItemFile[];

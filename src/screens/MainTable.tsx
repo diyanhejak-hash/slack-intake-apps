@@ -11,6 +11,7 @@ import ChannelPicker from "./ChannelPicker";
 import QuickSendButton from "./QuickSendButton";
 import EmojiPresetModal from "./EmojiPresetModal";
 import ArtistPresetModal from "./ArtistPresetModal";
+import ArtistPicker from "./ArtistPicker";
 import EmojiPicker from "./EmojiPicker";
 import { ItemReactionBar } from "./ItemReactions";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
@@ -302,7 +303,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   // Toggle Mention/React/Keduanya (poin revisi, dekat dropdown Artis) — item.artist_id TETAP
   // dilacak apa pun mode-nya (Workload Distribution dkk gak kepengaruh); mode cuma nentuin cara
   // KIRIM ke Slack (mention vs reaction vs dua-duanya, lihat send:start/send:quick di main.cjs).
-  async function handleArtistModeChange(item: ProjectItem, mode: "mention" | "react" | "both") {
+  async function handleArtistModeChange(item: ProjectItem, mode: "mention" | "react" | "both" | "none") {
     await window.api.item.update(item.id, { artistMode: mode });
     await queueArtistReaction(item.id, item.artist_id, mode);
     refresh();
@@ -567,6 +568,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                   users={visibleUsers}
                   onArtistChange={handleArtistChange}
                   onArtistModeChange={handleArtistModeChange}
+                  onManageArtistPresets={() => setShowArtistPresetManager(true)}
                 />
                 </Suspense>
               ) : (
@@ -669,41 +671,17 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                         )}
                       </td>
                       <td style={{ position: "relative" }} {...hoverDelayHandlers()}>
-                        <select
-                          value={item.artist_id || ""}
-                          onChange={(e) => handleArtistChange(item, e.target.value)}
-                          onFocus={() => setEditingCell({ itemId: item.id, col: "artist" })}
-                          onBlur={() => setEditingCell((c) => (c?.itemId === item.id && c.col === "artist" ? null : c))}
-                          onKeyDown={(e) => { if (e.key === "Enter") e.currentTarget.blur(); }}
-                          style={{ width: "100%" }}
-                        >
-                          <option value="">Belum ditugaskan</option>
-                          {visibleUsers.map((u) => (
-                            <option key={u.id} value={u.id}>
-                              {u.name}
-                            </option>
-                          ))}
-                        </select>
-                        {/* Toggle Mention/React/Keduanya (Artis Preset, poin revisi) — cuma
-                            relevan kalau udah ada artis di-assign. */}
-                        {item.artist_id && (
-                          <div style={{ display: "flex", gap: 2, marginTop: 3 }}>
-                            {(["mention", "react", "both"] as const).map((m) => (
-                              <button
-                                key={m}
-                                className="btn"
-                                title={m === "mention" ? "Mention @artis pas kirim" : m === "react" ? "Reaction code name artis (gak ada mention)" : "Mention DAN reaction"}
-                                style={{
-                                  flex: 1, padding: "1px 0", justifyContent: "center", fontSize: 9,
-                                  ...(item.artist_mode === m ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}),
-                                }}
-                                onClick={() => handleArtistModeChange(item, m)}
-                              >
-                                {m === "mention" ? "M" : m === "react" ? "R" : "M+R"}
-                              </button>
-                            ))}
-                          </div>
-                        )}
+                        {/* Artis Picker (poin revisi) — satu popover buat pilih artis, toggle
+                            Mention/React, DAN akses Kelola Preset Artis (gak ada lagi native
+                            <select> + toggle terpisah di bawahnya). */}
+                        <ArtistPicker
+                          item={item}
+                          users={visibleUsers}
+                          onArtistChange={handleArtistChange}
+                          onArtistModeChange={handleArtistModeChange}
+                          onManagePresets={() => setShowArtistPresetManager(true)}
+                          onOpenChange={(isOpen) => setEditingCell(isOpen ? { itemId: item.id, col: "artist" } : (c) => (c?.itemId === item.id && c.col === "artist" ? null : c))}
+                        />
                         {!(editingCell?.itemId === item.id && editingCell.col === "artist") && (
                           <QuickSendButton title="Instant Intake — mention artis ini aja" onClick={() => quickSend(item.id, "artist")} />
                         )}

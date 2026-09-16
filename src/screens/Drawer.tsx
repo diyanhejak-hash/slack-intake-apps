@@ -31,6 +31,7 @@ import CapturePoolStrip from "./CapturePoolStrip";
 import QuickSendButton from "./QuickSendButton";
 import EmojiPicker from "./EmojiPicker";
 import { ItemReactionBar, InstantReactionOverlay } from "./ItemReactions";
+import ArtistPicker from "./ArtistPicker";
 import { hoverDelayHandlers } from "../lib/hoverDelay";
 
 // Slack sendiri gak publish angka resmi "maksimal berapa file per pesan" (dicek: dokumentasi
@@ -76,6 +77,7 @@ export default function Drawer({
   users,
   onArtistChange,
   onArtistModeChange,
+  onManageArtistPresets,
 }: {
   item: ProjectItem;
   projectId: string;
@@ -88,8 +90,10 @@ export default function Drawer({
   canNext: boolean;
   users: SlackUser[];
   onArtistChange: (item: ProjectItem, artistId: string) => void;
-  /** Toggle Mention/React/Keduanya (Artis Preset, poin revisi) — sama persis kayak Tab Table. */
-  onArtistModeChange: (item: ProjectItem, mode: "mention" | "react" | "both") => void;
+  /** Toggle Mention/React (Artis Preset, poin revisi) — sama persis kayak Tab Table. */
+  onArtistModeChange: (item: ProjectItem, mode: "mention" | "react" | "both" | "none") => void;
+  /** Buka modal Kelola Preset Artis dari dalam ArtistPicker (poin revisi: "1 sesi"). */
+  onManageArtistPresets: () => void;
 }) {
   const isMaximized = useIsWindowMaximized();
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -279,34 +283,9 @@ export default function Drawer({
             <div className="label" style={{ marginBottom: 4 }}>
               Artis
             </div>
-            <select value={item.artist_id || ""} onChange={(e) => onArtistChange(item, e.target.value)} style={{ width: "100%" }}>
-              <option value="">Belum ditugaskan</option>
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {u.name}
-                </option>
-              ))}
-            </select>
-            {/* Toggle Mention/React/Keduanya (Artis Preset, poin revisi) — sama persis kayak
-                dropdown Artis Tab Table. */}
-            {item.artist_id && (
-              <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
-                {(["mention", "react", "both"] as const).map((m) => (
-                  <button
-                    key={m}
-                    className="btn"
-                    title={m === "mention" ? "Mention @artis pas kirim" : m === "react" ? "Reaction code name artis (gak ada mention)" : "Mention DAN reaction"}
-                    style={{
-                      flex: 1, padding: "3px 0", justifyContent: "center", fontSize: 10,
-                      ...(item.artist_mode === m ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}),
-                    }}
-                    onClick={() => onArtistModeChange(item, m)}
-                  >
-                    {m === "mention" ? "Mention" : m === "react" ? "React" : "Keduanya"}
-                  </button>
-                ))}
-              </div>
-            )}
+            {/* Artis Picker (poin revisi) — satu popover buat pilih artis, toggle Mention/React,
+                DAN akses Kelola Preset Artis, sama persis kayak Tab Table. */}
+            <ArtistPicker item={item} users={users} onArtistChange={onArtistChange} onArtistModeChange={onArtistModeChange} onManagePresets={onManageArtistPresets} />
           </div>
 
           <div style={{ flex: 1, overflow: "auto", padding: 16 }} className="scrollbar-thin">
