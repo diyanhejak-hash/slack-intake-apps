@@ -364,7 +364,7 @@ export default function Drawer({
 
           <div style={{ borderTop: "1px solid var(--border)", padding: 10 }}>
             <button className="btn" onClick={addBlankField} style={{ width: "100%", justifyContent: "center" }}>
-              <Plus size={14} /> Field
+              <Plus size={14} /> Reply
             </button>
           </div>
         </div>
