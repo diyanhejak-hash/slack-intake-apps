@@ -216,7 +216,7 @@ export default function Drawer({
           {/* Koreksi poin revisi sebelumnya — bukan badge sumber (Manual/Folder Import) terpisah,
               tapi NAMA ITEM-nya sendiri yang dibungkus pil. Dibungkus lagi "pill-hover-zone" —
               poin revisi fitur Reaction: overlay reaction INSTAN nongol di pojok pil pas di-hover
-              (pola sama kayak Instant Intake, delay 4s lewat CSS `.row-quicksend`). */}
+              (pola sama kayak Instant Intake, delay 0.5s lewat CSS `.row-quicksend`). */}
           <div className="pill-hover-zone" style={{ position: "relative", display: "inline-block" }}>
             <span
               style={{

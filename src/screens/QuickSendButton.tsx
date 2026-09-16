@@ -11,7 +11,7 @@
 //     di-hover (`.quicksend-btn:hover`, styles.css). TETAP bulat sempurna (borderRadius 50%),
 //     bukan rounded-square kayak di gambar referensi.
 //   - Cuma nongol pas CELL/row spesifik di-hover (CSS `.row-quicksend`, lihat styles.css)
-//     — bukan tombol lain di sekitarnya — dengan delay 4s sebelum muncul (transition-delay CSS,
+//     — bukan tombol lain di sekitarnya — dengan delay 0.5s sebelum muncul (transition-delay CSS,
 //     biar gak "kedip" tiap gerak mouse numpang lewat).
 //   - Klik = LANGSUNG kirim (gak ada modal preview/channel-picker lagi) — makanya `onClick` di
 //     komponen ini WAJIB async dan pemanggilnya yang nanganin loading/error state-nya sendiri.
@@ -23,7 +23,7 @@ import { SendHorizontal, Loader2, Check } from "lucide-react";
 // pola error sama kayak tempat lain di app ini).
 //
 // `variant`:
-//   - "overlay" (default, Tab Table) — absolute di pojok kiri cell, `.row-quicksend` (delay 4s
+//   - "overlay" (default, Tab Table) — absolute di pojok kiri cell, `.row-quicksend` (delay 0.5s
 //     lewat CSS `td:hover`, lihat styles.css).
 //   - "inline" (Tab Reply, ReplyRow) — flow normal sejajar checkbox/broadcast/trash di
 //     `.reply-actions`, reveal-nya ikut mekanisme hover `.reply-actions` yang udah ada (gak perlu
