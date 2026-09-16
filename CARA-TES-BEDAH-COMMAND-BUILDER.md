@@ -1321,3 +1321,34 @@ Checklist manual:
   = URL itu sendiri, karena gak ada teks yang diseleksi buat jadi label).
 - [ ] **Link yang ke-insert beneran tersimpan**: abis insert link → klik keluar field (blur) →
   buka lagi field itu → link tetap ada (gak ilang pas reload).
+
+## 40. Merge item: reply gabungan dibatasi 10 file, kelebihan dipecah jadi reply baru (2026-09-16) ✅ (siap dites)
+
+**Bug dilaporkan**: pas 2+ item di-Merge, reply kategori/field yang SAMA otomatis digabung jadi 1
+reply — tapi file-nya numpuk semua ke situ TANPA batas, bisa lewat 10 file (batas manual attach
+yang udah ada, `MAX_FILES_PER_REPLY` di Drawer.tsx).
+
+**Fix**: `mergeItems` (projects.cjs) sekarang cap tiap reply hasil gabungan MAKSIMAL 10 file —
+kalau total gabungan lewat 10, kelebihannya dipecah jadi reply BARU (kategori/title sama, muncul
+sebagai field terpisah tapi di kategori yang sama), bukan numpuk semua ke 1 reply. Gak ada file
+yang hilang — cuma dipecah jadi beberapa reply kalau perlu (misal 23 file -> 3 reply: 10+10+3).
+Urutan file dipertahankan (reply pertama nampung file 1-10, reply kedua 11-20, dst). Unmerge
+(Ctrl+Z) tetap balikin ke state ASLI sebelum merge, termasuk reply hasil split ikut ke-cleanup
+total (dibalikin dari snapshot pre-merge, bukan disisain nyangkut).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 34 test regresi lulus (nambah 1 test baru
+— merge 6+7 file jadi 10+3, dua-duanya ≤10, total 13 gak ada yang ilang, DAN verifikasi unmerge
+balikin ke 6 & 7 file terpisah lagi), `vite build` bersih.
+**BELUM**: smoke-test manual visual.
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Merge biasa (di bawah 10) gak berubah**: merge 2 item yang field-nya sama-sama dikit
+  file (misal 3 + 2 = 5) → tetap jadi 1 reply gabungan seperti biasa, gak ada perubahan perilaku.
+- [ ] **Merge lewat 10 kepecah**: merge 2 item yang field sama-sama punya banyak file (misal 6 +
+  7 = 13) → cek Tab Reply item hasil merge → ada 2 field dengan kategori/judul yang SAMA, satu
+  isi 10 file, satu lagi isi 3 file — BUKAN 1 field isi 13 file.
+- [ ] **Unmerge (Ctrl+Z) balik normal**: abis merge yang kepecah di atas → Ctrl+Z → 2 item balik
+  terpisah seperti semula, masing-masing field-nya balik ke jumlah file asli (6 dan 7), field
+  hasil split gak nyangkut/dobel.

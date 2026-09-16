@@ -485,6 +485,29 @@ async function test(name, fn) {
       assert.equal(crypto.createHash("sha256").update(sent.code_verifier).digest("base64url"), challenge);
     });
 
+    await test("merge memecah reply gabungan yang lewat 10 file jadi reply baru (poin revisi)", () => {
+      const mp = projects.createProject({ name: "merge-cap", channelId: "CA", channelName: "test" });
+      const one = projects.addItem(mp.id, { name: "one" }), two = projects.addItem(mp.id, { name: "two" });
+      const makeFiles = (n, prefix) => Array.from({ length: n }, (_, i) => {
+        const p = path.join(temp, `${prefix}-${i}.txt`); fs.writeFileSync(p, "x"); return p;
+      });
+      // Judul SAMA -> category sama -> ke-konsolidasi jadi 1 reply pas merge (6 + 7 = 13 file).
+      projects.addReplyWithFiles(one, { title: "Reference", filePaths: makeFiles(6, "one") });
+      projects.addReplyWithFiles(two, { title: "Reference", filePaths: makeFiles(7, "two") });
+      const merged = projects.mergeItems([one, two]);
+      const item = projects.getProject(mp.id).items.find((i) => i.id === merged.keepId);
+      const refReplies = item.replies.filter((r) => r.category === "Reference");
+      assert.equal(refReplies.length, 2); // 13 file -> 10 + 3, dipecah jadi 2 reply
+      assert.ok(refReplies.every((r) => r.files.length <= 10));
+      assert.deepEqual(refReplies.map((r) => r.files.length).sort((a, b) => b - a), [10, 3]);
+      assert.equal(refReplies.reduce((n, r) => n + r.files.length, 0), 13); // gak ada file ilang
+      // Unmerge balikin ke state asli (2 reply terpisah, 6 & 7 file) -- reply hasil split
+      // ke-cleanup total, bukan nyangkut.
+      projects.unmergeItems(merged.snapshot);
+      const restored = projects.getProject(mp.id);
+      assert.equal(restored.items.find((i) => i.id === one).replies.find((r) => r.category === "Reference").files.length, 6);
+      assert.equal(restored.items.find((i) => i.id === two).replies.find((r) => r.category === "Reference").files.length, 7);
+    });
     await test("template application is atomic and undo preserves attachment bytes", () => {
       const tp = projects.createProject({ name: "template", channelId: "CA", channelName: "test" });
       const one = projects.addItem(tp.id, { name: "one" }), two = projects.addItem(tp.id, { name: "two" });

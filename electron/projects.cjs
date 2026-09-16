@@ -318,23 +318,45 @@ function mergeItems(itemIds, separator = ", ") {
     db.prepare(`DELETE FROM items WHERE id = ?`).run(r.id);
   }
 
-  // Konsolidasi reply kategori sama jadi 1 di bawah keep.id.
+  // Konsolidasi reply kategori sama jadi 1 di bawah keep.id. Poin revisi: gabungan file-nya
+  // gak boleh numpuk lewat 10 di 1 reply (sinkron batas manual attach, MAX_FILES_PER_REPLY di
+  // Drawer.tsx) -- kelebihan dipecah jadi reply BARU (kategori/title/type sama), bukan 1 reply
+  // segepok. nextSortOrder dihitung SEKALI di luar loop kategori (bukan per-kategori) karena
+  // sort_order itu GLOBAL per item_id (lintas kategori), bukan per-kategori sendiri-sendiri.
+  const MERGE_MAX_FILES_PER_REPLY = 10;
   const replies = db.prepare(`SELECT * FROM replies WHERE item_id = ?`).all(keep.id);
   const byCategory = new Map();
   for (const r of replies) {
     if (!byCategory.has(r.category)) byCategory.set(r.category, []);
     byCategory.get(r.category).push(r);
   }
+  let nextSortOrder = (db.prepare(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM replies WHERE item_id = ?`).get(keep.id).m) + 1;
   for (const group of byCategory.values()) {
     if (group.length < 2) continue;
     group.sort((a, b) => a.sort_order - b.sort_order);
     const primary = group[0];
     const combinedText = group.map((g) => g.text_value).filter(Boolean).join("\n") || null;
     db.prepare(`UPDATE replies SET text_value = ? WHERE id = ?`).run(combinedText, primary.id);
-    for (const dup of group.slice(1)) {
-      db.prepare(`UPDATE reply_files SET reply_id = ? WHERE reply_id = ?`).run(primary.id, dup.id);
-      db.prepare(`DELETE FROM replies WHERE id = ?`).run(dup.id);
+
+    // Kumpulin urutan file dari SEMUA reply di group (termasuk punya primary sendiri) SEBELUM
+    // hapus baris reply lama -- reply_files.reply_id ON DELETE CASCADE, jadi file yang masih
+    // nunjuk ke reply lama ikut kehapus kalau baris itu dihapus duluan sebelum di-assign ulang.
+    const fileIds = [];
+    for (const r of group) fileIds.push(...db.prepare(`SELECT id FROM reply_files WHERE reply_id = ?`).all(r.id).map((f) => f.id));
+
+    let targetReplyId = primary.id;
+    let countInTarget = 0;
+    for (const fileId of fileIds) {
+      if (countInTarget >= MERGE_MAX_FILES_PER_REPLY) {
+        targetReplyId = uuid();
+        db.prepare(`INSERT INTO replies (id, item_id, category, type, title, text_value, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)`)
+          .run(targetReplyId, keep.id, primary.category, primary.type, primary.title, null, nextSortOrder++);
+        countInTarget = 0;
+      }
+      db.prepare(`UPDATE reply_files SET reply_id = ? WHERE id = ?`).run(targetReplyId, fileId);
+      countInTarget++;
     }
+    for (const dup of group.slice(1)) db.prepare(`DELETE FROM replies WHERE id = ?`).run(dup.id);
   }
 
   mergedItems.set(snapshot.undoId, snapshot);
