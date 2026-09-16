@@ -23,12 +23,19 @@ import { SendHorizontal, Loader2, Check } from "lucide-react";
 // pola error sama kayak tempat lain di app ini).
 //
 // `variant`:
-//   - "overlay" (default, Tab Table) — absolute di pojok kiri cell, `.row-quicksend` (delay 0.5s
-//     lewat CSS `td:hover`, lihat styles.css).
+//   - "overlay" (default, Tab Table td) — absolute di pojok kiri cell, NONGOL KELUAR batas cell
+//     (top:-8/left:-8), `.row-quicksend` (delay 0.5s lewat CSS `td:hover`, lihat styles.css).
 //   - "inline" (Tab Reply, ReplyRow) — flow normal sejajar checkbox/broadcast/trash di
 //     `.reply-actions`, reveal-nya ikut mekanisme hover `.reply-actions` yang udah ada (gak perlu
 //     delay terpisah, biar konsisten sama ikon lain di baris yang sama).
-export default function QuickSendButton({ onClick, title, variant = "overlay" }: { onClick: () => Promise<unknown>; title: string; variant?: "overlay" | "inline" }) {
+//   - "header" (Tab Table th, poin revisi) — SAMA konsepnya kayak "overlay" (absolute, ngambang
+//     DI ATAS teks header, bukan sejajar/inline kayak "inline"), TAPI gak boleh nongol KELUAR
+//     batas box `<th>` sama sekali — `thead th` di CSS pakai `position: sticky`, dan overlay yang
+//     nongol ke atas (`top: -8`) itu kepotong gak kepredik (poking di atas titik "menempel"-nya
+//     elemen sticky pas discroll). Diposisiin nempel pojok kanan cell secara vertikal-center
+//     (`top: 50%` + transform), tetap "mengambang" visual di atas teks header, tapi 100% dalam box
+//     `<th>` — gak mungkin kepotong lagi.
+export default function QuickSendButton({ onClick, title, variant = "overlay" }: { onClick: () => Promise<unknown>; title: string; variant?: "overlay" | "inline" | "header" }) {
   const [state, setState] = useState<"idle" | "sending" | "done">("idle");
 
   async function handleClick() {
@@ -46,14 +53,18 @@ export default function QuickSendButton({ onClick, title, variant = "overlay" }:
 
   return (
     <button
-      className={`quicksend-btn ${variant === "overlay" ? "row-quicksend" : ""}`}
+      className={`quicksend-btn ${variant === "overlay" || variant === "header" ? "row-quicksend" : ""}`}
       title={title}
       onClick={(e) => {
         e.stopPropagation();
         handleClick();
       }}
       style={{
-        ...(variant === "overlay" ? { position: "absolute", top: -8, left: -8, zIndex: 2 } : { flexShrink: 0 }),
+        ...(variant === "overlay"
+          ? { position: "absolute", top: -8, left: -8, zIndex: 2 }
+          : variant === "header"
+            ? { position: "absolute", top: "50%", right: 6, transform: "translateY(-50%)", zIndex: 2 }
+            : { flexShrink: 0 }),
         width: 22,
         height: 22,
         borderRadius: "50%",
