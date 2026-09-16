@@ -174,6 +174,18 @@ export default function Drawer({
     onChanged();
   }
 
+  // Poin revisi: item baru (belum ada reply) LANGSUNG keisi field template Default — gak lagi
+  // nyuruh user pilih template dulu. autoAppliedItemIds jaga biar gak dobel-apply (item.replies
+  // belum keupdate dari props SEBELUM onChanged() di atas selesai refetch, ada celah async).
+  const autoAppliedItemIds = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (item.replies.length > 0 || !templates.length || autoAppliedItemIds.current.has(item.id)) return;
+    const defaultTemplate = templates.find((t) => t.id === "tpl-default") || templates[0];
+    if (!defaultTemplate) return;
+    autoAppliedItemIds.current.add(item.id);
+    applyTemplate(defaultTemplate);
+  }, [item.id, item.replies.length, templates]);
+
   async function clearSelectedThisItem() {
     if (!selectedReplyIds.size) return;
     await window.api.reply.removeMany(Array.from(selectedReplyIds));
@@ -317,10 +329,6 @@ export default function Drawer({
                 <Trash2 size={13} /> Hapus di Semua Item ({selectedReplyIds.size})
               </button>
             )}
-            {item.replies.length === 0 && !showTemplateBuilder && (
-              <TemplatePicker templates={templates} onPick={applyTemplate} onNewTemplate={() => setShowTemplateBuilder(true)} />
-            )}
-
             {showTemplateBuilder && (
               <TemplateBuilder
                 onCancel={() => setShowTemplateBuilder(false)}
@@ -362,9 +370,16 @@ export default function Drawer({
             )}
           </div>
 
-          <div style={{ borderTop: "1px solid var(--border)", padding: 10 }}>
-            <button className="btn" onClick={addBlankField} style={{ width: "100%", justifyContent: "center" }}>
+          <div style={{ borderTop: "1px solid var(--border)", padding: 10, display: "flex", gap: 6 }}>
+            <button className="btn" onClick={addBlankField} style={{ flex: 1, justifyContent: "center" }}>
               <Plus size={14} /> Reply
+            </button>
+            {/* Template Baru (poin revisi) — dulu cuma bisa dibuat pas item MASIH kosong (lewat
+                picker yang sekarang dihapus, field Default langsung keisi otomatis). Tombol ini
+                satu-satunya jalur bikin template custom baru yang tersisa, jadi TETAP dipertahankan
+                di sini, gak lagi memblokir/wajib diisi dulu. */}
+            <button className="icon-btn" title="Bikin Template Baru" onClick={() => setShowTemplateBuilder(true)}>
+              <LayoutTemplate size={14} />
             </button>
           </div>
         </div>
@@ -541,29 +556,6 @@ function DisplayPane({
             <span className="caption">Belum ada file. Klik "+" buat tambah file referensi (General Display), atau tambah file lewat field di kanan.</span>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-function TemplatePicker({ templates, onPick, onNewTemplate }: { templates: Template[]; onPick: (t: Template) => void; onNewTemplate: () => void }) {
-  return (
-    <div>
-      <div className="label" style={{ marginBottom: 8 }}>
-        Pilih Template
-      </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {templates.map((t) => (
-          <button key={t.id} className="btn" style={{ justifyContent: "flex-start" }} onClick={() => onPick(t)}>
-            <LayoutTemplate size={14} /> {t.name}
-            <span className="caption" style={{ marginLeft: "auto" }}>
-              {t.fields.length} field
-            </span>
-          </button>
-        ))}
-        <button className="btn" style={{ justifyContent: "flex-start" }} onClick={onNewTemplate}>
-          <Plus size={14} /> Template Baru
-        </button>
       </div>
     </div>
   );
@@ -779,7 +771,6 @@ function ReplyRow({
           // perubahan dari luar (mis. konsolidasi reply pas Merge) tanpa remount paksa.
           key={`${reply.id}:${reply.title}`}
           defaultValue={reply.title}
-          placeholder="(tanpa judul)"
           onBlur={(e) => e.target.value !== reply.title && window.api.reply.update(reply.id, { title: e.target.value }).then(onChanged)}
           style={{ flex: 1, border: "none", background: "transparent", fontWeight: 600, padding: "2px 0" }}
         />
