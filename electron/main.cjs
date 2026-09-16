@@ -698,6 +698,10 @@ handle("shell:openSlackMessage", (_e, { channelId, ts }) => openSlack({ channelI
 
 // ---------- Update check ----------
 handle("update:check", () => checkForUpdate(process.env.GITHUB_REPO, process.env.GITHUB_RELEASES_TOKEN));
+// Versi app sendiri (poin revisi) — TERPISAH dari update:check yang butuh internet/GitHub API
+// (bisa gagal/reason kalau offline). Ini murni baca app.getVersion() lokal, jadi user SELALU
+// bisa liat versi yang lagi jalan walau lagi gak ada koneksi.
+handle("app:version", () => app.getVersion());
 
 // ---------- Saran install Slack Desktop (poin revisi) ----------
 // Cek EKSISTENSI FILE di lokasi install baku Slack per-platform — lebih reliable daripada

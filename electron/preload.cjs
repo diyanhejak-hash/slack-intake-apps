@@ -117,6 +117,9 @@ contextBridge.exposeInMainWorld("api", {
   update: {
     check: () => ipcRenderer.invoke("update:check"),
   },
+  app: {
+    version: () => ipcRenderer.invoke("app:version"),
+  },
   shell: {
     openExternal: (url) => ipcRenderer.invoke("shell:openExternal", url),
     openSlackMessage: (payload) => ipcRenderer.invoke("shell:openSlackMessage", payload),

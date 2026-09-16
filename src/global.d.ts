@@ -314,6 +314,11 @@ declare global {
       update: {
         check: () => Promise<{ available: boolean; latest?: string; current?: string; url?: string; reason?: string }>;
       };
+      /** Versi app SEKARANG (poin revisi) — murni lokal (app.getVersion()), beda dari
+       * update.check yang butuh internet/GitHub API dan bisa gagal kalau offline. */
+      app: {
+        version: () => Promise<string>;
+      };
       shell: {
         openExternal: (url: string) => Promise<void>;
         openSlackMessage: (payload: { channelId: string; ts?: string }) => Promise<void>;

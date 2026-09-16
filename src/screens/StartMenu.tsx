@@ -27,10 +27,16 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [updateUrl, setUpdateUrl] = useState<string | null>(null);
+  // Versi app sendiri (poin revisi) — sebelumnya cuma dipakai INTERNAL buat bandingin ke rilis
+  // terbaru (app.getVersion(), updater.cjs), gak pernah ditampilin ke user. Dipisah dari
+  // update.check yang butuh internet/GitHub API (bisa gagal kalau offline) — ini murni lokal,
+  // jadi user SELALU bisa liat versi yang lagi jalan, terlepas dari ada update baru atau gak.
+  const [version, setVersion] = useState<string | null>(null);
 
   useEffect(() => {
     window.api.project.legacyCount().then(setLegacyCount).catch((err) => setError(err.message));
     window.api.project.list().then(setProjects).catch((err) => setError(err.message));
+    window.api.app.version().then(setVersion).catch(() => undefined);
     window.api.update.check().then((result) => {
       if (result.available && result.url) setUpdateUrl(result.url);
     }).catch(() => undefined);
@@ -109,7 +115,10 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
   return (
     <div style={{ maxWidth: 640, margin: "0 auto", padding: "48px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-        <h1>Slack Intake Apps</h1>
+        <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+          <h1>Slack Intake Apps</h1>
+          {version && <span className="caption" title="Versi yang lagi terpasang">v{version}</span>}
+        </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
           <span className="caption">
             {auth.userId} · {auth.team}
