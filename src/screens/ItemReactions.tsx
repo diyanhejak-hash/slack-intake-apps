@@ -104,13 +104,11 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
 // `variant`:
 //   - "inline" (default, Tab Reply — sebelah Pil Item) — icon SELALU KELIHATAN + chip pending
 //     sejajar (flow biasa).
-//   - "overlay" (Tab Table, poin revisi) — tombol jadi overlay (posisi sama kayak QuickSendButton
-//     variant "overlay", DI BAWAH item rata kiri — top:26/left:0, beda dari Instant Intake yang
-//     poking keluar cell),
-//     cuma nongol pas hover cell (`.row-quicksend`). Chip pending di-render IN-FLOW (bukan absolute) — caller
-//     (MainTable.tsx) yang bungkus <input>+komponen ini dalam satu flex row, jadi chip otomatis
-//     nempel di KANAN input (poin revisi: "kolom Item dibagi 2 kalau ada react"). Ini TETAP jalur
-//     pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
+//   - "overlay" (Tab Table, poin revisi) — TOMBOL-nya overlay di SAMPING KANAN Instant Intake
+//     (top:-8/left:16), cuma nongol pas hover cell (`.row-quicksend`). CHIP hasil react (bukan
+//     tombolnya!) itu elemen BEDA — absolute DI BAWAH item rata kiri (top:26/left:0) dan SELALU
+//     tampil (gak hover-gated), soalnya itu status pending yang relevan diliat kapan aja. Ini
+//     TETAP jalur pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
 // `hideButton` (overlay doang) — sembunyiin TOMBOLNYA aja pas cell lagi diedit (poin revisi,
 // sama kayak QuickSendButton), tapi CHIP tetap tampil (gak ganggu proses edit).
 export function ItemReactionBar({ projectId, itemId, variant = "inline", hideButton = false }: { projectId: string; itemId: string; variant?: "inline" | "overlay"; hideButton?: boolean }) {
@@ -181,10 +179,9 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             onMouseDown={(e) => e.preventDefault()}
             onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
             style={{
-              // Di BAWAH item, rata kiri (poin revisi) — left:0 (BUKAN -8 kayak Instant Intake
-              // yang sengaja nongol keluar/poking) biar flush sama tepi kiri input. top:26 = pas
-              // di bawah baris input (tinggi input ~24-26px).
-              position: "absolute", top: 26, left: 0, width: 22, height: 22, borderRadius: "50%",
+              // Di SAMPING KANAN tombol Instant Intake (poin revisi, balik ke posisi ini) —
+              // Instant Intake di top:-8/left:-8 (22px), jadi tombol ini nempel di kanannya.
+              position: "absolute", top: -8, left: 16, width: 22, height: 22, borderRadius: "50%",
               background: "var(--accent)", border: "2px solid var(--surface)", color: "#fff",
               display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
               cursor: "pointer", zIndex: 2, boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
@@ -193,12 +190,15 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             <SmilePlus size={12} />
           </button>
         )}
-        {/* In-flow (BUKAN absolute) — sengaja, biar jadi flex item alami di samping <input> pas
-            dibungkus flex row sama caller (poin revisi: "kolom Item dibagi 2 kalau ada react",
-            chip di KANAN input, bukan di bawah lagi). */}
-        {pending.length > 0 && <div style={{ display: "flex", flexShrink: 0, gap: 3 }}>{chips}</div>}
+        {/* CHIP hasil react (poin revisi) — BUKAN tombolnya, ini "React emoji itu sendiri". Absolute
+            di BAWAH item rata kiri (top:26/left:0, beda dari tombol yang poking kanan-atas) —
+            SELALU tampil (gak dihover-gate kayak tombol), soalnya ini info status pending yang
+            relevan buat dilihat kapan aja, bukan aksi sesaat. */}
+        {pending.length > 0 && (
+          <div style={{ position: "absolute", top: 26, left: 0, display: "flex", gap: 3, zIndex: 1 }}>{chips}</div>
+        )}
         {open && (
-          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
+          <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 16, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
             {scopeToggle}
             <ReactionPickerPopover onPick={addPending} style={{ position: "static" }} />
           </div>
