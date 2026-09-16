@@ -136,8 +136,7 @@ export default function BatchFileModal({ project, onClose, onApplied }: { projec
           </button>
         </div>
         <p className="caption" style={{ marginBottom: 12 }}>
-          Upload banyak file sekaligus per kategori. File yang namanya (tanpa ekstensi) persis sama dengan nama item otomatis kesambung — sisanya
-          hubungkan manual. 1 file boleh dihubungkan ke lebih dari 1 item.
+          Upload banyak file per kategori. Nama file yang cocok persis nama item auto-kesambung, sisanya hubungkan manual.
         </p>
 
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>

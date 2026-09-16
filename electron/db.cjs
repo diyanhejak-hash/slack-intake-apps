@@ -110,6 +110,15 @@ CREATE TABLE IF NOT EXISTS artist_assign_mode (
 );
 INSERT OR IGNORE INTO artist_assign_mode (id, mode) VALUES (1, 'mention');
 
+-- Toggle global matiin Instant Intake + Instant Reaction di SEMUA tab/sesi (poin revisi) — TIDAK
+-- mempengaruhi tombol "Add React" (ItemReactionBar), cuma QuickSendButton + InstantReactionOverlay.
+-- Singleton 1 baris, pola sama kayak artist_assign_mode.
+CREATE TABLE IF NOT EXISTS instant_intake_setting (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled INTEGER NOT NULL DEFAULT 1
+);
+INSERT OR IGNORE INTO instant_intake_setting (id, enabled) VALUES (1, 1);
+
 CREATE TABLE IF NOT EXISTS threads (
   item_name TEXT NOT NULL,
   channel_id TEXT NOT NULL,

@@ -1126,3 +1126,71 @@ Checklist manual:
 - [ ] **Artis Preset muncul di picker Add React**: artis yang UDAH ada code_name+PNG-nya → buka
   popover "Add React" (icon SmilePlus, Tab Table atau Tab Reply) → emoji/PNG artis itu ikut
   nongol di grid pilihan, bisa diklik buat react manual (bukan cuma otomatis pas assign).
+
+## 36. 6 fix/feature batch: realtime chip, freeze header, popover nyangkut, bulk react, toggle Instant Intake, teks ringkas (2026-09-16) ✅ (siap dites)
+
+- **Chip react realtime pas assign artis** — root cause: `reactionTick` (dipakai maksa
+  `ItemReactionBar` refetch) gak pernah di-bump abis `handleArtistChange` sukses ngantre reaction
+  lewat `queueArtistReaction`. Sekarang di-bump di situ juga (`MainTable.tsx`).
+- **Header Item/Artis/Reply balik freeze (BUKAN paddingTop, tapi inline style)** — root cause
+  sebenarnya: 3 `<th>` itu punya inline `style={{ position: "relative" }}`, dan inline style
+  SELALU menang atas rule stylesheet apapun specificity-nya — nimpa `thead th { position: sticky }`
+  (styles.css) jadi `relative`, makanya header ikut scroll. Dihapus — sticky sendiri udah jadi
+  positioning context yang valid buat overlay QuickSendButton di dalamnya, `position:relative`
+  gak perlu.
+- **Popover "Add React" nyangkut kebuka pas overlay ilang** — `hoverDelayHandlers` sekarang
+  terima callback `onLeave` opsional, dipanggil bareng pencabutan class `.hover-ready`. Item `<td>`
+  pass callback yang bump `reactionCloseTick`, di-passing ke `ItemReactionBar` sebagai
+  `closeSignal` — komponen nutup popover-nya sendiri (`setOpen(false)`) tiap signal ini berubah.
+- **Bulk "React semua item"**: (a) `confirm()` dihapus, langsung eksekusi pas klik emoji di scope
+  "Semua item". (b) Staleness fix — `ItemReactionBar` sekarang terima `onBulkAdded`, dipanggil abis
+  `addToProject` sukses, MainTable bump `reactionTick` (refreshToken YANG SAMA dipassing ke
+  SEMUA row) biar SEMUA `ItemReactionBar` di tabel ikut refetch, bukan cuma row yang dipencet.
+- **Toggle global "Instant Intake"** — tabel baru `instant_intake_setting` (singleton, pola sama
+  kayak `artist_assign_mode`), IPC `instantIntake.get/set`. Toggle-nya ada di menu Settings
+  (MenuBar, checkbox "Instant Intake"). Matiin nyembunyiin SEMUA `QuickSendButton` (3 header + 3
+  row Tab Table, 1 inline per-field Tab Reply) DAN `InstantReactionOverlay` (pil item Tab Reply)
+  — "Add React" (`ItemReactionBar`) TIDAK disentuh sama sekali, tetap kelihatan/jalan normal.
+- **Teks caption disederhanain** — "2a. Mode assign" (ArtistPresetModal) dari 3 kalimat jadi 1:
+  "Global — berlaku ke semua artis sekaligus. Default: Mention aktif." Caption "1. Info Artis"
+  (ArtistPresetModal) dan intro BatchFileModal juga dipangkas jadi 1 kalimat masing-masing.
+- **Bonus (dilaporkan bareng, bukan di 6 poin awal)**: (a) shift+klik checkbox gak lagi nongolin
+  kotak selection/border oren — itu seleksi teks native browser (drag dari klik terakhir ke klik
+  sekarang), di-`preventDefault()` di `handleCheckboxMouseDown`. (b) Tombol "Kirim ke Slack"
+  dipindah dari MenuBar ke baris tab Table/Reply (`folder-tabbar`), tetap rata kanan, ukuran
+  dikecilin dikit (height 16 dari 20, padding lebih ramping) biar pas di baris tab.
+
+**BELUM (butuh gambar referensi dari user)**: ganti icon pesawat (`SendHorizontal`, lucide-react)
+di `QuickSendButton.tsx` jadi custom image putih — user nyebut "seperti Image attached" tapi gak
+ada file gambar yang keterima di pesan. Nunggu file PNG/SVG referensinya baru bisa dieksekusi.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 30 test regresi (nambah 1 test baru buat
+`instant_intake_setting`) lulus, `vite build` bersih. Smoke test (`electron test/electron-smoke.cjs`)
+gak jalan di sandbox dev ini (`ELECTRON_RUN_AS_NODE=1` bikin `require('electron')` gak dapet `app`
+module, pre-existing keterbatasan environment, bukan regresi dari perubahan ini).
+**BELUM**: smoke-test manual visual.
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Chip realtime**: mode assign React/Both aktif (cek di Preset Artis §34) → pilih artis di
+  dropdown item mana pun → chip code_name artis LANGSUNG nongol di sebelah input Item, TANPA
+  perlu pindah tab / reload.
+- [ ] **Header freeze**: scroll tabel Tab Table ke bawah (banyak item) → header Item/Artis/Reply
+  TETAP nempel di atas, gak ikut jalan turun.
+- [ ] **Popover Add React ketutup pas mouse out**: klik icon Add React di 1 item → biarkan
+  kebuka → gerakkan mouse KELUAR dari cell Item itu (ke tempat lain di tabel) → popover ikut
+  ketutup, gak nyangkut ngambang.
+- [ ] **Bulk react langsung, gak ada confirm**: buka Add React → toggle scope "Semua item" → klik
+  1 emoji → LANGSUNG keantre (gak ada dialog konfirmasi muncul) → alert hasil muncul.
+- [ ] **Bulk react langsung KELIHATAN**: abis bulk react di atas, tutup alert → cek row-row LAIN
+  (bukan row tempat kamu klik) → chip react baru UDAH nongol tanpa perlu pindah tab.
+- [ ] **Toggle Instant Intake nonaktif**: menu Settings → klik "Instant Intake" (uncheck) → semua
+  bulatan hijau Instant Intake (header + row Tab Table, per-field Tab Reply) DAN overlay Instant
+  Reaction (pil item Tab Reply) HILANG. Tombol "Add React" (biru) TETAP ada/jalan normal.
+- [ ] **Toggle balik aktif**: klik lagi "Instant Intake" di Settings → semua tombol instan balik
+  muncul.
+- [ ] **Shift+klik checkbox bersih**: shift+klik 2 checkbox item → range ke-select (centang), TAPI
+  TIDAK ADA kotak highlight/border oren aneh yang nongol di baris-baris di antaranya.
+- [ ] **Tombol Kirim ke Slack pindah**: cek MenuBar (File/Edit/View/Settings/Help) → tombol Slack
+  GAK ADA di situ lagi → cek baris tab Table/Reply → tombol Slack ada di situ, rata kanan.

@@ -77,6 +77,7 @@ export default function Drawer({
   users,
   onArtistChange,
   onManageArtistPresets,
+  instantIntakeEnabled,
 }: {
   item: ProjectItem;
   projectId: string;
@@ -92,6 +93,9 @@ export default function Drawer({
   /** Buka modal Kelola Preset Artis dari dalam ArtistPicker. Toggle Mention/React GLOBAL per
    * artis (poin revisi) diatur DI modal itu, bukan di sini lagi. */
   onManageArtistPresets: () => void;
+  /** Toggle global Instant Intake + Instant Reaction (poin revisi) — matiin QuickSendButton DAN
+   * InstantReactionOverlay di sini, "Add React" (ItemReactionBar) TETAP gak kesentuh. */
+  instantIntakeEnabled: boolean;
 }) {
   const isMaximized = useIsWindowMaximized();
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -236,7 +240,7 @@ export default function Drawer({
             >
               {item.name}
             </span>
-            <InstantReactionOverlay projectId={projectId} itemId={item.id} />
+            {instantIntakeEnabled && <InstantReactionOverlay projectId={projectId} itemId={item.id} />}
           </div>
           {/* Icon reaction PENDING — selalu kelihatan (beda dari overlay di atas), nambah ke
               antrean yang dikirim bareng pas "Kirim ke Slack" biasa. */}
@@ -348,6 +352,7 @@ export default function Drawer({
                     onRemoveFromPool={removeFromPool}
                     onDragStart={() => (dragReplyId.current = reply.id)}
                     onDropOn={() => handleReplyDrop(reply.id)}
+                    instantIntakeEnabled={instantIntakeEnabled}
                   />
                 ))}
               </div>
@@ -628,6 +633,7 @@ function ReplyRow({
   onRemoveFromPool,
   onDragStart,
   onDropOn,
+  instantIntakeEnabled,
 }: {
   reply: Reply;
   itemId: string;
@@ -643,6 +649,7 @@ function ReplyRow({
   /** C4 — drag-reorder, avatar/handle di header jadi titik drag-nya. */
   onDragStart: () => void;
   onDropOn: () => void;
+  instantIntakeEnabled: boolean;
 }) {
   const editorRef = useRef<RichTextEditorHandle | null>(null);
   const [showLinkPrompt, setShowLinkPrompt] = useState(false);
@@ -775,11 +782,13 @@ function ReplyRow({
         />
         <div className="reply-actions" style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {/* Instant Intake per-field (poin revisi) — kirim CUMA field/reply ini, gak ada modal. */}
-          <QuickSendButton
-            variant="inline"
-            title="Instant Intake — kirim field ini aja"
-            onClick={() => window.api.send.quick({ projectId, itemId, scope: "field", replyId: reply.id }).then(onChanged)}
-          />
+          {instantIntakeEnabled && (
+            <QuickSendButton
+              variant="inline"
+              title="Instant Intake — kirim field ini aja"
+              onClick={() => window.api.send.quick({ projectId, itemId, scope: "field", replyId: reply.id }).then(onChanged)}
+            />
+          )}
           <input type="checkbox" checked={selected} onChange={onToggleSelected} />
           <button className="icon-btn" title="Broadcast ke semua item kategori sama" onClick={() => window.api.reply.broadcast(reply.id, projectId).then(onChanged)}>
             <Radio size={13} />

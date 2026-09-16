@@ -85,6 +85,10 @@ contextBridge.exposeInMainWorld("api", {
     get: () => ipcRenderer.invoke("artistAssignMode:get"),
     set: (mode) => ipcRenderer.invoke("artistAssignMode:set", mode),
   },
+  instantIntake: {
+    get: () => ipcRenderer.invoke("instantIntake:get"),
+    set: (enabled) => ipcRenderer.invoke("instantIntake:set", enabled),
+  },
   itemReaction: {
     list: (itemId) => ipcRenderer.invoke("itemReaction:list", itemId),
     add: (itemId, payload) => ipcRenderer.invoke("itemReaction:add", itemId, payload),

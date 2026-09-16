@@ -838,6 +838,17 @@ function setArtistAssignMode(mode) {
   return mode;
 }
 
+// Toggle global Instant Intake/Instant Reaction (poin revisi) — singleton, gak mempengaruhi
+// tombol "Add React" (jalur pending biasa).
+function getInstantIntakeEnabled() {
+  return !!db.prepare(`SELECT enabled FROM instant_intake_setting WHERE id = 1`).get()?.enabled;
+}
+
+function setInstantIntakeEnabled(enabled) {
+  db.prepare(`UPDATE instant_intake_setting SET enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
+  return !!enabled;
+}
+
 // ---------- Reaction (poin revisi) ----------
 // PENDING per item, nunggu dikirim bareng lewat "Kirim ke Slack" biasa (beda dari reaction
 // INSTAN overlay hover pil item — itu fire-and-forget, gak pernah nyentuh tabel ini).
@@ -1160,6 +1171,8 @@ module.exports = {
   removeArtistPreset,
   getArtistAssignMode,
   setArtistAssignMode,
+  getInstantIntakeEnabled,
+  setInstantIntakeEnabled,
   listItemReactions,
   addItemReaction,
   addReactionToAllItems,

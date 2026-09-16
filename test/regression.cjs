@@ -225,6 +225,14 @@ async function test(name, fn) {
       assert.throws(() => projects.setArtistAssignMode("bukan-mode-valid"), /Mode assign/);
       projects.setArtistAssignMode("mention"); // reset biar gak nyampur ke test lain.
     });
+    await test("instant intake toggle is a single global switch, gak sentuh reaction pending", () => {
+      // Default enabled (di-seed pas migrasi db.cjs).
+      assert.equal(projects.getInstantIntakeEnabled(), true);
+      assert.equal(projects.setInstantIntakeEnabled(false), false);
+      assert.equal(projects.getInstantIntakeEnabled(), false);
+      projects.setInstantIntakeEnabled(true); // reset biar gak nyampur ke test lain.
+      assert.equal(projects.getInstantIntakeEnabled(), true);
+    });
     await test("batch survives source removal, import, duplicate, deletion and resync", () => {
       const bp = projects.createProject({ name: "roundtrip", channelId: "CA", channelName: "audit" });
       const bi = projects.addItem(bp.id, { name: "batch" });

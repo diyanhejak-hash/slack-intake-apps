@@ -15,7 +15,11 @@
 // telat nambah class walau mouse udah pindah; efeknya PALING BURUK cuma overlay nongol sekejap
 // salah waktu, bukan nyangkut permanen (mouseenter/leave berikutnya tetap benerin). Upgrade ke
 // hook per-row kalau ternyata beneran ganggu.
-export function hoverDelayHandlers(delayMs = 500) {
+// `onLeave` (poin revisi) — dipanggil bareng pencabutan class `.hover-ready`, buat nutup UI lain
+// yang numpang di overlay ini (misal popover Add React) yang KALAU DIBIARKAN nyangkut kebuka
+// walau tombol pemicunya udah ke-hide sama CSS (React state popover gak otomatis tau overlay-nya
+// ilang, soalnya itu 2 hal terpisah — CSS class vs React state).
+export function hoverDelayHandlers(delayMs = 500, onLeave?: () => void) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   return {
     onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
@@ -26,6 +30,7 @@ export function hoverDelayHandlers(delayMs = 500) {
     onMouseLeave: (e: React.MouseEvent<HTMLElement>) => {
       if (timer) { clearTimeout(timer); timer = null; }
       e.currentTarget.classList.remove("hover-ready");
+      onLeave?.();
     },
   };
 }

@@ -269,6 +269,11 @@ declare global {
         get: () => Promise<ArtistAssignMode>;
         set: (mode: ArtistAssignMode) => Promise<ArtistAssignMode>;
       };
+      /** Toggle global Instant Intake + Instant Reaction (poin revisi) — gak sentuh "Add React". */
+      instantIntake: {
+        get: () => Promise<boolean>;
+        set: (enabled: boolean) => Promise<boolean>;
+      };
       /** Reaction PENDING per item (poin revisi) — nunggu dikirim bareng lewat send.start. */
       itemReaction: {
         list: (itemId: string) => Promise<ItemReaction[]>;

@@ -133,9 +133,14 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
 //     TETAP jalur pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
 // `hideButton` (overlay doang) — sembunyiin TOMBOLNYA aja pas cell lagi diedit (poin revisi,
 // sama kayak QuickSendButton), tapi CHIP tetap tampil (gak ganggu proses edit).
-export function ItemReactionBar({ projectId, itemId, variant = "inline", hideButton = false, refreshToken }: { projectId: string; itemId: string; variant?: "inline" | "overlay"; hideButton?: boolean; refreshToken?: unknown }) {
+export function ItemReactionBar({ projectId, itemId, variant = "inline", hideButton = false, refreshToken, closeSignal, onBulkAdded }: { projectId: string; itemId: string; variant?: "inline" | "overlay"; hideButton?: boolean; refreshToken?: unknown; closeSignal?: unknown; onBulkAdded?: () => void }) {
   const [pending, setPending] = useState<ItemReaction[]>([]);
   const [open, setOpen] = useState(false);
+  // closeSignal (poin revisi) — bump dari parent pas overlay/hover-zone-nya ilang (mouse out),
+  // biar popover ini IKUT ketutup, gak nyangkut kebuka tanpa tombol pemicu yang keliatan lagi.
+  useEffect(() => {
+    setOpen(false);
+  }, [closeSignal]);
   // Poin revisi: "React semua Item, atau React hanya item ini" — toggle scope SEBELUM milih
   // emoji, biar 1 klik emoji langsung nentuin ke mana reaction-nya keantre. Default "item"
   // (paling aman) tiap kali popover dibuka lagi.
@@ -155,12 +160,12 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
   async function addPending(preset: EmojiPreset) {
     if (!preset.slack_shortcode) return;
     if (scope === "all") {
-      if (!confirm(`Antrekan reaction ${preset.type === "unicode" ? preset.value : `:${preset.slack_shortcode}:`} ke SEMUA item di project ini?`)) return;
       const payload = { emojiType: preset.type, emojiValue: preset.value, slackShortcode: preset.slack_shortcode };
       const result = await window.api.itemReaction.addToProject(projectId, payload);
       setOpen(false);
       setScope("item");
       refresh();
+      onBulkAdded?.();
       alert(`Reaction diantrekan ke ${result.added}/${result.total} item (sisanya udah pernah diantre reaction yang sama).`);
       return;
     }

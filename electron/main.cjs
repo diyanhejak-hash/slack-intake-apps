@@ -395,6 +395,10 @@ handle("artistPreset:pickImage", async () => {
 handle("artistAssignMode:get", () => projects.getArtistAssignMode());
 handle("artistAssignMode:set", (_e, mode) => projects.setArtistAssignMode(mode));
 
+// Toggle global Instant Intake + Instant Reaction (poin revisi) — gak sentuh "Add React".
+handle("instantIntake:get", () => projects.getInstantIntakeEnabled());
+handle("instantIntake:set", (_e, enabled) => projects.setInstantIntakeEnabled(enabled));
+
 // ---------- Reaction (poin revisi) ----------
 // PENDING per item — dikirim bareng lewat send:start (lihat loop-nya di atas), bukan langsung.
 handle("itemReaction:list", (_e, itemId) => projects.listItemReactions(itemId));

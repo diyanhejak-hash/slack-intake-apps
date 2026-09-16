@@ -76,9 +76,7 @@ export default function ArtistPresetModal({
           {infoOpen && (
             <>
               <p className="caption" style={{ margin: "0 0 8px" }}>
-                Nickname ganti tampilan nama di dropdown Artis. Code name = shortcode custom emoji
-                Slack buat assign-via-reaction — pastikan emoji itu beneran ada di workspace Slack
-                tujuan. PNG cuma preview lokal, gak disinkron ke Slack.
+                Nickname = nama di dropdown. Code name = shortcode emoji Slack (pastikan ada di workspace). PNG cuma preview lokal.
               </p>
               {users.map((u) => (
                 <ArtistInfoRow key={u.id} user={u} preset={presetByMember.get(u.id) || null} onSaved={refreshPresets} />
@@ -89,10 +87,9 @@ export default function ArtistPresetModal({
           <SectionHeader title="2. Dropdown Artis — mode assign & grup" open={dropdownOpen} onToggle={() => setDropdownOpen((v) => !v)} style={{ marginTop: 14 }} />
           {dropdownOpen && (
             <>
-              <div className="label" style={{ marginBottom: 4 }}>2a. Mode assign (GLOBAL, berlaku ke SEMUA artis)</div>
+              <div className="label" style={{ marginBottom: 4 }}>2a. Mode assign (Global)</div>
               <p className="caption" style={{ margin: "0 0 8px" }}>
-                Bukan per-artis — satu switch ini berlaku ke semua assignment di seluruh app.
-                Default Mention aktif. Aktifin dua-duanya buat mention + reaction bareng.
+                Global — berlaku ke semua artis sekaligus. Default: Mention aktif.
               </p>
               <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
                 <button

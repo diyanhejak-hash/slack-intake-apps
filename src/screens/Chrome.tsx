@@ -1,6 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Wand2, Combine, Users, Trash2, FileStack, Link as LinkIcon, HelpCircle } from "lucide-react";
-import slackButtonImg from "../assets/SlackButton.png";
+import { Wand2, Combine, Users, Trash2, FileStack, Link as LinkIcon, HelpCircle, CheckSquare, Square } from "lucide-react";
 
 export interface SidebarActions {
   onGenerateItem: () => void;
@@ -62,10 +61,10 @@ export interface MenuBarActions {
   onHelp: () => void;
   openMenu: MenuName | null;
   onOpenMenuChange: (m: MenuName | null) => void;
-  /** Tombol "Kirim ke Slack" — dipindah ke sini (poin revisi UI), tetap rata kanan. */
-  onSendClick: () => void;
-  sendDisabled: boolean;
-  sendTitle: string;
+  /** Toggle global Instant Intake + Instant Reaction (poin revisi) — di menu Settings, gak sentuh
+   * tombol "Add React" (ItemReactionBar). */
+  instantIntakeEnabled: boolean;
+  onToggleInstantIntake: () => void;
 }
 
 const MENUS = ["File", "Edit", "View", "Settings", "Help"] as const;
@@ -150,6 +149,16 @@ export function MenuBar(a: MenuBarActions) {
                   </div>
                 </div>
               )}
+              {m === "Settings" && (
+                <button
+                  className="btn"
+                  style={{ width: "100%", justifyContent: "space-between", border: "none", padding: "6px 8px" }}
+                  onClick={() => a.onToggleInstantIntake()}
+                >
+                  <span>Instant Intake</span>
+                  {a.instantIntakeEnabled ? <CheckSquare size={14} /> : <Square size={14} />}
+                </button>
+              )}
               {contents[m].map((item) => (
                 <button
                   key={item.label}
@@ -167,15 +176,6 @@ export function MenuBar(a: MenuBarActions) {
           )}
         </div>
       ))}
-      <button
-        className="btn"
-        onClick={a.onSendClick}
-        disabled={a.sendDisabled}
-        title={a.sendTitle}
-        style={{ marginLeft: "auto", background: "#fff", borderRadius: 999, padding: "3px 12px", border: "1px solid var(--border-strong)" }}
-      >
-        <img src={slackButtonImg} alt="Kirim ke Slack" style={{ height: 20, display: "block" }} />
-      </button>
     </div>
   );
 }

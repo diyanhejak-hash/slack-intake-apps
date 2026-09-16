@@ -16,6 +16,7 @@ import EmojiPicker from "./EmojiPicker";
 import { ItemReactionBar } from "./ItemReactions";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
 import { hoverDelayHandlers } from "../lib/hoverDelay";
+import slackButtonImg from "../assets/SlackButton.png";
 
 interface UndoCommand {
   undo: () => Promise<void>;
@@ -34,6 +35,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   // Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis, diatur di modal Kelola
   // Preset Artis (section "Dropdown Artis"), bukan per-artis/per-item lagi.
   const [artistAssignMode, setArtistAssignModeState] = useState<ArtistAssignMode>("mention");
+  const [instantIntakeEnabled, setInstantIntakeEnabledState] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ index: number; total: number; itemName: string } | null>(null);
   const [results, setResults] = useState<SendResult[] | null>(null);
@@ -63,6 +65,10 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   // itemId) gak otomatis tau reaction-nya udah kekirim/kehapus dari server abis quickSend selesai.
   // Tick ini di-passing ke ItemReactionBar biar dia refetch ulang begitu ada quickSend sukses.
   const [reactionTick, setReactionTick] = useState(0);
+  // Popover Add React nyangkut kebuka pas overlay hover-nya ilang (mouse out) — closeSignal
+  // dibump tiap hover-zone Item td kehilangan hover, ItemReactionBar nutup diri sendiri pas ini
+  // berubah (lihat ItemReactions.tsx).
+  const [reactionCloseTick, setReactionCloseTick] = useState(0);
 
   const undoStack = useRef<UndoCommand[]>([]);
   const redoStack = useRef<UndoCommand[]>([]);
@@ -84,6 +90,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     window.api.artistGroup.list().then(setGroups);
     window.api.artistPreset.list().then(setArtistPresets);
     window.api.artistAssignMode.get().then(setArtistAssignModeState);
+    window.api.instantIntake.get().then(setInstantIntakeEnabledState);
     // Cache preset custom emoji (poin revisi) — di-load sedini mungkin biar pas Tab Reply
     // dibuka, EmojiImageNode udah bisa langsung parse ":nama:" tersimpan jadi gambar (bukan
     // nunggu field-nya sendiri yang fetch).
@@ -225,6 +232,10 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   }, []);
 
   function handleCheckboxMouseDown(e: React.MouseEvent, itemId: string, index: number) {
+    // Shift+klik tanpa ini bikin browser nganggep ini "extend text selection" (drag dari klik
+    // terakhir ke klik sekarang), nongolin kotak highlight/border oren di sepanjang baris yang
+    // "terselect" — bukan style kita, itu seleksi teks native browser. preventDefault matiin itu.
+    e.preventDefault();
     if (e.shiftKey && lastClickedIndex.current !== null && project) {
       const [start, end] = [lastClickedIndex.current, index].sort((a, b) => a - b);
       const rangeIds = project.items.slice(start, end + 1).map((i) => i.id);
@@ -303,6 +314,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
       redo: () => window.api.item.update(item.id, { artistId: artistId || null, artistName: u?.name || null }),
     });
     await queueArtistReaction(item.id, artistId || null);
+    setReactionTick((v) => v + 1); // chip react ikut realtime muncul abis assign artis (poin revisi)
     refresh();
   }
 
@@ -495,9 +507,12 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
         onEmojiPresetManager={() => setShowEmojiPresetManager(true)}
         onArtistPresetManager={() => setShowArtistPresetManager(true)}
         onHelp={() => setShowHelp(true)}
-        onSendClick={() => setShowPreview(true)}
-        sendDisabled={project.items.length === 0 || sending}
-        sendTitle={`Preview & Kirim (${effectiveItemIds.length}${selected.size === 0 && project.items.length > 0 ? " — semua" : ""})`}
+        instantIntakeEnabled={instantIntakeEnabled}
+        onToggleInstantIntake={async () => {
+          const next = !instantIntakeEnabled;
+          setInstantIntakeEnabledState(next);
+          await window.api.instantIntake.set(next);
+        }}
       />
 
       {showWorkload && (
@@ -547,6 +562,17 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
             <button className={`folder-tab ${activeTab === "reply" ? "active" : ""}`} onClick={() => setActiveTab("reply")}>
               Reply
             </button>
+            {/* "Kirim ke Slack" (poin revisi) — dipindah dari MenuBar ke sini, tetap rata kanan,
+                bareng buat Tab Table & Tab Reply (baris ini di luar switch activeTab). */}
+            <button
+              className="btn"
+              onClick={() => setShowPreview(true)}
+              disabled={project.items.length === 0 || sending}
+              title={`Preview & Kirim (${effectiveItemIds.length}${selected.size === 0 && project.items.length > 0 ? " — semua" : ""})`}
+              style={{ marginLeft: "auto", marginBottom: 4, background: "#fff", borderRadius: 999, padding: "2px 10px", border: "1px solid var(--border-strong)" }}
+            >
+              <img src={slackButtonImg} alt="Kirim ke Slack" style={{ height: 16, display: "block" }} />
+            </button>
           </div>
 
           {activeTab === "reply" ? (
@@ -565,6 +591,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                   users={visibleUsers}
                   onArtistChange={handleArtistChange}
                   onManageArtistPresets={() => setShowArtistPresetManager(true)}
+                  instantIntakeEnabled={instantIntakeEnabled}
                 />
                 </Suspense>
               ) : (
@@ -587,20 +614,26 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                     {selected.size === project.items.length && project.items.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
                   </th>
                   <th style={{ width: 16, maxWidth: 16, padding: "8px 1px", textAlign: "center" }}>No</th>
-                  <th style={{ width: columnWidths.item, position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste" {...hoverDelayHandlers()}>
+                  {/* position:relative DIHAPUS dari 3 th ini (poin revisi, bug freeze header) —
+                      inline style SELALU menang atas rule stylesheet apapun specificity-nya, jadi
+                      ini nimpa `thead th { position: sticky }` (styles.css) dan bikin header
+                      Item/Artis/Reply ikut scroll bareng body, bukan freeze. Sticky sendiri
+                      SUDAH jadi positioning context yang valid buat overlay absolute di dalamnya
+                      (QuickSendButton), jadi position:relative di sini emang gak perlu. */}
+                  <th style={{ width: columnWidths.item }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste" {...hoverDelayHandlers()}>
                     Item <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
-                    <QuickSendButton title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />
+                    {instantIntakeEnabled && <QuickSendButton title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />}
                   </th>
-                  <th style={{ width: columnWidths.artist, position: "relative" }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste" {...hoverDelayHandlers()}>
+                  <th style={{ width: columnWidths.artist }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste" {...hoverDelayHandlers()}>
                     Artis <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
-                    <QuickSendButton title="Instant Intake — mention artis SEMUA item" onClick={() => quickSendColumn("artist", "Artis")} />
+                    {instantIntakeEnabled && <QuickSendButton title="Instant Intake — mention artis SEMUA item" onClick={() => quickSendColumn("artist", "Artis")} />}
                   </th>
                   {/* B4 — klik header kolom Reply (bubble icon) = pilih Template buat diterapkan
                       ke SEMUA item sekaligus, bukan cuma per-item lewat Tab Reply. Reply dipindah
                       ke sebelum X (poin revisi urutan kolom: ..., Artis, Reply, X). */}
-                  <th style={{ width: 50, maxWidth: 50, position: "relative", textAlign: "center" }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item" {...hoverDelayHandlers()}>
+                  <th style={{ width: 50, maxWidth: 50, textAlign: "center" }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item" {...hoverDelayHandlers()}>
                     <LayoutTemplate size={12} style={{ display: "inline" }} />
-                    <QuickSendButton title="Instant Intake — kirim semua reply/field SEMUA item" onClick={() => quickSendColumn("replies", "Reply")} />
+                    {instantIntakeEnabled && <QuickSendButton title="Instant Intake — kirim semua reply/field SEMUA item" onClick={() => quickSendColumn("replies", "Reply")} />}
                   </th>
                   <th style={{ width: 40, maxWidth: 40 }} />
                 </tr>
@@ -629,7 +662,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                       <td className="caption" style={{ textAlign: "center", padding: "8px 1px" }}>
                         {index + 1}
                       </td>
-                      <td style={{ position: "relative" }} {...hoverDelayHandlers()}>
+                      <td style={{ position: "relative" }} {...hoverDelayHandlers(undefined, () => setReactionCloseTick((v) => v + 1))}>
                         {/* Kolom Item dibagi 2 (poin revisi) kalau ada reaction pending — input
                             flex:1 (nyusut sendiri), chip reaction nempel di KANAN input dalam 1
                             baris (bukan di bawah lagi). ItemReactionBar sendiri yang nge-render
@@ -660,9 +693,11 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                             variant="overlay"
                             hideButton={editingCell?.itemId === item.id && editingCell.col === "item"}
                             refreshToken={reactionTick}
+                            closeSignal={reactionCloseTick}
+                            onBulkAdded={() => setReactionTick((v) => v + 1)}
                           />
                         </div>
-                        {!(editingCell?.itemId === item.id && editingCell.col === "item") && (
+                        {instantIntakeEnabled && !(editingCell?.itemId === item.id && editingCell.col === "item") && (
                           <QuickSendButton title="Instant Intake — kirim nama item ini aja (gak ada artis/reply)" onClick={() => quickSend(item.id, "item")} />
                         )}
                       </td>
@@ -677,7 +712,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                           onManagePresets={() => setShowArtistPresetManager(true)}
                           onOpenChange={(isOpen) => setEditingCell(isOpen ? { itemId: item.id, col: "artist" } : (c) => (c?.itemId === item.id && c.col === "artist" ? null : c))}
                         />
-                        {!(editingCell?.itemId === item.id && editingCell.col === "artist") && (
+                        {instantIntakeEnabled && !(editingCell?.itemId === item.id && editingCell.col === "artist") && (
                           <QuickSendButton title="Instant Intake — mention artis ini aja" onClick={() => quickSend(item.id, "artist")} />
                         )}
                       </td>
@@ -710,7 +745,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                             </span>
                           )}
                         </button>
-                        <QuickSendButton title="Instant Intake — kirim semua reply/field item ini aja" onClick={() => quickSend(item.id, "replies")} />
+                        {instantIntakeEnabled && <QuickSendButton title="Instant Intake — kirim semua reply/field item ini aja" onClick={() => quickSend(item.id, "replies")} />}
                       </td>
                       <td>
                         <button className="icon-btn" onClick={() => handleRemoveItem(item)} title="Hapus">
