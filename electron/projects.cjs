@@ -9,7 +9,10 @@ let activeScope = { userId: null, teamId: null };
 const deletedItems = new Map();
 const mergedItems = new Map();
 let fileTransaction = null;
-const MAX_FILE_BYTES = 100 * 1024 * 1024;
+// Gak ada batas ukuran file sendiri lagi (poin revisi, "ikuti aturan Slack") — dulu ada
+// MAX_FILE_BYTES (100MB) yang dipakai di stageCopy/stageWrite/writeDataUrlFile_/exportProject/
+// importProject, semuanya dihapus. Slack sendiri yang nolak kalau file kekecilan/kegedean buat
+// plan mereka, gak perlu kita tebak-tebak batas sendiri.
 
 function setScope(userId, teamId, adoptLegacy = false) {
   if (activeScope.userId !== userId || activeScope.teamId !== teamId) {
@@ -400,7 +403,7 @@ function stageFile(ownerId, sourcePath) {
 function stageCopy(ownerId, sourcePath, originalName) {
   safeFilename(originalName);
   const stat = fs.statSync(sourcePath);
-  if (!stat.isFile() || stat.size > MAX_FILE_BYTES) throw new Error("Attachment harus berupa file maksimal 100 MB.");
+  if (!stat.isFile()) throw new Error("Attachment harus berupa file.");
   const storedPath = path.join(uniqueAttachmentDir(ownerId), originalName);
   fileTransaction?.created.push(storedPath);
   fs.copyFileSync(sourcePath, storedPath);
@@ -409,7 +412,6 @@ function stageCopy(ownerId, sourcePath, originalName) {
 
 function stageWrite(ownerId, buffer, filename) {
   safeFilename(filename);
-  if (buffer.length > MAX_FILE_BYTES) throw new Error("Attachment maksimal 100 MB.");
   const storedPath = path.join(uniqueAttachmentDir(ownerId), filename);
   fileTransaction?.created.push(storedPath);
   fs.writeFileSync(storedPath, buffer);
@@ -603,10 +605,8 @@ function broadcastReply(replyId, projectId) {
 // reply file yang sudah ada (addCapturedFileToReply), atau drop ke area kosong = reply baru
 // kategori "capture" (addCapturedFile, dipertahankan sama seperti sebelumnya).
 function writeDataUrlFile_(itemId, dataUrl, filename) {
-  if (typeof dataUrl !== "string" || dataUrl.length > Math.ceil(MAX_FILE_BYTES * 4 / 3) + 256) throw new Error("Capture terlalu besar.");
   if (typeof dataUrl !== "string" || !/^data:image\/[a-z0-9.+-]+;base64,/i.test(dataUrl)) throw new Error("Data capture tidak valid.");
   const base64 = dataUrl.split(",")[1] || "";
-  if (base64.length > 40 * 1024 * 1024) throw new Error("Capture terlalu besar.");
   return stageWrite(itemId, Buffer.from(base64, "base64"), filename);
 }
 
@@ -963,9 +963,7 @@ function exportProject(projectId) {
     }
   }
   const files = [...project.files, ...project.items.flatMap((i) => [...i.files, ...i.replies.flatMap((r) => r.files)])];
-  const paths = [...files.map((f) => f.stored_path), ...project.batchSections.flatMap((s) => s.files.map((f) => f.path))];
   if (!files.every((file) => isManagedFile(file.stored_path))) throw new Error("Attachment berada di luar penyimpanan aplikasi. Pilih ulang file tersebut.");
-  if (paths.reduce((total, file) => total + fs.statSync(file).size, 0) > MAX_FILE_BYTES) throw new Error("Total export maksimal 100 MB.");
   for (const file of project.files) {
     file.dataBase64 = fs.readFileSync(file.stored_path).toString("base64");
   }
@@ -1000,12 +998,9 @@ function importProject(payload) {
     ...src.items.flatMap((item) => [...(item.files || []), ...(item.replies || []).flatMap((reply) => reply.files || [])]),
     ...(src.batchSections || []).flatMap((section) => section.files || []),
   ];
-  let decodedBytes = 0;
   for (const file of allFiles) {
     safeFilename(file?.original_name || file?.filename);
     if (typeof file.dataBase64 !== "string" || !/^[a-zA-Z0-9+/]*={0,2}$/.test(file.dataBase64)) throw new Error("Isi attachment tidak valid.");
-    decodedBytes += Math.floor(file.dataBase64.length * 3 / 4);
-    if (decodedBytes > MAX_FILE_BYTES) throw new Error("Total attachment import melebihi 100 MB.");
   }
   const staged = [];
   let newProjectId;

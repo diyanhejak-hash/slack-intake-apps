@@ -37,7 +37,8 @@ function allowFiles(files) {
 function validateFile(file) {
   const real = fs.realpathSync(file);
   if (!fileGrants.has(real) && !projects.isManagedFile(real)) throw new Error("Pilih atau drop file terlebih dahulu.");
-  if (!fs.statSync(real).isFile() || fs.statSync(real).size > 100 * 1024 * 1024) throw new Error("File maksimal 100 MB.");
+  // Gak ada batas ukuran sendiri lagi (poin revisi) — ikut aturan Slack, biar Slack yang nolak.
+  if (!fs.statSync(real).isFile()) throw new Error("Yang dipilih bukan file.");
 }
 function threadKey(projectId, itemId) {
   const info = authStore.loadToken();

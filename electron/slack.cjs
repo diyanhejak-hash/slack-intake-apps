@@ -94,7 +94,13 @@ async function completeLoginFromUrl(urlString) {
 }
 
 function client(token) {
-  return new WebClient(token, { retryConfig: { retries: 0 }, rejectRateLimitedCalls: true, timeout: 60000 });
+  // timeout 60s (dulu) kepotong duluan buat upload file gede (files.uploadV2 SHARE client yang
+  // sama kayak panggilan ringan macam users.conversations) — koneksi upload lambat + file
+  // mendekati batas 100MB gampang lewat 60 detik, padahal uploadnya masih jalan normal, cuma
+  // pelan. Poin revisi lanjutan: batas ukuran file sendiri udah dihapus total (ikut aturan
+  // Slack), jadi file bisa jauh lebih besar dari 100MB — 30 menit dikasih biar upload gede punya
+  // ruang beneran, panggilan ringan tetap balik cepat (ini cuma ceiling, bukan delay per-request).
+  return new WebClient(token, { retryConfig: { retries: 0 }, rejectRateLimitedCalls: true, timeout: 30 * 60 * 1000 });
 }
 
 async function listChannels(token) {
@@ -202,14 +208,13 @@ async function sendItem({ token, channelId, itemName, threadKey, artistId, posts
   if (sending.has(key)) throw new Error("Item ini sedang dikirim.");
   sending.add(key);
   try {
-    // Validate every file before any Slack side effect; uploads use streams.
-    let total = 0;
+    // Validate every file before any Slack side effect; uploads use streams. Gak ada batas
+    // ukuran sendiri (poin revisi) — ikut aturan Slack aja, biar Slack yang nolak kalau memang
+    // di luar batas mereka (jauh lebih besar dari batas lama 100MB yang kita set sendiri).
     const fileSignatures = [];
     for (const post of posts) for (const file of post.files || []) {
       const stat = fs.statSync(file.path);
       if (!stat.isFile()) throw new Error("Attachment bukan file.");
-      total += stat.size;
-      if (total > 100 * 1024 * 1024) throw new Error("Total attachment per item maksimal 100 MB.");
       const hash = crypto.createHash("sha256");
       for await (const chunk of fs.createReadStream(file.path)) hash.update(chunk);
       fileSignatures.push(hash.digest("hex"));
