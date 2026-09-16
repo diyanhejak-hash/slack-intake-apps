@@ -4,7 +4,7 @@
 //     (item_reactions, DB) — baru beneran kekirim ke Slack pas "Kirim ke Slack" biasa (urutan:
 //     pesan utama -> semua reply -> reaction, lihat main.cjs send:start).
 //   - InstantReactionOverlay: overlay yang nongol pas HOVER Pil Item (pola sama kayak Instant
-//     Intake — delay 1s, `.row-quicksend`), klik = LANGSUNG kirim reactions.add ke Slack, gak
+//     Intake — delay 4s, `.row-quicksend`), klik = LANGSUNG kirim reactions.add ke Slack, gak
 //     pernah nyentuh tabel item_reactions sama sekali. Butuh item yang UDAH PERNAH dikirim
 //     (ada thread) — kalau belum, error jelas, BUKAN auto-bikin pesan baru cuma buat reaction.
 //
