@@ -106,7 +106,7 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
 //     sejajar (flow biasa).
 //   - "overlay" (Tab Table, poin revisi) — TOMBOL-nya overlay di SAMPING KANAN Instant Intake
 //     (top:-8/left:16), cuma nongol pas hover cell (`.row-quicksend`). CHIP hasil react (bukan
-//     tombolnya!) itu elemen BEDA — absolute DI BAWAH item rata kiri (top:26/left:0) dan SELALU
+//     tombolnya!) itu elemen BEDA — absolute DI BAWAH item rata kanan (top:26/right:0) dan SELALU
 //     tampil (gak hover-gated), soalnya itu status pending yang relevan diliat kapan aja. Ini
 //     TETAP jalur pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
 // `hideButton` (overlay doang) — sembunyiin TOMBOLNYA aja pas cell lagi diedit (poin revisi,
@@ -195,7 +195,7 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             SELALU tampil (gak dihover-gate kayak tombol), soalnya ini info status pending yang
             relevan buat dilihat kapan aja, bukan aksi sesaat. */}
         {pending.length > 0 && (
-          <div style={{ position: "absolute", top: 26, left: 0, display: "flex", gap: 3, zIndex: 1 }}>{chips}</div>
+          <div style={{ position: "absolute", top: 26, right: 0, display: "flex", gap: 1, zIndex: 1 }}>{chips}</div>
         )}
         {open && (
           <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 16, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
