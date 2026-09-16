@@ -169,6 +169,15 @@ const saveAttempt = db.prepare(`
     artist_sent=excluded.artist_sent, next_post=excluded.next_post, updated_at=excluded.updated_at
 `);
 const clearAttempt = db.prepare(`DELETE FROM send_attempts WHERE item_name = ? AND channel_id = ?`);
+// Bikin baris send_attempts KOSONG kalau belum ada (poin revisi, dipakai ensureRoot/
+// sendArtistMention) — cuma buat nyimpen pending_phase pas fase itu lagi jalan, gak nyentuh
+// fingerprint/thread_ts/artist_sent/next_post punya baris yang mungkin udah ada (biar gak numpuk
+// data punya fase "post", yang emang butuh fingerprint asli).
+const ensureAttemptRow = db.prepare(`
+  INSERT INTO send_attempts (item_name, channel_id, fingerprint, thread_ts, artist_sent, next_post, updated_at)
+  VALUES (?, ?, '', '', 0, 0, ?)
+  ON CONFLICT(item_name, channel_id) DO NOTHING
+`);
 
 // Reuse pola sendItem Phase 0 (lib/slack-send.js), diperluas: multi-file per reply ikut batas
 // asli Slack (files.uploadV2 file_uploads array, bukan hardcode 5 seperti Command Builder/HB5),
@@ -281,6 +290,129 @@ async function sendItem({ token, channelId, itemName, threadKey, artistId, posts
   } finally { sending.delete(key); }
 }
 
+// ---------- Kirim BATCH 4-fase (poin revisi) ----------
+// send:start (main.cjs) sekarang kirim per-FASE lintas SEMUA item terpilih (semua item pesan
+// utama dulu, baru semua item di-assign, dst) — BEDA dari sendItem() di atas (dipakai send:quick/
+// Instant Intake, 1 item doang per panggilan, gak ada konsep "fase lintas item"). 3 fungsi di
+// bawah ini SENGAJA dipisah dari sendItem, bukan hasil pecah ulang sendItem — sendItem TETAP
+// dipakai apa adanya, zero perubahan, biar Instant Intake gak kesenggol sama sekali.
+//
+// Idempotensi root & assign PAKAI tabel `threads` (thread_ts/artist_sent) yang udah ada, BUKAN
+// fingerprint kayak sendItem — soalnya isinya SELALU deterministik (nama item / artist_id),
+// beda dari reply yang isinya bisa macam-macam & butuh deteksi "isi berubah pas retry".
+// `pending_phase` (send_attempts) dipakai buat penanda "lagi di tengah panggilan API" —
+// dialog Pulihkan Kiriman (send:recover, main.cjs) generik, baca field ini apa adanya, jadi
+// TIDAK perlu diubah — string fase ("root"/"artist"/"post") sengaja sama persis kayak sendItem.
+
+async function ensureRoot({ token, channelId, itemName, threadKey }) {
+  if (!token || !channelId || !itemName) throw new Error("Login, channel, dan nama item wajib diisi.");
+  const key = threadKey || JSON.stringify([crypto.createHash("sha256").update(token).digest("hex"), itemName]);
+  if (sending.has(key)) throw new Error("Item ini sedang dikirim.");
+  sending.add(key);
+  try {
+    const existing = getThread.get(key, channelId);
+    if (existing?.thread_ts) return { threadTs: existing.thread_ts, isNew: false };
+    const attempt = getAttempt.get(key, channelId);
+    if (attempt?.pending_phase === "root") throw new Error("Hasil kirim sebelumnya belum pasti. Periksa Slack lalu gunakan Pulihkan kiriman.");
+    ensureAttemptRow.run(key, channelId, new Date().toISOString());
+    setPending.run("root", key, channelId);
+    const c = client(token);
+    let posted;
+    try {
+      posted = await c.chat.postMessage({ channel: channelId, text: `*${itemName}*` });
+    } catch (error) {
+      throw new Error(`${error.message} Hasil kirim perlu diperiksa di Slack sebelum retry.`);
+    }
+    upsertThread.run({ itemName: key, channelId, threadTs: posted.ts, updatedAt: new Date().toISOString() });
+    setPending.run(null, key, channelId);
+    return { threadTs: posted.ts, isNew: true };
+  } finally { sending.delete(key); }
+}
+
+async function sendArtistMention({ token, channelId, threadKey, threadTs, artistId }) {
+  if (!token || !channelId || !threadTs || !artistId) throw new Error("Data assign artis tidak lengkap.");
+  const key = threadKey;
+  if (sending.has(key)) throw new Error("Item ini sedang dikirim.");
+  sending.add(key);
+  try {
+    const existing = getThread.get(key, channelId);
+    if (existing?.artist_sent) return { artistSent: true };
+    const attempt = getAttempt.get(key, channelId);
+    if (attempt?.pending_phase === "artist") throw new Error("Hasil kirim sebelumnya belum pasti. Periksa Slack lalu gunakan Pulihkan kiriman.");
+    ensureAttemptRow.run(key, channelId, new Date().toISOString());
+    setPending.run("artist", key, channelId);
+    const c = client(token);
+    try {
+      await c.chat.postMessage({ channel: channelId, thread_ts: threadTs, text: `<@${artistId}>` });
+    } catch (error) {
+      throw new Error(`${error.message} Hasil kirim perlu diperiksa di Slack sebelum retry.`);
+    }
+    setThreadArtistSent.run(new Date().toISOString(), key, channelId);
+    setPending.run(null, key, channelId);
+    return { artistSent: true };
+  } finally { sending.delete(key); }
+}
+
+async function sendReplies({ token, channelId, threadKey, threadTs, posts = [] }) {
+  if (!token || !channelId || !threadTs) throw new Error("Login, channel, dan thread wajib diisi.");
+  const key = threadKey;
+  if (!posts.length) { clearAttempt.run(key, channelId); return { permalink: undefined }; }
+  if (sending.has(key)) throw new Error("Item ini sedang dikirim.");
+  sending.add(key);
+  try {
+    // Sama kayak sendItem: validasi semua file + hash dulu sebelum ada side-effect ke Slack.
+    const fileSignatures = [];
+    for (const post of posts) for (const file of post.files || []) {
+      const stat = fs.statSync(file.path);
+      if (!stat.isFile()) throw new Error("Attachment bukan file.");
+      const hash = crypto.createHash("sha256");
+      for await (const chunk of fs.createReadStream(file.path)) hash.update(chunk);
+      fileSignatures.push(hash.digest("hex"));
+    }
+    const fingerprint = crypto.createHash("sha256").update(JSON.stringify({ posts, fileSignatures })).digest("hex");
+    const previous = getAttempt.get(key, channelId);
+    if (previous?.pending_phase === "post") throw new Error("Hasil kirim sebelumnya belum pasti. Periksa Slack lalu gunakan Pulihkan kiriman.");
+    // next_post > 0 (poin revisi) — baris ini mungkin cuma placeholder kosong dari
+    // ensureRoot/sendArtistMention (fingerprint ''), BUKAN sisa attempt reply yang genuinely
+    // parsial. Fingerprint mismatch cuma relevan kalau MEMANG udah ada reply yang kekirim.
+    if (previous && previous.next_post > 0 && previous.fingerprint !== fingerprint) throw new Error("Isi berubah sejak kiriman parsial. Pulihkan kiriman sebelum mencoba lagi.");
+    let nextPost = previous?.next_post || 0;
+    const c = client(token);
+    const save = () => saveAttempt.run({ itemName: key, channelId, fingerprint, threadTs, artistSent: previous?.artist_sent || 0, nextPost, updatedAt: new Date().toISOString() });
+    save();
+    async function request(fn) {
+      setPending.run("post", key, channelId);
+      try {
+        return await fn();
+      } catch (error) {
+        throw new Error(`${error.message} Hasil kirim perlu diperiksa di Slack sebelum retry.`);
+      }
+    }
+    for (let index = nextPost; index < posts.length; index++) {
+      const post = posts[index];
+      if (post.files?.length) {
+        const streams = post.files.map((f) => fs.createReadStream(f.path));
+        try {
+          await request(() => c.files.uploadV2({
+            channel_id: channelId, thread_ts: threadTs, initial_comment: post.text || undefined,
+            file_uploads: post.files.map((f, i) => ({ file: streams[i], filename: f.filename })),
+          }));
+        } finally { streams.forEach((stream) => stream.destroy()); }
+      } else if (post.text) {
+        await request(() => c.chat.postMessage({ channel: channelId, thread_ts: threadTs, text: post.text }));
+      }
+      nextPost = index + 1; save(); setPending.run(null, key, channelId);
+    }
+    clearAttempt.run(key, channelId);
+    let permalink;
+    try {
+      ({ permalink } = await c.chat.getPermalink({ channel: channelId, message_ts: threadTs }));
+      if (permalink) setThreadPermalink.run(permalink, new Date().toISOString(), key, channelId);
+    } catch { /* delivery succeeded; permalink is optional */ }
+    return { permalink };
+  } finally { sending.delete(key); }
+}
+
 // Reaction (poin revisi) — dipakai 2 jalur: instan (overlay hover pil item, fire-and-forget) DAN
 // batch (pending item_reactions, dikirim bareng lewat send:start). "already_reacted" DIANGGAP
 // SUKSES (idempoten) — pesan yang udah di-react gak perlu di-react lagi, bukan error beneran.
@@ -316,4 +448,4 @@ async function createPrivateChannel({ token, name, memberIds = [] }) {
   return { channelId, name: safeName };
 }
 
-module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread };
+module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread };

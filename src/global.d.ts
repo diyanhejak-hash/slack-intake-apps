@@ -306,7 +306,9 @@ declare global {
           replyId?: string;
         }) => Promise<{ itemId: string; itemName: string; threadTs: string; isNew: boolean; permalink?: string; channelId: string }>;
         cancel: () => Promise<boolean>;
-        onProgress: (cb: (data: { projectId: string; jobId: string; index: number; total: number; itemName: string }) => void) => () => void;
+        /** `phase` (poin revisi, send:start 4-fase) — cuma ada pas dari send:start (batch),
+         * gak ada pas dari send:quick (Instant Intake, 1 panggilan doang gak ada fase). */
+        onProgress: (cb: (data: { projectId: string; jobId: string; index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post" }) => void) => () => void;
         onDone: (cb: (data: { projectId: string; jobId: string; results: SendResult[] }) => void) => () => void;
       };
       update: {

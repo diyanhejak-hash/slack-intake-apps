@@ -480,6 +480,12 @@ function replyToPost(reply) {
 // ada (progress bar, notifikasi selesai, cancel, satu openSlack doang di awal — bukan spam buka
 // Slack per item kayak kalau send:quick dipanggil berkali-kali). undefined = perilaku lama
 // (semua: file+reply+artis), gak ada breaking change buat caller lama (SlackViewPreview).
+// send:start — poin revisi urutan kirim: BUKAN lagi per-item (item A semua fase, baru item B),
+// tapi per-FASE lintas SEMUA item terpilih: 1) pesan utama SEMUA item dulu, 2) assign
+// (mention/react artis) SEMUA item, 3) react LAIN (di luar react artis) SEMUA item, 4) baru
+// reply/file lain per item. `itemState` (Map per item.id) nampung status berjalan tiap item
+// lintas ke-4 fase — begitu 1 fase gagal buat 1 item, item itu di-skip di fase-fase SISANYA
+// (bukan nge-block item lain), ditandai gagal di hasil akhir (bisa di-retry manual belakangan).
 handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => {
   if (activeSend) throw new Error("Masih ada proses kirim yang berjalan.");
   const jobId = require("node:crypto").randomUUID();
@@ -490,78 +496,111 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     if (!project) throw new Error("Project tidak ditemukan untuk akun/workspace ini.");
     const token = currentToken();
     const targets = project.items.filter((i) => itemIds.includes(i.id));
-    const results = [];
   // Override dari Slack View Preview (poin baru: user bisa ganti channel tujuan cuma buat
   // kiriman ini) — kalau gak dikasih, pakai channel default project seperti biasa.
     const targetChannelId = channelId || project.channel_id;
+    const presetByMember = new Map(projects.listArtistPresets().map((p) => [p.member_id, p]));
 
     openSlack({ channelId: targetChannelId });
 
-    for (let i = 0; i < targets.length; i++) {
-    if (cancelRequested) {
-      results.push({ itemId: targets[i].id, itemName: targets[i].name, status: "dibatalkan" });
-      continue;
-    }
-    const item = targets[i];
-    if (!event.sender.isDestroyed()) event.sender.send("send:progress", { projectId, jobId, index: i, total: targets.length, itemName: item.name });
-    try {
-      let artistId = item.artist_id;
-      let posts = [];
-      if (scope === "item") {
-        artistId = null; // cuma mastiin/bikin thread `*itemName*`, gak ada artis/reply/file.
-      } else if (scope === "artist") {
-        if (!artistId) throw new Error("Item ini belum ada artis yang ditugaskan.");
-      } else if (scope === "replies") {
-        artistId = null;
-        posts = item.replies.map(replyToPost).filter(Boolean);
-      } else {
-        // Default (gak ada scope, dipakai SlackViewPreview/"Preview & Kirim") — kirim SEMUANYA:
-        // attach langsung dulu (kompatibilitas item_files lama), lalu tiap Reply (Batch File/
-        // Drawer/Template) sesuai sort_order — teks jadi 1 pesan, file jadi 1 upload (+ caption
-        // judul reply-nya).
-        if (!item.files.every((f) => projects.isManagedFile(f.stored_path))) throw new Error("Attachment item tidak berada dalam penyimpanan project.");
-        if (item.files.length) {
-          posts.push({ files: item.files.map((f) => ({ path: f.stored_path, filename: f.original_name })) });
-        }
-        for (const reply of item.replies) {
-          const post = replyToPost(reply);
-          if (post) posts.push(post);
+    const itemState = new Map(targets.map((item) => [item.id, {}]));
+    async function runPass(phase, label, fn) {
+      for (let i = 0; i < targets.length; i++) {
+        const item = targets[i];
+        const state = itemState.get(item.id);
+        if (state.failed) continue;
+        if (cancelRequested) { state.cancelled = true; continue; }
+        if (!event.sender.isDestroyed()) event.sender.send("send:progress", { projectId, jobId, index: i, total: targets.length, itemName: item.name, phase });
+        try {
+          await fn(item, state);
+        } catch (err) {
+          state.failed = true;
+          state.reason = err.message;
+          projects.addLog("error", `Gagal (${label}) "${item.name}": ${err.message}`);
         }
       }
-      // Artis Preset (poin revisi) — mode Mention/React GLOBAL buat SEMUA artis (bukan per-artis/
-      // per-item lagi). Mode "react" (gak "mention"/"both") berarti JANGAN post @mention, walau
-      // scope minta artis (reaction pending-nya sendiri udah di-antre pas artis di-assign,
-      // ke-flush lewat loop reaction di bawah — bukan di sini).
-      if (artistId && !["mention", "both"].includes(projects.getArtistAssignMode())) artistId = null;
+    }
 
+    // Fase 1 — pesan utama (bikin thread `*itemName*` kalau belum ada, idempoten kalau udah).
+    await runPass("root", "kirim pesan utama", async (item, state) => {
       await confirmLegacyThread(projectId, item, targetChannelId);
-      const { threadTs, isNew, permalink } = await slack.sendItem({
-        token,
-        channelId: targetChannelId,
-        itemName: item.name,
-        threadKey: threadKey(projectId, item.id),
-        artistId,
-        posts,
+      const { threadTs, isNew } = await slack.ensureRoot({
+        token, channelId: targetChannelId, itemName: item.name, threadKey: threadKey(projectId, item.id),
       });
-      results.push({ itemId: item.id, itemName: item.name, status: "berhasil", isNew, threadTs, permalink, channelId: targetChannelId });
+      state.threadTs = threadTs;
+      state.isNew = isNew;
+    });
 
-      // Reaction PENDING (poin revisi) — urutan: pesan utama -> semua reply (di atas) -> reaction
-      // di sini, paling akhir. Gagal per-reaction (mis. custom emoji belum ada di workspace Slack
-      // tujuan) SENGAJA gak nggagalin seluruh item (pesan/reply udah kekirim duluan) — dicatat log
-      // doang, reaction itu TETAP pending (gak dihapus) biar bisa dicoba lagi lain kali.
+    // Fase 2 — assign: mention @artis (kalau scope & mode global ngizinin) DAN/ATAU react
+    // pakai code_name artis (data-driven, gak digate scope/mode — sama kayak reaction flush
+    // versi lama yang unconditional, cuma soal row MANA yang "milik artis" vs "lainnya").
+    await runPass("artist", "assign artis", async (item, state) => {
+      let artistId = item.artist_id;
+      if (scope === "item" || scope === "replies") artistId = null;
+      else if (scope === "artist" && !artistId) throw new Error("Item ini belum ada artis yang ditugaskan.");
+      if (artistId && ["mention", "both"].includes(projects.getArtistAssignMode())) {
+        await slack.sendArtistMention({
+          token, channelId: targetChannelId, threadKey: threadKey(projectId, item.id), threadTs: state.threadTs, artistId,
+        });
+      }
+      const codeName = item.artist_id && presetByMember.get(item.artist_id)?.code_name;
+      const artistReaction = codeName && projects.listItemReactions(item.id).find((r) => r.slack_shortcode === codeName);
+      if (artistReaction) {
+        try {
+          await slack.addReaction({ token, channelId: targetChannelId, timestamp: state.threadTs, name: artistReaction.slack_shortcode });
+          projects.removeItemReaction(artistReaction.id);
+        } catch (err) {
+          projects.addLog("error", `Gagal kasih reaction :${artistReaction.slack_shortcode}: ke "${item.name}": ${err.message}`);
+        }
+      }
+    });
+
+    // Fase 3 — react lain (di luar react artis, misal ditambah manual lewat "Add React"). Gagal
+    // per-reaction SENGAJA gak nggagalin seluruh item — dicatat log doang, tetap pending (gak
+    // dihapus) biar bisa dicoba lagi lain kali.
+    await runPass("react", "kirim react", async (item, state) => {
       for (const reaction of projects.listItemReactions(item.id)) {
         try {
-          await slack.addReaction({ token, channelId: targetChannelId, timestamp: threadTs, name: reaction.slack_shortcode });
+          await slack.addReaction({ token, channelId: targetChannelId, timestamp: state.threadTs, name: reaction.slack_shortcode });
           projects.removeItemReaction(reaction.id);
         } catch (err) {
           projects.addLog("error", `Gagal kasih reaction :${reaction.slack_shortcode}: ke "${item.name}": ${err.message}`);
         }
       }
-    } catch (err) {
-      results.push({ itemId: item.id, itemName: item.name, status: "gagal", channelId: targetChannelId, reason: err.message });
-      projects.addLog("error", `Gagal kirim "${item.name}": ${err.message}`);
+    });
+
+    // Fase 4 — reply/file lain di dalam thread (attach langsung + tiap Reply sesuai sort_order).
+    // scope "item"/"artist" gak butuh reply, di-skip seluruh fase-nya (posts selalu kosong).
+    if (scope !== "item" && scope !== "artist") {
+      await runPass("post", "kirim reply", async (item, state) => {
+        let posts = [];
+        if (scope === "replies") {
+          posts = item.replies.map(replyToPost).filter(Boolean);
+        } else {
+          // Default (gak ada scope, dipakai SlackViewPreview/"Preview & Kirim") — kirim SEMUANYA:
+          // attach langsung dulu (kompatibilitas item_files lama), lalu tiap Reply (Batch File/
+          // Drawer/Template) sesuai sort_order — teks jadi 1 pesan, file jadi 1 upload (+ caption
+          // judul reply-nya).
+          if (!item.files.every((f) => projects.isManagedFile(f.stored_path))) throw new Error("Attachment item tidak berada dalam penyimpanan project.");
+          if (item.files.length) posts.push({ files: item.files.map((f) => ({ path: f.stored_path, filename: f.original_name })) });
+          for (const reply of item.replies) {
+            const post = replyToPost(reply);
+            if (post) posts.push(post);
+          }
+        }
+        const { permalink } = await slack.sendReplies({
+          token, channelId: targetChannelId, threadKey: threadKey(projectId, item.id), threadTs: state.threadTs, posts,
+        });
+        if (permalink) state.permalink = permalink;
+      });
     }
-    }
+
+    const results = targets.map((item) => {
+      const state = itemState.get(item.id);
+      if (state.cancelled) return { itemId: item.id, itemName: item.name, status: "dibatalkan" };
+      if (state.failed) return { itemId: item.id, itemName: item.name, status: "gagal", channelId: targetChannelId, reason: state.reason };
+      return { itemId: item.id, itemName: item.name, status: "berhasil", isNew: state.isNew, threadTs: state.threadTs, permalink: state.permalink, channelId: targetChannelId };
+    });
 
     const okCount = results.filter((r) => r.status === "berhasil").length;
   projects.addLog("info", `Kirim selesai (${project.name}): ${okCount}/${results.length} berhasil.`);

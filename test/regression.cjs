@@ -287,6 +287,32 @@ async function test(name, fn) {
       slack.resolveAttempt({ threadKey: pendingKey, channelId: "CA", action: "received", threadTs: "1234567890.000001" });
       assert.equal(slack.findThreadInfo(pendingKey).threadTs, "1234567890.000001");
     });
+    await test("ensureRoot & sendArtistMention (poin revisi 4-fase) idempoten, gak posting ulang", async () => {
+      const before = calls.length;
+      const r1 = await slack.ensureRoot({ token: "MOCK", channelId: "CA", itemName: "phase-item", threadKey: "phase-item" });
+      assert.equal(r1.isNew, true);
+      const r2 = await slack.ensureRoot({ token: "MOCK", channelId: "CA", itemName: "phase-item", threadKey: "phase-item" });
+      assert.equal(r2.threadTs, r1.threadTs);
+      assert.equal(r2.isNew, false);
+      assert.equal(calls.filter((c) => c.text === "*phase-item*" && !c.thread_ts).length, 1);
+
+      await slack.sendArtistMention({ token: "MOCK", channelId: "CA", threadKey: "phase-item", threadTs: r1.threadTs, artistId: "U1" });
+      await slack.sendArtistMention({ token: "MOCK", channelId: "CA", threadKey: "phase-item", threadTs: r1.threadTs, artistId: "U1" });
+      assert.equal(calls.filter((c) => c.text === "<@U1>" && c.thread_ts === r1.threadTs).length, 1);
+      assert.equal(calls.length - before, 2); // 1x root + 1x mention, panggilan ke-2 dua-duanya no-op
+    });
+    await test("sendReplies (poin revisi 4-fase) resume abis upload gagal, sama kayak sendItem", async () => {
+      const file = path.join(temp, "phase-attach.txt"); fs.writeFileSync(file, "x");
+      const root = await slack.ensureRoot({ token: "MOCK", channelId: "CA", itemName: "phase-post", threadKey: "phase-post" });
+      const posts = [{ text: "phase first" }, { files: [{ path: file, filename: "phase-attach.txt" }] }];
+      failUpload = true;
+      await assert.rejects(slack.sendReplies({ token: "MOCK", channelId: "CA", threadKey: "phase-post", threadTs: root.threadTs, posts }));
+      failUpload = false;
+      await assert.rejects(slack.sendReplies({ token: "MOCK", channelId: "CA", threadKey: "phase-post", threadTs: root.threadTs, posts }), /belum pasti/);
+      slack.resolveAttempt({ threadKey: "phase-post", channelId: "CA", action: "retry" });
+      await slack.sendReplies({ token: "MOCK", channelId: "CA", threadKey: "phase-post", threadTs: root.threadTs, posts });
+      assert.equal(calls.filter((c) => c.text === "phase first" && c.thread_ts === root.threadTs).length, 1);
+    });
     await test("quick-send holds its lock during await and releases it on rejection", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
@@ -361,6 +387,62 @@ async function test(name, fn) {
       // (gak nge-throw), tapi TIDAK diteruskan ke sendItem (gak ada @mention di-post) -- assign
       // "react" beneran diberitahu lewat reaction (test terpisah di atas), bukan mention.
       assert.equal(sentArtistId, null);
+    });
+    await test("send:start (poin revisi 4-fase) kirim per-fase lintas semua item, item gagal di-skip fase berikutnya", async () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const block = source.match(/handle\("send:start",[\s\S]*?\n\}\);/)[0];
+      const callLog = [];
+      const reactionCalls = [];
+      const removedReactionIds = [];
+      const reactionsByItem = { A: [{ id: "RA", slack_shortcode: "artis-a" }, { id: "RX", slack_shortcode: "manual" }], B: [] };
+      let handler;
+      const context = {
+        activeSend: null, cancelRequested: false, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
+        Notification: { isSupported: () => false },
+        projects: {
+          getProject: () => ({
+            name: "proj", channel_id: "CA",
+            items: [
+              { id: "A", name: "Item A", artist_id: "U1", files: [], replies: [] },
+              { id: "B", name: "Item B", artist_id: null, files: [], replies: [] },
+            ],
+          }),
+          addLog: () => {},
+          isManagedFile: () => true,
+          listArtistPresets: () => [{ member_id: "U1", code_name: "artis-a" }],
+          listItemReactions: (itemId) => reactionsByItem[itemId] || [],
+          removeItemReaction: (id) => {
+            removedReactionIds.push(id);
+            for (const key of Object.keys(reactionsByItem)) reactionsByItem[key] = reactionsByItem[key].filter((r) => r.id !== id);
+          },
+          getArtistAssignMode: () => "both",
+        },
+        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+        slack: {
+          ensureRoot: async ({ threadKey: key }) => {
+            callLog.push(`root:${key}`);
+            if (key === "B") throw new Error("root gagal buat B");
+            return { threadTs: `${key}.ts`, isNew: true };
+          },
+          sendArtistMention: async ({ threadKey: key }) => { callLog.push(`artist:${key}`); },
+          addReaction: async ({ name }) => { reactionCalls.push(name); },
+          sendReplies: async ({ threadKey: key }) => { callLog.push(`post:${key}`); return { permalink: undefined }; },
+        },
+      };
+      vm.runInNewContext(block, context);
+      const { results } = await handler({ sender: { isDestroyed: () => false, send: () => {} } }, { projectId: "P", itemIds: ["A", "B"], scope: undefined });
+
+      // Item B gagal di fase root -> di-skip TOTAL di fase artist/react/post, item A tetap lanjut.
+      assert.deepEqual(callLog.filter((c) => c.endsWith(":B")), ["root:B"]);
+      assert.deepEqual(callLog.filter((c) => c.endsWith(":A")), ["root:A", "artist:A", "post:A"]);
+      // Urutan GLOBAL per-fase (bukan per-item lagi): semua root dulu, baru artist.
+      assert.deepEqual(callLog.filter((c) => c.startsWith("root:") || c.startsWith("artist:")), ["root:A", "root:B", "artist:A"]);
+      // Reaction artis (artis-a) ke-flush pas fase artist, reaction manual (manual) di fase react
+      // terpisah -- dua-duanya ke-flush, gak dobel-proses.
+      assert.deepEqual(reactionCalls.sort(), ["artis-a", "manual"]);
+      assert.deepEqual(removedReactionIds.sort(), ["RA", "RX"]);
+      assert.equal(results.find((r) => r.itemId === "A").status, "berhasil");
+      assert.equal(results.find((r) => r.itemId === "B").status, "gagal");
     });
 
     await test("OAuth ignores wrong-state callbacks and finishes the legitimate callback", async () => {

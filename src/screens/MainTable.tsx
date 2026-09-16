@@ -25,6 +25,15 @@ interface UndoCommand {
 
 const PALETTE = ["#2F6FEB", "#F59E0B", "#16A34A", "#DC2626", "#7C3AED", "#0EA5E9", "#DB2777", "#65A30D"];
 
+// Label progress per-fase (poin revisi) — send:start sekarang kirim per-fase lintas semua item
+// (bukan per-item lagi), jadi "1/10" restart tiap ganti fase; label ini biar jelas itu fase baru.
+const PHASE_LABEL: Record<"root" | "artist" | "react" | "post", string> = {
+  root: "Kirim pesan utama",
+  artist: "Assign artis",
+  react: "Kirim react",
+  post: "Kirim reply",
+};
+
 export default function MainTable({ projectId, onBackToStartMenu, onOpenProject }: { projectId: string; onBackToStartMenu: () => void; onOpenProject: (id: string) => void }) {
   const [project, setProject] = useState<Project | null>(null);
   const [users, setUsers] = useState<SlackUser[]>([]);
@@ -37,7 +46,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   const [artistAssignMode, setArtistAssignModeState] = useState<ArtistAssignMode>("mention");
   const [instantIntakeEnabled, setInstantIntakeEnabledState] = useState(true);
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [progress, setProgress] = useState<{ index: number; total: number; itemName: string } | null>(null);
+  const [progress, setProgress] = useState<{ index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post" } | null>(null);
   const [results, setResults] = useState<SendResult[] | null>(null);
   const [sending, setSending] = useState(false);
   const [activeTab, setActiveTab] = useState<"table" | "reply">("table");
@@ -780,7 +789,9 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                 {progress && (
                   <span className="caption">
                     <Loader2 size={12} className="spin" style={{ display: "inline", verticalAlign: "-2px", marginRight: 4 }} />
-                    Mengirim {progress.index + 1}/{progress.total}: {progress.itemName}
+                    {/* Label per-fase (poin revisi, send:start sekarang 4-fase lintas semua item) —
+                        biar progress "1/10" yang restart tiap fase gak keliatan kayak nyangkut/ngulang. */}
+                    {PHASE_LABEL[progress.phase || "post"]} {progress.index + 1}/{progress.total}: {progress.itemName}
                   </span>
                 )}
                 <button className="btn btn-danger" onClick={handleCancel}>

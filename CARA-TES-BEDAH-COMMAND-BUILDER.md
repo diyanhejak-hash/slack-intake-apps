@@ -1237,3 +1237,54 @@ Checklist manual:
   bullet list, gak perlu klik tombol toolbar List.
 - [ ] **Auto-number**: ketik "1. " (angka+titik+spasi) di awal baris field → LANGSUNG jadi
   numbered list, gak perlu klik tombol toolbar ListOrdered.
+
+## 38. Kirim ke Slack jadi 4-fase lintas semua item (bukan per-item lagi) (2026-09-16) ✅ (siap dites)
+
+**Permintaan eksplisit user** — urutan "Kirim ke Slack" (send:start, tombol utama/Preview & Kirim,
+BUKAN Instant Intake yang tetap per-item apa adanya) diubah dari per-ITEM (item A: semua fase
+selesai dulu, baru lanjut item B) jadi per-FASE lintas SEMUA item terpilih:
+1. Kirim pesan utama SEMUA item dulu.
+2. Assign SEMUA item (mention @artis DAN/ATAU react pakai code_name artis, ikut mode global aktif).
+3. Kirim react LAIN (di luar react artis — misal ditambah manual lewat tombol "Add React") SEMUA item.
+4. Baru kirim reply/file lain di dalam thread, SEMUA item.
+
+**Gagal parsial**: kalau 1 item gagal di 1 fase (misal fase pesan utama gagal buat item X), item
+itu di-SKIP di fase-fase SISANYA (gak lanjut assign/react/reply-nya) — item LAIN yang belum gagal
+tetap jalan normal lintas ke-4 fase. Ditandai "gagal" di hasil akhir, bisa di-retry manual.
+
+**Arsitektur**: `slack.cjs` dapet 3 fungsi baru (`ensureRoot`, `sendArtistMention`, `sendReplies`)
+— SENGAJA dipisah dari `sendItem()` yang lama (dipakai Instant Intake/send:quick, TETAP 1
+panggilan per-item apa adanya, zero perubahan). Idempotensi root & assign pakai tabel `threads`
+(thread_ts/artist_sent) yang udah ada, BUKAN fingerprint kayak `sendItem` — isinya deterministik
+(nama item/artist_id), beda dari reply yang isinya macam-macam & butuh deteksi "isi berubah pas
+retry". Dialog "Pulihkan kiriman" (send:recover) generik baca `pending_phase` apa adanya — GAK
+ADA perubahan di situ, string fase ("root"/"artist"/"post") sengaja sama persis kayak sendItem.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 33 test regresi lulus (nambah 4 test baru:
+idempotensi ensureRoot/sendArtistMention, resume sendReplies abis upload gagal, DAN orkestrasi
+send:start penuh — verifikasi urutan fase GLOBAL lintas item + skip-item-gagal), `vite build` bersih.
+**BELUM**: smoke-test manual visual — TERUTAMA ini, karena reorder besar ke pipeline kirim yang
+sensitif (idempotensi/recovery).
+
+Checklist manual (WAJIB dites hati-hati, ini pipeline kirim intinya):
+
+- [ ] **Restart app dulu**.
+- [ ] **Urutan kelihatan di Slack**: kirim 3+ item sekaligus (centang beberapa, klik "Kirim ke
+  Slack") → buka channel Slack-nya LANGSUNG pas proses jalan → semua pesan utama (`*nama item*`)
+  muncul DULU buat semua item, BARU semua mention/react assign muncul (sebagai reply thread),
+  BARU react lain, BARU reply/file lain — BUKAN item-per-item lengkap satu-satu.
+- [ ] **Progress text ganti label per fase**: pas proses jalan, teks di bawah tabel ("Mengirim
+  X/Y: nama") ganti-ganti label ("Kirim pesan utama" → "Assign artis" → "Kirim react" → "Kirim
+  reply") tiap pindah fase, angka X/Y RESTART dari 1 tiap fase baru (ini NORMAL, bukan bug/nyangkut).
+- [ ] **1 item gagal gak nge-block item lain**: putus internet SEBENTAR pas 1 item lagi kirim
+  (atau cara lain bikin 1 item gagal) → item itu ditandai "gagal" di hasil akhir, tapi item LAIN
+  tetap lanjut semua fase-nya sampai selesai (gak ikut berhenti/ke-skip).
+- [ ] **Instant Intake TIDAK berubah**: klik tombol Instant Intake (bulatan hijau) di 1 item —
+  perilakunya SAMA kayak sebelumnya (1 panggilan, gak ada konsep 4-fase, karena cuma 1 item).
+- [ ] **Recovery dialog masih jalan normal**: putus internet PAS lagi kirim (bikin status "belum
+  pasti") → coba "Pulihkan kiriman" di item itu → dialog & pilihannya (Sudah terkirim lengkap /
+  Belum terkirim) masih berfungsi sama seperti sebelumnya.
+- [ ] **Reaction artis vs reaction manual ke-pisah bener**: item dengan artis di-assign (mode
+  react/both aktif) DAN ada reaction manual lain (dari tombol Add React) → di Slack, react
+  code_name artis nongol duluan (bareng fase assign), react manual nongol belakangan (fase
+  terpisah) — dua-duanya akhirnya nongol semua, cuma beda urutan/waktu.
