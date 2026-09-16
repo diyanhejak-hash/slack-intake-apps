@@ -250,14 +250,15 @@ th {
   user-select: none;
 }
 /* Header tabel item (Check/Item/Artis/Reply/...) freeze pas scroll body tabel, plus tint warna
-   brand + center-align (poin B7 — polish visual, ala Command Builder). */
+   brand (poin B7 — polish visual, ala Command Builder). Rata kiri semua (poin revisi) —
+   sebelumnya center-align. */
 thead th {
   position: sticky;
   top: 0;
   z-index: 1;
   background: var(--accent-soft);
   color: var(--accent);
-  text-align: center;
+  text-align: left;
 }
 td {
   padding: 8px 10px;

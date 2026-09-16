@@ -753,3 +753,49 @@ Checklist manual:
   tambah/hapus preset, nutup modal → grid emoji di popover ke-refresh otomatis.
 - [ ] **Sama buat overlay reaction instan** (hover Pil Item, icon SmilePlus muncul) → cek
   "Kelola preset..." juga ada di popover-nya.
+
+## 27. Header rata kiri, lebar kolom Item/Artis ngikutin konten, overlay disable pas edit (2026-09-16) ✅ (siap dites)
+
+**Overlay header kepotong** — root cause sebenarnya: `thead th` pakai `position: sticky` (freeze
+pas scroll), overlay yang poke ke atas (`top: -8`, sama kayak variant per-row) nongol di atas
+titik "nempel" elemen sticky itu sendiri, kepotong `overflow: auto` div pembungkus tabel.
+Diperbaiki TANPA ubah posisi (posisi poking pojok kiri-atas itu udah benar) — cukup tambah
+`paddingTop: 10` di div scroll (`.folder-panel`), yang geser titik nempel sticky turun 10px,
+nyisain ruang buat overlay poke tanpa kepotong.
+
+**Header rata kiri** — `thead th` sebelumnya `text-align: center`, sekarang `left` (SEMUA kolom,
+termasuk yang isinya icon).
+
+**Lebar kolom Item/Artis ngikutin konten** — dihitung dari panjang teks TERPANJANG di masing-masing
+kolom (`ch` unit, bukan ukur pixel presisi — cukup buat heuristik "hemat ruang"), rasio Item:Artis
+di-clamp maksimal 1.6:1 (Item tetap dijamin sedikit lebih lebar, +2ch minimal) — biar gak "kabur"
+pas fullscreen kalau nama item jauh lebih panjang dari nama artis.
+
+**Overlay disable pas edit** — fokus ke input Item ATAU dropdown Artis nyembunyiin overlay
+Instant Intake DI CELL ITU AJA (bukan seluruh tabel), balik muncul lagi begitu blur (klik keluar/
+pilih opsi lalu klik lain).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 25 test
+regresi + smoke test + build) semua lulus.
+**BELUM**: smoke-test manual visual — terutama perilaku lebar kolom pas window di-fullscreen/
+diresize (auto table layout Chromium, gak bisa dipastikan 100% dari kode doang, HARUS dicek visual).
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Header rata kiri**: semua judul kolom (Check/No/Item/Artis/Reply-icon) sekarang mepet kiri,
+  bukan di tengah.
+- [ ] **Overlay header gak kepotong**: hover header Item/Artis/Reply → overlay pesawat muncul UTUH
+  (lingkaran penuh, bukan setengah kepotong).
+- [ ] **Kolom Item/Artis nyesuain isi**: bikin project baru isi 2-3 item nama PENDEK (misal "A",
+  "B") → kolom Item jadi sempit ngikutin. Ganti salah satu jadi nama PANJANG → kolom Item melebar
+  ngikutin yang terpanjang.
+- [ ] **Rasio gak kebangetan pas fullscreen**: window di-maximize/fullscreen, isi beberapa item
+  dengan nama pendek tapi 1 nama SANGAT panjang → kolom Artis harusnya ikut melebar proporsional
+  (gak stuck kecil sementara Item jadi sangat lebar sendirian).
+- [ ] **Overlay disable pas edit Item**: klik ke input nama item (fokus) → overlay pesawat di cell
+  itu HILANG. Klik keluar (blur) → overlay muncul lagi.
+- [ ] **Overlay disable pas edit Artis**: klik dropdown Artis (fokus/buka) → overlay hilang, bisa
+  pilih opsi tanpa ketutupan tombol. Klik keluar → overlay muncul lagi.
+- [ ] **Cell lain gak kepengaruh**: fokus di satu baris, cek baris LAIN overlay-nya tetap normal
+  (hover-reveal biasa, gak ikut hilang).

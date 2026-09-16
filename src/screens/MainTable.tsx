@@ -46,6 +46,10 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   const [mergeSeparator, setMergeSeparator] = useState<"," | "-">("-");
   const [editingName, setEditingName] = useState(false);
   const [bulkPasteCol, setBulkPasteCol] = useState<"item" | "artis" | null>(null);
+  // Overlay Instant Intake per-row DISABLE selama user lagi edit input/dropdown di cell itu (poin
+  // revisi) — dropdown Artis kebuka misalnya, overlay yang numpuk di pojok bisa ganggu klik opsi.
+  // Cuma per (item, kolom) yang lagi fokus, bukan seluruh tabel.
+  const [editingCell, setEditingCell] = useState<{ itemId: string; col: "item" | "artist" } | null>(null);
 
   const undoStack = useRef<UndoCommand[]>([]);
   const redoStack = useRef<UndoCommand[]>([]);
@@ -164,6 +168,19 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     return Array.from(counts.entries()).sort((a, b) => b[1] - a[1]);
   }, [project]);
   const workloadTotal = workload.reduce((s, [, c]) => s + c, 0) || 1;
+
+  // Lebar kolom Item/Artis ngikutin panjang teks TERPANJANG di masing-masing (poin revisi: hemat
+  // ruang kalau nilainya pendek), pakai satuan `ch` (perkiraan lebar 1 karakter di font aktif —
+  // gak butuh ngukur pixel presisi, cukup buat heuristik ini). Rasio Item:Artis di-CLAMP (poin
+  // revisi: "jangan terlalu jauh perbandingannya, apalagi pas fullscreen") — Item paling lebar
+  // 1.6x Artis, tapi tetap dijamin sedikit lebih lebar dari Artis (+2ch) biar gak kebalik.
+  const columnWidths = useMemo(() => {
+    if (!project) return { item: "auto", artist: "auto" };
+    const itemChars = Math.max(8, ...project.items.map((i) => (i.name || "").length));
+    const artistChars = Math.max(8, ...project.items.map((i) => (i.artist_name || "Belum ditugaskan").length));
+    const cappedItemChars = Math.max(Math.min(itemChars, artistChars * 1.6), artistChars + 2);
+    return { item: `${cappedItemChars + 4}ch`, artist: `${artistChars + 4}ch` };
+  }, [project]);
 
   // Shift+klik = pilih range dari checkbox terakhir diklik s.d. yang di-shift-klik (semua
   // di antaranya jadi checked). Klik-tahan-geser = "cat" checkbox yang disentuh mouse pas
@@ -527,11 +544,11 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                     {selected.size === project.items.length && project.items.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
                   </th>
                   <th style={{ width: 34 }}>No</th>
-                  <th style={{ position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste">
+                  <th style={{ width: columnWidths.item, position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste">
                     Item <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
                     <QuickSendButton title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />
                   </th>
-                  <th style={{ width: 200, position: "relative" }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste">
+                  <th style={{ width: columnWidths.artist, position: "relative" }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste">
                     Artis <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
                     <QuickSendButton title="Instant Intake — mention artis SEMUA item" onClick={() => quickSendColumn("artist", "Artis")} />
                   </th>
@@ -581,12 +598,24 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                           defaultValue={item.name}
                           placeholder="Nama item…"
                           style={{ border: "none", width: "100%", padding: "4px 0", cursor: "pointer" }}
-                          onBlur={(e) => e.target.value !== item.name && handleRenameItem(item, e.target.value)}
+                          onFocus={() => setEditingCell({ itemId: item.id, col: "item" })}
+                          onBlur={(e) => {
+                            setEditingCell((c) => (c?.itemId === item.id && c.col === "item" ? null : c));
+                            if (e.target.value !== item.name) handleRenameItem(item, e.target.value);
+                          }}
                         />
-                        <QuickSendButton title="Instant Intake — kirim nama item ini aja (gak ada artis/reply)" onClick={() => quickSend(item.id, "item")} />
+                        {!(editingCell?.itemId === item.id && editingCell.col === "item") && (
+                          <QuickSendButton title="Instant Intake — kirim nama item ini aja (gak ada artis/reply)" onClick={() => quickSend(item.id, "item")} />
+                        )}
                       </td>
                       <td style={{ position: "relative" }}>
-                        <select value={item.artist_id || ""} onChange={(e) => handleArtistChange(item, e.target.value)} style={{ width: "100%" }}>
+                        <select
+                          value={item.artist_id || ""}
+                          onChange={(e) => handleArtistChange(item, e.target.value)}
+                          onFocus={() => setEditingCell({ itemId: item.id, col: "artist" })}
+                          onBlur={() => setEditingCell((c) => (c?.itemId === item.id && c.col === "artist" ? null : c))}
+                          style={{ width: "100%" }}
+                        >
                           <option value="">Belum ditugaskan</option>
                           {visibleUsers.map((u) => (
                             <option key={u.id} value={u.id}>
@@ -594,7 +623,9 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                             </option>
                           ))}
                         </select>
-                        <QuickSendButton title="Instant Intake — mention artis ini aja" onClick={() => quickSend(item.id, "artist")} />
+                        {!(editingCell?.itemId === item.id && editingCell.col === "artist") && (
+                          <QuickSendButton title="Instant Intake — mention artis ini aja" onClick={() => quickSend(item.id, "artist")} />
+                        )}
                       </td>
                       <td style={{ position: "relative" }}>
                         <button
