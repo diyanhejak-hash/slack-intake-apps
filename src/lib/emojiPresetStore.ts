@@ -20,8 +20,14 @@ export function subscribeEmojiPresets(fn: () => void): () => void {
   return () => listeners.delete(fn);
 }
 
+// Artis Preset (poin revisi) — code_name-nya dipakai jadi emoji_value reaction pending
+// (item_reactions.emoji_type='custom'), jadi PNG-nya perlu ke-cache di sini JUGA biar ReactionChip
+// bisa nampilin gambar (bukan cuma teks ":code_name:") — cache SATU, gabungan 2 sumber (emoji
+// preset custom + artist preset), nama gak boleh bentrok (jarang, gak divalidasi silang).
 export async function refreshEmojiPresetCache(): Promise<void> {
-  const list = await window.api.emojiPreset.list();
-  cache = new Map(list.filter((p) => p.type === "custom" && p.image_path).map((p) => [p.value, p.image_path as string]));
+  const [emojiList, artistList] = await Promise.all([window.api.emojiPreset.list(), window.api.artistPreset.list()]);
+  const next = new Map(emojiList.filter((p) => p.type === "custom" && p.image_path).map((p) => [p.value, p.image_path as string]));
+  for (const p of artistList) if (p.code_name && p.image_path) next.set(p.code_name, p.image_path);
+  cache = next;
   listeners.forEach((fn) => fn());
 }

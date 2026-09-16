@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Send, Square, CheckSquare, X, Loader2, MessageSquare, Eye, Plus, ClipboardPaste, Users, ExternalLink, Link as LinkIcon, LayoutTemplate } from "lucide-react";
-import type { ArtistGroup, HyperlinkPreset, Project, ProjectItem, SendResult, SlackChannel, SlackUser, Template } from "../global";
+import type { ArtistGroup, ArtistPreset, HyperlinkPreset, Project, ProjectItem, SendResult, SlackChannel, SlackUser, Template } from "../global";
 const Drawer = lazy(() => import("./Drawer"));
 import BatchFileModal from "./BatchFileModal";
 import MessageLogPanel from "./MessageLogPanel";
@@ -10,6 +10,7 @@ import SendRecovery from "./SendRecovery";
 import ChannelPicker from "./ChannelPicker";
 import QuickSendButton from "./QuickSendButton";
 import EmojiPresetModal from "./EmojiPresetModal";
+import ArtistPresetModal from "./ArtistPresetModal";
 import EmojiPicker from "./EmojiPicker";
 import { ItemReactionBar } from "./ItemReactions";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
@@ -26,6 +27,8 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   const [project, setProject] = useState<Project | null>(null);
   const [users, setUsers] = useState<SlackUser[]>([]);
   const [groups, setGroups] = useState<ArtistGroup[]>([]);
+  const [artistPresets, setArtistPresets] = useState<ArtistPreset[]>([]);
+  const [showArtistPresetManager, setShowArtistPresetManager] = useState(false);
   const [activeGroupId, setActiveGroupId] = useState<string>("");
   const [showGroupEditor, setShowGroupEditor] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -76,6 +79,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     refresh();
     window.api.slack.listUsers().then(setUsers);
     window.api.artistGroup.list().then(setGroups);
+    window.api.artistPreset.list().then(setArtistPresets);
     // Cache preset custom emoji (poin revisi) — di-load sedini mungkin biar pas Tab Reply
     // dibuka, EmojiImageNode udah bisa langsung parse ":nama:" tersimpan jadi gambar (bukan
     // nunggu field-nya sendiri yang fetch).
@@ -136,7 +140,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     function onKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented || document.querySelector('[aria-modal="true"]') ||
         showGroupEditor || showGenerate || showWorkload || showHelp || showPreview || showBatchFile ||
-        showLog || showHyperlinkManager || showEmojiPresetManager || showSaveAs || showTemplateAll || openMenu || bulkPasteCol) return;
+        showLog || showHyperlinkManager || showEmojiPresetManager || showArtistPresetManager || showSaveAs || showTemplateAll || openMenu || bulkPasteCol) return;
       const active = document.activeElement as HTMLElement | null;
       const tag = (active?.tagName || "").toLowerCase();
       const typing = tag === "input" || tag === "textarea" || !!active?.isContentEditable;
@@ -159,12 +163,23 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     return () => window.removeEventListener("keydown", onKeyDown);
   });
 
+  // Artis Preset (poin revisi) — map member_id -> preset, buat lookup nickname (dropdown) DAN
+  // code_name (workflow assign-via-reaction) sekali tempat.
+  const presetByMember = useMemo(() => new Map(artistPresets.map((p) => [p.member_id, p])), [artistPresets]);
+
+  // Dropdown Artis (Tab Table DAN Tab Reply, satu sumber sama-sama pakai ini) — nama yang
+  // ditampilkan pakai nickname preset kalau ada, fallback nama Slack asli kalau belum. Cuma
+  // ganti TAMPILAN (u.name) — u.id tetap Slack member_id asli, mention/lookup lain gak kepengaruh.
   const visibleUsers = useMemo(() => {
-    if (!activeGroupId) return users;
-    const g = groups.find((g) => g.id === activeGroupId);
-    if (!g) return users;
-    return users.filter((u) => g.memberIds.includes(u.id));
-  }, [users, groups, activeGroupId]);
+    const base = !activeGroupId ? users : (() => {
+      const g = groups.find((g) => g.id === activeGroupId);
+      return g ? users.filter((u) => g.memberIds.includes(u.id)) : users;
+    })();
+    return base.map((u) => {
+      const nickname = presetByMember.get(u.id)?.nickname;
+      return nickname ? { ...u, name: nickname } : u;
+    });
+  }, [users, groups, activeGroupId, presetByMember]);
 
   const workload = useMemo(() => {
     if (!project) return [];
@@ -261,6 +276,16 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     refresh();
   }
 
+  // Artis Preset (poin revisi) — mode "react"/"both" berarti assign artis JUGA nge-antre reaction
+  // pending pakai code_name preset-nya (infrastruktur item_reactions yang udah ada, sama kayak
+  // Add React manual). Dedupe per item+shortcode udah ditangani addItemReaction sendiri.
+  async function queueArtistReaction(itemId: string, artistId: string | null, mode: string) {
+    if (!artistId || !["react", "both"].includes(mode)) return;
+    const codeName = presetByMember.get(artistId)?.code_name;
+    if (!codeName) return;
+    await window.api.itemReaction.add(itemId, { emojiType: "custom", emojiValue: codeName, slackShortcode: codeName });
+  }
+
   async function handleArtistChange(item: ProjectItem, artistId: string) {
     const u = users.find((u) => u.id === artistId);
     const oldArtistId = item.artist_id;
@@ -270,6 +295,16 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
       undo: () => window.api.item.update(item.id, { artistId: oldArtistId, artistName: oldArtistName }),
       redo: () => window.api.item.update(item.id, { artistId: artistId || null, artistName: u?.name || null }),
     });
+    await queueArtistReaction(item.id, artistId || null, item.artist_mode);
+    refresh();
+  }
+
+  // Toggle Mention/React/Keduanya (poin revisi, dekat dropdown Artis) — item.artist_id TETAP
+  // dilacak apa pun mode-nya (Workload Distribution dkk gak kepengaruh); mode cuma nentuin cara
+  // KIRIM ke Slack (mention vs reaction vs dua-duanya, lihat send:start/send:quick di main.cjs).
+  async function handleArtistModeChange(item: ProjectItem, mode: "mention" | "react" | "both") {
+    await window.api.item.update(item.id, { artistMode: mode });
+    await queueArtistReaction(item.id, item.artist_id, mode);
     refresh();
   }
 
@@ -460,6 +495,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
         onGroupEditor={() => setShowGroupEditor(true)}
         onHyperlinkManager={() => setShowHyperlinkManager(true)}
         onEmojiPresetManager={() => setShowEmojiPresetManager(true)}
+        onArtistPresetManager={() => setShowArtistPresetManager(true)}
         onHelp={() => setShowHelp(true)}
         onSendClick={() => setShowPreview(true)}
         sendDisabled={project.items.length === 0 || sending}
@@ -530,6 +566,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                   canNext={activeIndex >= 0 && activeIndex < project.items.length - 1}
                   users={visibleUsers}
                   onArtistChange={handleArtistChange}
+                  onArtistModeChange={handleArtistModeChange}
                 />
                 </Suspense>
               ) : (
@@ -647,6 +684,26 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                             </option>
                           ))}
                         </select>
+                        {/* Toggle Mention/React/Keduanya (Artis Preset, poin revisi) — cuma
+                            relevan kalau udah ada artis di-assign. */}
+                        {item.artist_id && (
+                          <div style={{ display: "flex", gap: 2, marginTop: 3 }}>
+                            {(["mention", "react", "both"] as const).map((m) => (
+                              <button
+                                key={m}
+                                className="btn"
+                                title={m === "mention" ? "Mention @artis pas kirim" : m === "react" ? "Reaction code name artis (gak ada mention)" : "Mention DAN reaction"}
+                                style={{
+                                  flex: 1, padding: "1px 0", justifyContent: "center", fontSize: 9,
+                                  ...(item.artist_mode === m ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}),
+                                }}
+                                onClick={() => handleArtistModeChange(item, m)}
+                              >
+                                {m === "mention" ? "M" : m === "react" ? "R" : "M+R"}
+                              </button>
+                            ))}
+                          </div>
+                        )}
                         {!(editingCell?.itemId === item.id && editingCell.col === "artist") && (
                           <QuickSendButton title="Instant Intake — mention artis ini aja" onClick={() => quickSend(item.id, "artist")} />
                         )}
@@ -883,6 +940,14 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
       {showHyperlinkManager && <HyperlinkManager onClose={() => setShowHyperlinkManager(false)} />}
 
       {showEmojiPresetManager && <EmojiPresetModal onClose={() => setShowEmojiPresetManager(false)} />}
+      {showArtistPresetManager && (
+        <ArtistPresetModal
+          onClose={() => {
+            setShowArtistPresetManager(false);
+            window.api.artistPreset.list().then(setArtistPresets);
+          }}
+        />
+      )}
 
       {showTemplateAll && (
         <TemplateAllModal

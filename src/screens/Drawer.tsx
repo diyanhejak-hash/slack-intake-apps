@@ -75,6 +75,7 @@ export default function Drawer({
   canNext,
   users,
   onArtistChange,
+  onArtistModeChange,
 }: {
   item: ProjectItem;
   projectId: string;
@@ -87,6 +88,8 @@ export default function Drawer({
   canNext: boolean;
   users: SlackUser[];
   onArtistChange: (item: ProjectItem, artistId: string) => void;
+  /** Toggle Mention/React/Keduanya (Artis Preset, poin revisi) — sama persis kayak Tab Table. */
+  onArtistModeChange: (item: ProjectItem, mode: "mention" | "react" | "both") => void;
 }) {
   const isMaximized = useIsWindowMaximized();
   const [templates, setTemplates] = useState<Template[]>([]);
@@ -284,6 +287,26 @@ export default function Drawer({
                 </option>
               ))}
             </select>
+            {/* Toggle Mention/React/Keduanya (Artis Preset, poin revisi) — sama persis kayak
+                dropdown Artis Tab Table. */}
+            {item.artist_id && (
+              <div style={{ display: "flex", gap: 3, marginTop: 4 }}>
+                {(["mention", "react", "both"] as const).map((m) => (
+                  <button
+                    key={m}
+                    className="btn"
+                    title={m === "mention" ? "Mention @artis pas kirim" : m === "react" ? "Reaction code name artis (gak ada mention)" : "Mention DAN reaction"}
+                    style={{
+                      flex: 1, padding: "3px 0", justifyContent: "center", fontSize: 10,
+                      ...(item.artist_mode === m ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}),
+                    }}
+                    onClick={() => onArtistModeChange(item, m)}
+                  >
+                    {m === "mention" ? "Mention" : m === "react" ? "React" : "Keduanya"}
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
 
           <div style={{ flex: 1, overflow: "auto", padding: 16 }} className="scrollbar-thin">

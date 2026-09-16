@@ -86,6 +86,21 @@ CREATE TABLE IF NOT EXISTS artist_groups (
   member_ids_json TEXT NOT NULL
 );
 
+-- Artis Preset (poin revisi) — GLOBAL buat seluruh app (pola sama kayak emoji_presets/
+-- hyperlink_presets), satu baris per Slack member_id (users.list). nickname = ganti tampilan
+-- nama di dropdown Artis (fallback ke nama Slack asli kalau NULL). code_name = shortcode custom
+-- emoji (TANPA titik dua) buat workflow "assign via reaction" — dipakai persis kayak
+-- emoji_presets.slack_shortcode pas reactions.add, DIASUMSIKAN custom emoji itu udah ada beneran
+-- di workspace Slack tujuan (gak divalidasi app ini). image_path = PNG lokal, preview doang di
+-- app kita (chip/manajemen preset) — sama sekali gak disinkronkan ke emoji asli di Slack.
+CREATE TABLE IF NOT EXISTS artist_presets (
+  id TEXT PRIMARY KEY,
+  member_id TEXT NOT NULL UNIQUE,
+  nickname TEXT,
+  code_name TEXT,
+  image_path TEXT
+);
+
 CREATE TABLE IF NOT EXISTS threads (
   item_name TEXT NOT NULL,
   channel_id TEXT NOT NULL,
@@ -258,4 +273,11 @@ if (!db.prepare('PRAGMA table_info(batch_applications)').all().some((c) => c.nam
 if (!db.prepare('PRAGMA table_info(batch_files)').all().some((c) => c.name === 'source_path')) db.exec('ALTER TABLE batch_files ADD COLUMN source_path TEXT');
 
 if (!db.prepare('PRAGMA table_info(send_attempts)').all().some((c) => c.name === 'pending_phase')) db.exec('ALTER TABLE send_attempts ADD COLUMN pending_phase TEXT');
+
+// Artis Preset (poin revisi) — mode assign per item: 'mention' (perilaku lama, <@artist_id> pas
+// kirim), 'react' (gak ada mention, cuma antre reaction pakai code_name-nya artist_presets),
+// 'both' (dua-duanya). Default 'mention' buat item lama (backward compatible, gak ada perubahan
+// perilaku sama sekali kalau user gak pernah sentuh Artis Preset).
+if (!db.prepare('PRAGMA table_info(items)').all().some((c) => c.name === 'artist_mode')) db.exec(`ALTER TABLE items ADD COLUMN artist_mode TEXT NOT NULL DEFAULT 'mention'`);
+
 module.exports = { db, dataDir };

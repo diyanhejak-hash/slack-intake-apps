@@ -58,6 +58,7 @@ export interface MenuBarActions {
   onGroupEditor: () => void;
   onHyperlinkManager: () => void;
   onEmojiPresetManager: () => void;
+  onArtistPresetManager: () => void;
   onHelp: () => void;
   openMenu: MenuName | null;
   onOpenMenuChange: (m: MenuName | null) => void;
@@ -100,6 +101,7 @@ export function MenuBar(a: MenuBarActions) {
       { label: "Redo (Ctrl+Shift+Z)", onClick: a.onRedo },
       { label: "Hapus Item Terpilih (Delete)", onClick: a.onRemoveSelected },
       { label: "Preset Emoji...", onClick: a.onEmojiPresetManager },
+      { label: "Preset Artis...", onClick: a.onArtistPresetManager },
     ],
     View: [
       { label: "Workload Distribution", onClick: a.onToggleWorkload },

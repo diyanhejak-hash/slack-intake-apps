@@ -75,6 +75,12 @@ contextBridge.exposeInMainWorld("api", {
     remove: (id) => ipcRenderer.invoke("emojiPreset:remove", id),
     pickImage: () => ipcRenderer.invoke("emojiPreset:pickImage"),
   },
+  artistPreset: {
+    list: () => ipcRenderer.invoke("artistPreset:list"),
+    save: (payload) => ipcRenderer.invoke("artistPreset:save", payload),
+    remove: (id) => ipcRenderer.invoke("artistPreset:remove", id),
+    pickImage: () => ipcRenderer.invoke("artistPreset:pickImage"),
+  },
   itemReaction: {
     list: (itemId) => ipcRenderer.invoke("itemReaction:list", itemId),
     add: (itemId, payload) => ipcRenderer.invoke("itemReaction:add", itemId, payload),

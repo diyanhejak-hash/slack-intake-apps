@@ -185,6 +185,31 @@ async function test(name, fn) {
       const { storedPath } = projects.stageFile(project.id, src);
       assert.equal(storedPath, fs.realpathSync(storedPath));
     });
+    await test("artist preset CRUD: save inserts, save updates, remove cleans up PNG", () => {
+      const src = path.join(temp, "artist-avatar.png");
+      fs.writeFileSync(src, "fake-png-bytes");
+      const id = projects.saveArtistPreset({ memberId: "U-ARTIST-1", nickname: "Budi", codeName: "artis-budi", sourcePath: src });
+      let row = projects.listArtistPresets().find((p) => p.id === id);
+      assert.equal(row.member_id, "U-ARTIST-1");
+      assert.equal(row.nickname, "Budi");
+      assert.equal(row.code_name, "artis-budi");
+      assert.ok(row.image_path && fs.existsSync(row.image_path));
+      const storedImagePath = row.image_path;
+
+      // Update (id dikasih): ganti nickname, gak upload ulang PNG -> image_path lama dipertahankan.
+      const updatedId = projects.saveArtistPreset({ id, memberId: "U-ARTIST-1", nickname: "Budi Santoso", codeName: "artis-budi" });
+      assert.equal(updatedId, id);
+      row = projects.listArtistPresets().find((p) => p.id === id);
+      assert.equal(row.nickname, "Budi Santoso");
+      assert.equal(row.image_path, storedImagePath);
+
+      // Satu preset per member_id -- insert baru (gak dikasih id) buat member yang UDAH punya ditolak.
+      assert.throws(() => projects.saveArtistPreset({ memberId: "U-ARTIST-1", nickname: "Dobel" }), /udah punya preset/);
+
+      projects.removeArtistPreset(id);
+      assert.equal(projects.listArtistPresets().find((p) => p.id === id), undefined);
+      assert.equal(fs.existsSync(storedImagePath), false);
+    });
     await test("batch survives source removal, import, duplicate, deletion and resync", () => {
       const bp = projects.createProject({ name: "roundtrip", channelId: "CA", channelName: "audit" });
       const bi = projects.addItem(bp.id, { name: "batch" });
@@ -283,6 +308,33 @@ async function test(name, fn) {
       assert.deepEqual(addedReactions.map((a) => a.name), ["tada", "fire"]);
       assert.ok(addedReactions.every((a) => a.channelId === "CA" && a.timestamp === "1234.0001"));
       assert.deepEqual(removedIds, ["R1", "R2"]);
+    });
+    await test("quick-send suppresses @mention when Artis Preset mode is react-only", async () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
+      let sentArtistId = "unset";
+      let handler;
+      const context = {
+        activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
+        projects: {
+          getProject: () => ({ channel_id: "CA", items: [{ id: "I", name: "item", replies: [], artist_id: "U1", artist_mode: "react" }] }),
+          addLog: () => {},
+          listItemReactions: () => [],
+          removeItemReaction: () => {},
+        },
+        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+        slack: {
+          findThreadChannel: () => null,
+          sendItem: async (args) => { sentArtistId = args.artistId; return { threadTs: "1.000", isNew: true }; },
+          addReaction: async () => {},
+        },
+      };
+      vm.runInNewContext(quick, context);
+      await handler({}, { projectId: "P", itemId: "I", scope: "artist" });
+      // artist_mode "react" -> item.artist_id tetap dipakai buat validasi "ada artis ditugaskan"
+      // (gak nge-throw), tapi TIDAK diteruskan ke sendItem (gak ada @mention di-post) -- assign
+      // "react" beneran diberitahu lewat reaction (test terpisah di atas), bukan mention.
+      assert.equal(sentArtistId, null);
     });
 
     await test("OAuth ignores wrong-state callbacks and finishes the legitimate callback", async () => {

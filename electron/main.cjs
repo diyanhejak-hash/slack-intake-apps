@@ -115,7 +115,7 @@ function handle(channel, fn) {
       validateAccess(channel, args);
       const result = await fn(event, ...args);
       if (/:pickFiles$/.test(channel)) allowFiles(result || []);
-      if (channel === "emojiPreset:pickImage" && result) allowFiles([result]);
+      if ((channel === "emojiPreset:pickImage" || channel === "artistPreset:pickImage") && result) allowFiles([result]);
       return result;
     } catch (err) {
       projects.addLog("error", `${channel}: ${err.message}`);
@@ -131,6 +131,7 @@ function validateAccess(channel, args) {
   if (channel === "reply:add") (args[0].filePaths || []).forEach(validateFile);
   if (channel === "reply:addFiles") args[2].forEach(validateFile);
   if (channel === "emojiPreset:addCustom") validateFile(args[0].filePath);
+  if (channel === "artistPreset:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
   if (channel === "batchFile:saveSections") {
     const previous = projects.listBatchSections(args[0]);
     for (const section of args[1]) for (const file of section.files) {
@@ -382,6 +383,15 @@ handle("emojiPreset:pickImage", async () => {
   return canceled ? null : filePaths[0];
 });
 
+// ---------- Artis Preset (poin revisi) — global, bukan per-project ----------
+handle("artistPreset:list", () => projects.listArtistPresets());
+handle("artistPreset:save", (_e, { id, memberId, nickname, codeName, sourcePath }) => projects.saveArtistPreset({ id, memberId, nickname, codeName, sourcePath }));
+handle("artistPreset:remove", (_e, id) => projects.removeArtistPreset(id));
+handle("artistPreset:pickImage", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: [{ name: "Gambar", extensions: ["png"] }] });
+  return canceled ? null : filePaths[0];
+});
+
 // ---------- Reaction (poin revisi) ----------
 // PENDING per item — dikirim bareng lewat send:start (lihat loop-nya di atas), bukan langsung.
 handle("itemReaction:list", (_e, itemId) => projects.listItemReactions(itemId));
@@ -510,6 +520,10 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
           if (post) posts.push(post);
         }
       }
+      // Artis Preset (poin revisi) — mode "react" (gak "mention"/"both") berarti JANGAN post
+      // @mention, walau scope minta artis (reaction pending-nya sendiri udah di-antre pas artis
+      // di-assign, ke-flush lewat loop reaction di bawah — bukan di sini).
+      if (artistId && !["mention", "both"].includes(item.artist_mode || "mention")) artistId = null;
 
       await confirmLegacyThread(projectId, item, targetChannelId);
       const { threadTs, isNew, permalink } = await slack.sendItem({
@@ -594,6 +608,10 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
     posts = post ? [post] : [];
   }
   // scope === "item" (default): artistId null, posts kosong.
+  // Artis Preset (poin revisi) — mode "react" (gak "mention"/"both") berarti JANGAN post
+  // @mention, walau scope-nya "artist" (reaction pending-nya sendiri udah di-antre pas artis
+  // di-assign, ke-flush lewat loop reaction di bawah — bukan di sini).
+  if (artistId && !["mention", "both"].includes(item.artist_mode || "mention")) artistId = null;
 
   await confirmLegacyThread(projectId, item, targetChannelId);
   const { threadTs, isNew, permalink } = await slack.sendItem({ token, channelId: targetChannelId, itemName: item.name, threadKey: threadKey(projectId, item.id), artistId, posts });

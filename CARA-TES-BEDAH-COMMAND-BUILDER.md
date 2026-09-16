@@ -903,3 +903,59 @@ Checklist manual:
   duplikat, reaction baru nempel ke pesan yang SAMA.
 - [ ] **Chip ilang dari UI abis kekirim**: setelah Instant Intake sukses, chip reaction yang tadi
   pending ILANG dari bawah input (bukan nyangkut keliatan padahal udah terkirim).
+
+## 31. Artis Preset — nickname, code name, mode Mention/React/Keduanya (2026-09-16) ✅ (siap dites)
+
+Fitur baru: **Preset Artis**, satu preset per Slack member (`member_id`), berisi:
+- **nickname** — ganti tampilan nama di dropdown Artis (Tab Table & Tab Reply). Fallback ke nama
+  Slack asli kalau member belum punya preset.
+- **code name** — shortcode custom emoji Slack (TANPA titik dua) buat workflow **assign-via-
+  reaction** — SENGAJA gak divalidasi ke Slack beneran (sama kayak custom emoji preset biasa),
+  diasumsikan emoji itu udah ada di workspace Slack tujuan.
+- **PNG** — preview lokal doang (chip reaction & avatar di modal Kelola Preset Artis), gak
+  disinkron ke Slack.
+
+**Modal "Kelola Preset Artis"** — menu Edit → "Preset Artis...". Satu baris per member Slack,
+upsert langsung (gak perlu tombol "Tambah" terpisah — isi field, klik Simpan).
+
+**Mode assign, toggle di dekat dropdown Artis** (Tab Table: M/R/M+R ringkas; Tab Reply: teks
+penuh Mention/React/Keduanya):
+- **Mention** (default, perilaku lama) — `<@artist_id>` di-post pas kirim.
+- **React** — GAK ada mention, tapi begitu artis di-assign (atau mode diganti ke React), langsung
+  antre `item_reactions` pakai code_name preset artis itu (infrastruktur reaction pending yang
+  udah ada) — ke-flush ke Slack bareng pesan (send:start ATAU Instant Intake send:quick,
+  dua-duanya udah nge-flush reaction pending).
+- **Keduanya** — mention DAN reaction jalan bareng.
+- `item.artist_id` **selalu** tersimpan apa pun mode-nya — Workload Distribution & fitur lain
+  yang bergantung situ TETAP jalan normal, mode cuma nentuin CARA kirim ke Slack.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 28 test
+regresi — 2 test baru: CRUD preset artis, mode react nge-suppress mention — + smoke test + build)
+semua lulus.
+**BELUM**: smoke-test manual visual (modal, dropdown nickname, toggle mode, alur kirim beneran).
+
+Checklist manual:
+
+- [ ] **Restart app dulu** (tabel DB baru `artist_presets` + kolom `items.artist_mode`, migrasi
+  jalan otomatis pas app dibuka — cek gak ada error saat startup).
+- [ ] **Kelola Preset Artis**: menu Edit → "Preset Artis..." → modal kebuka, list semua member
+  Slack workspace aktif. Isi nickname + code name buat 1 member, klik Simpan → gak ada error.
+- [ ] **Nickname muncul di dropdown**: tutup modal → dropdown Artis (Tab Table DAN Tab Reply) buat
+  member itu nampilin NICKNAME, bukan nama Slack asli. Member LAIN yang belum punya preset tetap
+  nama Slack asli.
+- [ ] **Upload PNG**: di modal, klik ikon upload → pilih PNG → Simpan → avatar bulat di modal
+  ke-update nampilin PNG itu (bukan huruf inisial lagi).
+- [ ] **Toggle mode muncul setelah assign**: pilih artis (yang punya preset) di dropdown → toggle
+  Mention/React/Keduanya muncul di bawah dropdown, default "Mention" ke-highlight.
+- [ ] **Mode React — gak ada mention, ada reaction**: pilih mode "React" buat item yang artisnya
+  punya code_name → kirim (Instant Intake ATAU Kirim ke Slack biasa) → cek di Slack: TIDAK ada
+  teks `@artis` di pesan, TAPI reaction (emoji code_name-nya) nempel di pesan.
+- [ ] **Mode Keduanya**: sama kayak di atas tapi mode "Keduanya" → cek di Slack ADA mention DAN
+  ADA reaction.
+- [ ] **Chip reaction dari artis tampil PNG**: kalau preset artis itu punya PNG, chip reaction
+  hasil assign-via-react (di bawah input Item, Tab Table) nampilin PNG-nya, bukan teks
+  `:code_name:` polos.
+- [ ] **Workload Distribution gak kepengaruh**: item dengan mode React tetap muncul di Workload
+  Distribution di bawah nama artis yang di-assign (artist_id tetap tersimpan).
+- [ ] **Hapus preset**: di modal, klik ikon hapus (trash) di satu baris → konfirmasi → preset
+  hilang, dropdown balik nampilin nama Slack asli buat member itu.

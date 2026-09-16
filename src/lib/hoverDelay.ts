@@ -15,7 +15,7 @@
 // telat nambah class walau mouse udah pindah; efeknya PALING BURUK cuma overlay nongol sekejap
 // salah waktu, bukan nyangkut permanen (mouseenter/leave berikutnya tetap benerin). Upgrade ke
 // hook per-row kalau ternyata beneran ganggu.
-export function hoverDelayHandlers(delayMs = 500) {
+export function hoverDelayHandlers(delayMs = 1500) {
   let timer: ReturnType<typeof setTimeout> | null = null;
   return {
     onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {

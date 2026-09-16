@@ -54,6 +54,9 @@ export interface ProjectItem {
   name: string;
   artist_id: string | null;
   artist_name: string | null;
+  /** Mode assign Artis Preset (poin revisi) — 'mention' (default, perilaku lama, <@artist_id>
+   * pas kirim), 'react' (gak ada mention, cuma antre reaction pakai code_name-nya), 'both'. */
+  artist_mode: "mention" | "react" | "both";
   source: "manual" | "folder-import";
   sort_order: number;
   files: ItemFile[];
@@ -159,6 +162,18 @@ export interface ItemReaction {
   sort_order: number;
 }
 
+/** Artis Preset (poin revisi) — satu per Slack member_id, lihat catatan skema di electron/db.cjs. */
+export interface ArtistPreset {
+  id: string;
+  member_id: string;
+  /** ganti tampilan nama di dropdown Artis — null = fallback ke nama Slack asli. */
+  nickname: string | null;
+  /** shortcode custom emoji TANPA titik dua, buat workflow "assign via reaction". */
+  code_name: string | null;
+  /** PNG lokal — preview doang (chip/manajemen preset), gak disinkronkan ke Slack. */
+  image_path: string | null;
+}
+
 declare global {
   interface Window {
     api: {
@@ -234,6 +249,15 @@ declare global {
         list: () => Promise<EmojiPreset[]>;
         addUnicode: (payload: { char: string; shortcode?: string }) => Promise<string | null>;
         addCustom: (payload: { name: string; filePath: string }) => Promise<string>;
+        remove: (id: string) => Promise<void>;
+        /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
+        pickImage: () => Promise<string | null>;
+      };
+      /** Artis Preset (poin revisi) — nickname/code_name/PNG per Slack member. */
+      artistPreset: {
+        list: () => Promise<ArtistPreset[]>;
+        /** `id` dikasih = update; gak dikasih = insert baru (member_id wajib belum punya preset). */
+        save: (payload: { id?: string; memberId: string; nickname?: string; codeName?: string; sourcePath?: string }) => Promise<string>;
         remove: (id: string) => Promise<void>;
         /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
         pickImage: () => Promise<string | null>;
