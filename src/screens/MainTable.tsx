@@ -540,10 +540,10 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
             <table>
               <thead>
                 <tr>
-                  <th onClick={() => toggleAll()} style={{ width: 32 }}>
+                  <th onClick={() => toggleAll()} style={{ width: 32, maxWidth: 32 }}>
                     {selected.size === project.items.length && project.items.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
                   </th>
-                  <th style={{ width: 34 }}>No</th>
+                  <th style={{ width: 34, maxWidth: 34 }}>No</th>
                   <th style={{ width: columnWidths.item, position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste">
                     Item <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
                     <QuickSendButton title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />
@@ -555,11 +555,11 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                   {/* B4 — klik header kolom Reply (bubble icon) = pilih Template buat diterapkan
                       ke SEMUA item sekaligus, bukan cuma per-item lewat Tab Reply. Reply dipindah
                       ke sebelum X (poin revisi urutan kolom: ..., Artis, Reply, X). */}
-                  <th style={{ width: 50, position: "relative" }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item">
+                  <th style={{ width: 50, maxWidth: 50, position: "relative" }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item">
                     <LayoutTemplate size={12} style={{ display: "inline" }} />
                     <QuickSendButton title="Instant Intake — kirim semua reply/field SEMUA item" onClick={() => quickSendColumn("replies", "Reply")} />
                   </th>
-                  <th style={{ width: 40 }} />
+                  <th style={{ width: 40, maxWidth: 40 }} />
                 </tr>
               </thead>
               <tbody>
