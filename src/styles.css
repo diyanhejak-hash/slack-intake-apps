@@ -251,11 +251,15 @@ th {
 }
 /* Header tabel item (Check/Item/Artis/Reply/...) freeze pas scroll body tabel, plus tint warna
    brand (poin B7 — polish visual, ala Command Builder). Rata kiri semua (poin revisi) —
-   sebelumnya center-align. */
+   sebelumnya center-align. z-index 3 (poin revisi, bug "tembus header") — HARUS lebih tinggi
+   dari overlay row (QuickSendButton/tombol Add React, zIndex 2, lihat QuickSendButton.tsx &
+   ItemReactions.tsx) yang poke -8px ke ATAS cell-nya sendiri. Row 1 pokenya nabrak persis di
+   batas header (sekarang beneran freeze di situ) — background OPAQUE header ini nutupin bagian
+   tombol yang nongol ke atas, jadi keliatan "kepotong rapi" bukan tembus/numpuk teks header.*/
 thead th {
   position: sticky;
   top: 0;
-  z-index: 1;
+  z-index: 3;
   background: var(--accent-soft);
   color: var(--accent);
   text-align: left;

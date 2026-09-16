@@ -569,9 +569,9 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
               onClick={() => setShowPreview(true)}
               disabled={project.items.length === 0 || sending}
               title={`Preview & Kirim (${effectiveItemIds.length}${selected.size === 0 && project.items.length > 0 ? " — semua" : ""})`}
-              style={{ marginLeft: "auto", marginBottom: 4, background: "#fff", borderRadius: 999, padding: "2px 10px", border: "1px solid var(--border-strong)" }}
+              style={{ marginLeft: "auto", marginBottom: 4, background: "#fff", borderRadius: 999, padding: "1px 6px", border: "1px solid var(--border-strong)" }}
             >
-              <img src={slackButtonImg} alt="Kirim ke Slack" style={{ height: 16, display: "block" }} />
+              <img src={slackButtonImg} alt="Kirim ke Slack" style={{ height: 22, display: "block" }} />
             </button>
           </div>
 

@@ -10,26 +10,28 @@
 // manual lewat setTimeout pas mouseenter, dicabut LANGSUNG pas mouseleave. CSS-nya tinggal gate ke
 // class ini (bukan `:hover` lagi), gak ada lagi transition-delay yang bisa "gak kerasa".
 //
-// ponytail: closure per elemen (dipanggil ulang tiap render, no hooks-in-loop) — kalau re-render
-// kejadian PERSIS di tengah hover (jarang), timer lama yang udah gak ke-attach ke handler baru bisa
-// telat nambah class walau mouse udah pindah; efeknya PALING BURUK cuma overlay nongol sekejap
-// salah waktu, bukan nyangkut permanen (mouseenter/leave berikutnya tetap benerin). Upgrade ke
-// hook per-row kalau ternyata beneran ganggu.
-// `onLeave` (poin revisi) — dipanggil bareng pencabutan class `.hover-ready`, buat nutup UI lain
-// yang numpang di overlay ini (misal popover Add React) yang KALAU DIBIARKAN nyangkut kebuka
-// walau tombol pemicunya udah ke-hide sama CSS (React state popover gak otomatis tau overlay-nya
-// ilang, soalnya itu 2 hal terpisah — CSS class vs React state).
+// UPGRADE (poin revisi, bug dilaporkan: "overlay muncul dan tidak terkontrol", nongol nyangkut
+// di baris random) — versi sebelumnya nyimpen `timer` di closure lokal punya `hoverDelayHandlers()`
+// itu sendiri, yang dipanggil ULANG tiap render (tabel ini re-render SERING: reactionTick,
+// editingCell, dll). Kalau mouseenter mulai timer di closure render-A, lalu re-render kejadian
+// SEBELUM timer itu selesai, td-nya kepasang handler BARU dari closure render-B (timer lokalnya
+// `null`, gak tau soal timer punya render-A). Timer punya render-A TETAP jalan (elemen DOM-nya
+// masih sama), nambahin class telat walau mouse udah pindah — dan handler onMouseLeave yang AKTIF
+// sekarang (dari render-B) gak punya referensi buat nyabut timer render-A, jadi class NYANGKUT
+// permanen sampai baris itu di-hover+leave lagi. Fix: simpen timer di ELEMEN DOM-nya sendiri
+// (bukan closure JS), jadi handler mana pun yang lagi aktif (dari render manapun) baca/tulis ke
+// tempat yang SAMA — gak ada lagi "timer orphan" yang gak kejangkau.
 export function hoverDelayHandlers(delayMs = 500, onLeave?: () => void) {
-  let timer: ReturnType<typeof setTimeout> | null = null;
   return {
-    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+    onMouseEnter: (e: React.MouseEvent<HTMLElement & { _hoverTimer?: ReturnType<typeof setTimeout> }>) => {
       const el = e.currentTarget;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => el.classList.add("hover-ready"), delayMs);
+      if (el._hoverTimer) clearTimeout(el._hoverTimer);
+      el._hoverTimer = setTimeout(() => el.classList.add("hover-ready"), delayMs);
     },
-    onMouseLeave: (e: React.MouseEvent<HTMLElement>) => {
-      if (timer) { clearTimeout(timer); timer = null; }
-      e.currentTarget.classList.remove("hover-ready");
+    onMouseLeave: (e: React.MouseEvent<HTMLElement & { _hoverTimer?: ReturnType<typeof setTimeout> }>) => {
+      const el = e.currentTarget;
+      if (el._hoverTimer) { clearTimeout(el._hoverTimer); el._hoverTimer = undefined; }
+      el.classList.remove("hover-ready");
       onLeave?.();
     },
   };
