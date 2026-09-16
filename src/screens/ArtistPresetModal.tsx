@@ -136,15 +136,74 @@ function SectionHeader({ title, open, onToggle, style }: { title: string; open: 
   );
 }
 
+// Poin revisi: nickname/code_name/PNG yang UDAH TERSIMPAN sekarang tampil READ-ONLY (bukan input
+// aktif terus-terusan) — root cause bug lama "code name selalu balik kosong": input pakai
+// useState(preset?.code_name...) yang cuma jalan SEKALI pas mount, sementara `presets` (fetch
+// async) sering masih [] pas render PERTAMA (preset=null) — begitu data beneran kelar di-fetch,
+// initializer itu gak re-run, input nyangkut kosong permanen. Sekarang: cuma TAMPIL doang (baca
+// langsung dari `preset`, SELALU ikut data terbaru, gak ada local state buat nilai tersimpan),
+// klik "Edit" baru mount form (ArtistInfoEditRow) dengan `preset` yang UDAH PASTI valid (baris
+// baca-doang di atasnya kebukti nampilin nilai bener sebelum tombol Edit bisa diklik).
 function ArtistInfoRow({ user, preset, onSaved }: { user: SlackUser; preset: ArtistPreset | null; onSaved: () => void }) {
+  const [editing, setEditing] = useState(false);
+  if (editing) {
+    return <ArtistInfoEditRow user={user} preset={preset} onDone={() => { setEditing(false); onSaved(); }} onCancel={() => setEditing(false)} />;
+  }
+  return <ArtistInfoDisplayRow user={user} preset={preset} onEdit={() => setEditing(true)} onRemoved={onSaved} />;
+}
+
+function ArtistAvatar({ user, imagePath }: { user: SlackUser; imagePath: string | null | undefined }) {
+  const url = useFileBlobUrl(imagePath || null);
+  return (
+    <div
+      style={{
+        width: 26, height: 26, borderRadius: "50%", overflow: "hidden", flexShrink: 0, display: "flex",
+        alignItems: "center", justifyContent: "center", background: "var(--surface-hover)", border: "1px solid var(--border)", fontSize: 11,
+      }}
+    >
+      {url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : user.name.slice(0, 1).toUpperCase()}
+    </div>
+  );
+}
+
+function ArtistInfoDisplayRow({ user, preset, onEdit, onRemoved }: { user: SlackUser; preset: ArtistPreset | null; onEdit: () => void; onRemoved: () => void }) {
+  async function remove() {
+    if (!preset) return;
+    if (!confirm(`Hapus preset artis "${user.name}"?`)) return;
+    await window.api.artistPreset.remove(preset.id);
+    onRemoved();
+  }
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
+      <ArtistAvatar user={user} imagePath={preset?.image_path} />
+      <div className="caption" style={{ width: 100, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.name}>
+        {user.name}
+      </div>
+      <span className="caption" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {preset?.nickname || <span className="muted">— nickname —</span>}
+      </span>
+      <span className="caption" style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+        {preset?.code_name ? `:${preset.code_name}:` : <span className="muted">— code name —</span>}
+      </span>
+      <button className="btn" onClick={onEdit} style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}>
+        Edit
+      </button>
+      {preset && (
+        <button className="icon-btn" title="Hapus preset" onClick={remove}>
+          <Trash2 size={13} />
+        </button>
+      )}
+    </div>
+  );
+}
+
+function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser; preset: ArtistPreset | null; onDone: () => void; onCancel: () => void }) {
   const [nickname, setNickname] = useState(preset?.nickname || "");
-  // Poin revisi: tampil DENGAN titik dua (":rev:") biar jelas ini shortcode ala Slack, bukan teks
-  // biasa — sebelumnya selalu polos "rev" abis simpan+buka lagi, bikin ambigu. Titik dua di-strip
-  // otomatis di backend (saveArtistPreset), jadi aman user mau nulis pake atau tanpa titik dua.
+  // Titik dua di-strip otomatis di backend (saveArtistPreset), aman user mau nulis pake atau
+  // tanpa titik dua — ditampilin DENGAN titik dua di sini biar jelas ini shortcode ala Slack.
   const [codeName, setCodeName] = useState(preset?.code_name ? `:${preset.code_name}:` : "");
   const [pickedPath, setPickedPath] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const savedUrl = useFileBlobUrl(preset?.image_path || null);
 
   async function pickImage() {
     const filePath = await window.api.artistPreset.pickImage();
@@ -161,8 +220,7 @@ function ArtistInfoRow({ user, preset, onSaved }: { user: SlackUser; preset: Art
         codeName: codeName.trim() || undefined,
         sourcePath: pickedPath || undefined,
       });
-      setPickedPath(null);
-      onSaved();
+      onDone();
     } catch (err) {
       alert(err instanceof Error ? err.message : "Gagal nyimpen preset artis.");
     } finally {
@@ -170,42 +228,24 @@ function ArtistInfoRow({ user, preset, onSaved }: { user: SlackUser; preset: Art
     }
   }
 
-  async function remove() {
-    if (!preset) return;
-    if (!confirm(`Hapus preset artis "${user.name}"?`)) return;
-    await window.api.artistPreset.remove(preset.id);
-    onSaved();
-  }
-
-  const dirty = nickname !== (preset?.nickname || "") || codeName !== (preset?.code_name ? `:${preset.code_name}:` : "") || !!pickedPath;
-
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <div
-          style={{
-            width: 26, height: 26, borderRadius: "50%", overflow: "hidden", flexShrink: 0, display: "flex",
-            alignItems: "center", justifyContent: "center", background: "var(--surface-hover)", border: "1px solid var(--border)", fontSize: 11,
-          }}
-        >
-          {savedUrl ? <img src={savedUrl} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : user.name.slice(0, 1).toUpperCase()}
-        </div>
+        <ArtistAvatar user={user} imagePath={preset?.image_path} />
         <div className="caption" style={{ width: 100, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.name}>
           {user.name}
         </div>
-        <input placeholder="Nickname" value={nickname} onChange={(e) => setNickname(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
+        <input autoFocus placeholder="Nickname" value={nickname} onChange={(e) => setNickname(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
         <input placeholder=":code_name:" value={codeName} onChange={(e) => setCodeName(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
         <button className="icon-btn" title="Pilih PNG" onClick={pickImage}>
           <Upload size={13} />
         </button>
-        <button className="btn btn-primary" disabled={busy || !dirty} onClick={save} style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}>
+        <button className="btn btn-primary" disabled={busy} onClick={save} style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}>
           Simpan
         </button>
-        {preset && (
-          <button className="icon-btn" title="Hapus preset" onClick={remove}>
-            <Trash2 size={13} />
-          </button>
-        )}
+        <button className="btn" disabled={busy} onClick={onCancel} style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}>
+          Batal
+        </button>
       </div>
       {pickedPath && <div className="caption" style={{ paddingLeft: 34 }}>PNG baru: {pickedPath.split(/[\\/]/).pop()}</div>}
     </div>

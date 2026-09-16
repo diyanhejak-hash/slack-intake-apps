@@ -1086,3 +1086,43 @@ Checklist manual (GANTI checklist §33 yang nyebut "Mode Assign per artis" — i
   modal Preset Artis (2 section), BUKAN modal "Dropdown Artis" kecil terpisah lagi.
 - [ ] **Mode benar-benar global**: toggle React aktif → assign artis MANA PUN ke item mana pun →
   semuanya ikut react-only (gak ada mention), TIDAK ADA artis yang "kecualian".
+
+## 35. Artis Preset auto masuk opsi react + fix nickname/code name balik kosong (2026-09-16) ✅ (siap dites)
+
+**Artis Preset auto jadi opsi react** — sebelumnya code_name+PNG artis cuma dipakai buat
+auto-queue reaction pas ARTIS di-assign (§34), gak muncul di picker "Add React" biasa. Sekarang
+`ReactionPickerPopover` (dipakai ItemReactionBar pending & InstantReactionOverlay) JUGA nge-merge
+Artis Preset yang punya code_name DAN PNG lengkap sebagai opsi react manual — gak perlu didaftar
+ulang di Preset Emoji.
+
+**Fix bug nickname/code name balik kosong** — root cause: `ArtistInfoRow` (§33) pakai
+`useState(preset?.code_name...)`, initializer yang cuma jalan SEKALI pas mount. Modal baru buka,
+`presets` masih `[]` (fetch async belum kelar) pas render PERTAMA → `preset=null` → input
+ke-lock kosong PERMANEN, walau abis itu data beneran kelar di-fetch. Diperbaiki SEKALIGUS sesuai
+permintaan UX ("simpan di sesi, tekan Edit buat ubah"): nickname/code_name/PNG sekarang tampil
+READ-ONLY (baca langsung dari `preset`, otomatis ikut data terbaru, gak ada local state buat
+nilai tersimpan) — klik "Edit" baru mount form (`ArtistInfoEditRow`), dan di titik itu `preset`
+UDAH PASTI valid (row baca-doang di atasnya kebukti nampilin nilai bener sebelum Edit bisa
+diklik) — bug re-inisialisasi-dari-null gak mungkin kejadian lagi.
+
+**Poin "multi file per reply gak terkirim"**: DICEK, ternyata bukan bug — proses upload masih
+jalan pas dicek (belum kelar), bukan gagal. Gak ada perubahan kode buat ini.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 29 test
+regresi + smoke test + build) semua lulus.
+**BELUM**: smoke-test manual visual.
+
+Checklist manual:
+
+- [ ] **Restart app dulu**.
+- [ ] **Nickname/code name gak balik kosong**: isi nickname+code_name+PNG buat 1 artis → Simpan →
+  tutup modal → buka lagi → row-nya nampilin TEKS (bukan input) dengan nilai yang bener (nickname
+  & `:code_name:`), BUKAN kosong.
+- [ ] **Tombol Edit**: klik "Edit" di row itu → berubah jadi input (nickname/code_name/PNG) TERISI
+  nilai yang bener (bukan kosong) → ubah dikit → Simpan → balik ke tampilan read-only, nilai
+  ke-update.
+- [ ] **Batal edit**: klik Edit → ubah nickname → klik "Batal" (bukan Simpan) → balik ke tampilan
+  read-only, nilai LAMA yang tampil (perubahan yang belum di-Simpan gak kepake).
+- [ ] **Artis Preset muncul di picker Add React**: artis yang UDAH ada code_name+PNG-nya → buka
+  popover "Add React" (icon SmilePlus, Tab Table atau Tab Reply) → emoji/PNG artis itu ikut
+  nongol di grid pilihan, bisa diklik buat react manual (bukan cuma otomatis pas assign).

@@ -25,8 +25,16 @@ function ReactionPickerPopover({ onPick, style }: { onPick: (preset: EmojiPreset
   const [presets, setPresets] = useState<EmojiPreset[]>([]);
   const [showManage, setShowManage] = useState(false);
 
+  // Poin revisi: Artis Preset yang UDAH punya code_name + PNG lengkap otomatis JUGA muncul di
+  // sini sebagai opsi react — gak perlu didaftarin ulang manual di Preset Emoji. Diperlakukan
+  // persis kayak custom emoji preset biasa (type "custom", slack_shortcode = code_name-nya).
   function refresh() {
-    window.api.emojiPreset.list().then((list) => setPresets(list.filter((p) => p.slack_shortcode)));
+    Promise.all([window.api.emojiPreset.list(), window.api.artistPreset.list()]).then(([emojiList, artistList]) => {
+      const artistAsPresets: EmojiPreset[] = artistList
+        .filter((p) => p.code_name && p.image_path)
+        .map((p) => ({ id: `artist-${p.id}`, type: "custom", value: p.code_name as string, image_path: p.image_path, slack_shortcode: p.code_name, sort_order: 9999 }));
+      setPresets([...emojiList.filter((p) => p.slack_shortcode), ...artistAsPresets]);
+    });
   }
   useEffect(() => {
     refresh();
