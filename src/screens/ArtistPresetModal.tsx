@@ -87,9 +87,9 @@ export default function ArtistPresetModal({
           <SectionHeader title="2. Dropdown Artis — mode assign & grup" open={dropdownOpen} onToggle={() => setDropdownOpen((v) => !v)} style={{ marginTop: 14 }} />
           {dropdownOpen && (
             <>
-              <div className="label" style={{ marginBottom: 4 }}>2a. Mode assign (Global)</div>
+              <div className="label" style={{ marginBottom: 4 }}>Artis assign mode</div>
               <p className="caption" style={{ margin: "0 0 8px" }}>
-                Global — berlaku ke semua artis sekaligus. Mention ATAU React, gak bisa dua-duanya. Default: Mention aktif.
+                Kirim sebagai pesan "@user" atau "React Emoji".
               </p>
               <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
                 <button
