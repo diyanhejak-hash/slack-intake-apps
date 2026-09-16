@@ -274,7 +274,7 @@ tr:hover td {
   background: var(--surface-hover);
 }
 /* Overlay "Instant Intake" (poin revisi, Tab Table) — nongol CUMA di cell yang lagi di-cursor
-   (bukan satu row penuh), delay 0.5s sebelum muncul (transition-delay pas :hover, biar gak kedip
+   (bukan satu row penuh), delay 1s sebelum muncul (transition-delay pas :hover, biar gak kedip
    pas mouse numpang lewat), tapi ilang LANGSUNG (transition-delay 0s) pas mouse keluar. Posisi/
    warna ada di style inline komponennya sendiri (QuickSendButton.tsx) — kelas ini cuma ngatur
    visibility. Versi "inline" (Tab Reply) gak pakai kelas ini, ikut hover .reply-actions biasa.*/
@@ -288,21 +288,21 @@ tr:hover td {
    dulu bikin overlay itu gak pernah kelihatan sama sekali (CSS gak match). */
 td:hover .row-quicksend {
   opacity: 1;
-  transition-delay: 0.5s;
+  transition-delay: 1s;
   pointer-events: auto;
 }
 /* Overlay Instant Intake di HEADER kolom (poin revisi) — klik = kirim kolom itu ke SEMUA/item
    terpilih sekaligus. Pola hover/delay sama persis kayak per-cell, cuma hover-zone-nya `th`. */
 th:hover .row-quicksend {
   opacity: 1;
-  transition-delay: 0.5s;
+  transition-delay: 1s;
   pointer-events: auto;
 }
 /* Overlay reaction INSTAN (poin revisi) di Pil Item Tab Reply — pola sama persis kayak Instant
-   Intake, delay 0.5s, cuma hover-zone-nya bukan `td` (pil bukan cell tabel). */
+   Intake, delay 1s, cuma hover-zone-nya bukan `td` (pil bukan cell tabel). */
 .pill-hover-zone:hover .row-quicksend {
   opacity: 1;
-  transition-delay: 0.5s;
+  transition-delay: 1s;
   pointer-events: auto;
 }
 /* Scale-up dikit pas di-hover (baik variant overlay maupun inline) — feedback tactile kecil,
