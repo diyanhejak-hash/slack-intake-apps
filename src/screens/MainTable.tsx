@@ -514,7 +514,12 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
               )}
             </div>
           ) : (
-          <div className="folder-panel scrollbar-thin" style={{ overflow: "auto" }}>
+          <div className="folder-panel scrollbar-thin" style={{ overflow: "auto", paddingTop: 10 }}>
+            {/* paddingTop 10px KHUSUS ngasih ruang overlay Instant Intake di header (poking
+                top:-8) — thead th pakai position:sticky (freeze pas scroll), overlay yang poke ke
+                atas kepotong sama batas overflow:auto div ini KALAU gak ada ruang. Padding ikut
+                masuk padding-box scroll container ini, jadi titik "nempel" sticky (top:0) geser
+                turun 10px, nyisain ruang di atasnya buat overlay poke tanpa kepotong. */}
             <table>
               <thead>
                 <tr>
@@ -524,18 +529,18 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                   <th style={{ width: 34 }}>No</th>
                   <th style={{ position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste">
                     Item <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
-                    <QuickSendButton variant="header" title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />
+                    <QuickSendButton title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />
                   </th>
                   <th style={{ width: 200, position: "relative" }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste">
                     Artis <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
-                    <QuickSendButton variant="header" title="Instant Intake — mention artis SEMUA item" onClick={() => quickSendColumn("artist", "Artis")} />
+                    <QuickSendButton title="Instant Intake — mention artis SEMUA item" onClick={() => quickSendColumn("artist", "Artis")} />
                   </th>
                   {/* B4 — klik header kolom Reply (bubble icon) = pilih Template buat diterapkan
                       ke SEMUA item sekaligus, bukan cuma per-item lewat Tab Reply. Reply dipindah
                       ke sebelum X (poin revisi urutan kolom: ..., Artis, Reply, X). */}
                   <th style={{ width: 50, position: "relative" }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item">
                     <LayoutTemplate size={12} style={{ display: "inline" }} />
-                    <QuickSendButton variant="header" title="Instant Intake — kirim semua reply/field SEMUA item" onClick={() => quickSendColumn("replies", "Reply")} />
+                    <QuickSendButton title="Instant Intake — kirim semua reply/field SEMUA item" onClick={() => quickSendColumn("replies", "Reply")} />
                   </th>
                   <th style={{ width: 40 }} />
                 </tr>
