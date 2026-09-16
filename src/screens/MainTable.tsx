@@ -13,6 +13,7 @@ import EmojiPresetModal from "./EmojiPresetModal";
 import EmojiPicker from "./EmojiPicker";
 import { ItemReactionBar } from "./ItemReactions";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
+import { hoverDelayHandlers } from "../lib/hoverDelay";
 
 interface UndoCommand {
   undo: () => Promise<void>;
@@ -545,18 +546,18 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                     {selected.size === project.items.length && project.items.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
                   </th>
                   <th style={{ width: 16, maxWidth: 16, padding: "8px 1px", textAlign: "center" }}>No</th>
-                  <th style={{ width: columnWidths.item, position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste">
+                  <th style={{ width: columnWidths.item, position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste" {...hoverDelayHandlers()}>
                     Item <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
                     <QuickSendButton title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />
                   </th>
-                  <th style={{ width: columnWidths.artist, position: "relative" }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste">
+                  <th style={{ width: columnWidths.artist, position: "relative" }} onClick={() => setBulkPasteCol("artis")} title="Klik buat bulk paste" {...hoverDelayHandlers()}>
                     Artis <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
                     <QuickSendButton title="Instant Intake — mention artis SEMUA item" onClick={() => quickSendColumn("artist", "Artis")} />
                   </th>
                   {/* B4 — klik header kolom Reply (bubble icon) = pilih Template buat diterapkan
                       ke SEMUA item sekaligus, bukan cuma per-item lewat Tab Reply. Reply dipindah
                       ke sebelum X (poin revisi urutan kolom: ..., Artis, Reply, X). */}
-                  <th style={{ width: 50, maxWidth: 50, position: "relative", textAlign: "center" }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item">
+                  <th style={{ width: 50, maxWidth: 50, position: "relative", textAlign: "center" }} onClick={() => setShowTemplateAll(true)} title="Terapkan Template ke SEMUA item" {...hoverDelayHandlers()}>
                     <LayoutTemplate size={12} style={{ display: "inline" }} />
                     <QuickSendButton title="Instant Intake — kirim semua reply/field SEMUA item" onClick={() => quickSendColumn("replies", "Reply")} />
                   </th>
@@ -587,7 +588,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                       <td className="caption" style={{ textAlign: "center", padding: "8px 1px" }}>
                         {index + 1}
                       </td>
-                      <td style={{ position: "relative" }}>
+                      <td style={{ position: "relative" }} {...hoverDelayHandlers()}>
                         {/* Kolom Item dibagi 2 (poin revisi) kalau ada reaction pending — input
                             flex:1 (nyusut sendiri), chip reaction nempel di KANAN input dalam 1
                             baris (bukan di bawah lagi). ItemReactionBar sendiri yang nge-render
@@ -623,7 +624,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                           <QuickSendButton title="Instant Intake — kirim nama item ini aja (gak ada artis/reply)" onClick={() => quickSend(item.id, "item")} />
                         )}
                       </td>
-                      <td style={{ position: "relative" }}>
+                      <td style={{ position: "relative" }} {...hoverDelayHandlers()}>
                         <select
                           value={item.artist_id || ""}
                           onChange={(e) => handleArtistChange(item, e.target.value)}
@@ -643,7 +644,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                           <QuickSendButton title="Instant Intake — mention artis ini aja" onClick={() => quickSend(item.id, "artist")} />
                         )}
                       </td>
-                      <td style={{ position: "relative" }}>
+                      <td style={{ position: "relative" }} {...hoverDelayHandlers()}>
                         <button
                           className="icon-btn"
                           title={item.replies.length ? `${item.replies.length} reply` : "Belum ada reply"}

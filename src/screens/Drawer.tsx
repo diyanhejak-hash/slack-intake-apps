@@ -31,6 +31,7 @@ import CapturePoolStrip from "./CapturePoolStrip";
 import QuickSendButton from "./QuickSendButton";
 import EmojiPicker from "./EmojiPicker";
 import { ItemReactionBar, InstantReactionOverlay } from "./ItemReactions";
+import { hoverDelayHandlers } from "../lib/hoverDelay";
 
 // Slack sendiri gak publish angka resmi "maksimal berapa file per pesan" (dicek: dokumentasi
 // cuma nyebut batas per-FILE 1GB & rate-limit 1 pesan/detik/channel, gak ada cap eksplisit
@@ -217,7 +218,7 @@ export default function Drawer({
               tapi NAMA ITEM-nya sendiri yang dibungkus pil. Dibungkus lagi "pill-hover-zone" —
               poin revisi fitur Reaction: overlay reaction INSTAN nongol di pojok pil pas di-hover
               (pola sama kayak Instant Intake, delay 0.5s lewat CSS `.row-quicksend`). */}
-          <div className="pill-hover-zone" style={{ position: "relative", display: "inline-block" }}>
+          <div className="pill-hover-zone" style={{ position: "relative", display: "inline-block" }} {...hoverDelayHandlers()}>
             <span
               style={{
                 fontWeight: 800,
