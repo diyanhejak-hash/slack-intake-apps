@@ -163,12 +163,12 @@ function renameProject(id, name) {
   db.prepare(`UPDATE projects SET name = ?, updated_at = ? WHERE id = ? AND owner_user_id=? AND owner_team_id=?`).run(name, now(), id, activeScope.userId, activeScope.teamId);
 }
 
-function addItem(projectId, { name, artistId, artistName, artistMode, source }) {
+function addItem(projectId, { name, artistId, artistName, source }) {
   const id = uuid();
   const maxOrder = db.prepare(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM items WHERE project_id = ?`).get(projectId).m;
   db.prepare(
-    `INSERT INTO items (id, project_id, name, artist_id, artist_name, artist_mode, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(id, projectId, name, artistId || null, artistName || null, artistMode || "mention", maxOrder + 1, source || "manual");
+    `INSERT INTO items (id, project_id, name, artist_id, artist_name, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(id, projectId, name, artistId || null, artistName || null, maxOrder + 1, source || "manual");
   touchProject(projectId);
   return id;
 }
@@ -177,7 +177,7 @@ function updateItem(itemId, patch) {
   const fields = [];
   const values = [];
   for (const [k, v] of Object.entries(patch)) {
-    const col = { artistId: "artist_id", artistName: "artist_name", name: "name", artistMode: "artist_mode" }[k];
+    const col = { artistId: "artist_id", artistName: "artist_name", name: "name" }[k];
     if (col) {
       fields.push(`${col} = ?`);
       values.push(v);
@@ -205,8 +205,8 @@ function restoreItem(snapshot) {
   snapshot = deletedItems.get(snapshot?.id);
   if (!snapshot || !ownsProject(snapshot.project_id)) throw new Error("Snapshot undo tidak tersedia untuk sesi ini.");
   db.prepare(
-    `INSERT INTO items (id, project_id, name, artist_id, artist_name, artist_mode, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(snapshot.id, snapshot.project_id, snapshot.name, snapshot.artist_id, snapshot.artist_name, snapshot.artist_mode || "mention", snapshot.sort_order, snapshot.source);
+    `INSERT INTO items (id, project_id, name, artist_id, artist_name, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)`
+  ).run(snapshot.id, snapshot.project_id, snapshot.name, snapshot.artist_id, snapshot.artist_name, snapshot.sort_order, snapshot.source);
   for (const f of snapshot.files) {
     db.prepare(`INSERT INTO item_files (id, item_id, stored_path, original_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(f.id, snapshot.id, f.stored_path, f.original_name, f.sort_order);
   }
@@ -354,8 +354,8 @@ function unmergeItems(snapshot) {
   for (const item of snapshot.items) {
     if (item.id !== snapshot.keepId) {
       db.prepare(
-        `INSERT INTO items (id, project_id, name, artist_id, artist_name, artist_mode, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-      ).run(item.id, item.project_id, item.name, item.artist_id, item.artist_name, item.artist_mode || "mention", item.sort_order, item.source);
+        `INSERT INTO items (id, project_id, name, artist_id, artist_name, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)`
+      ).run(item.id, item.project_id, item.name, item.artist_id, item.artist_name, item.sort_order, item.source);
     }
     for (const f of item.files) db.prepare('INSERT INTO item_files(id,item_id,stored_path,original_name,sort_order) VALUES(?,?,?,?,?)').run(f.id, item.id, f.stored_path, f.original_name, f.sort_order);
     for (const rep of item.replies) {
@@ -791,11 +791,16 @@ function listArtistPresets() {
   return db.prepare(`SELECT * FROM artist_presets`).all();
 }
 
+const ARTIST_MODES = ["mention", "react", "both", "none"];
+
 // Upsert (bukan add-only) — satu preset per member_id, wajar untuk EDIT ulang nickname/code
-// name/PNG-nya. `id` dikasih = update baris yang ada; gak dikasih = insert baru (member_id WAJIB
-// belum punya preset). `sourcePath` opsional — gak diisi = PNG lama (kalau ada) dipertahankan.
-function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath }) {
+// name/PNG/mode-nya. `id` dikasih = update baris yang ada; gak dikasih = insert baru (member_id
+// WAJIB belum punya preset). `sourcePath` opsional — gak diisi = PNG lama (kalau ada)
+// dipertahankan. `mode` opsional — gak diisi = 'mention' (insert) atau nilai lama dipertahankan
+// (update, misal caller cuma mau ganti nickname doang, gak nyentuh mode).
+function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath, mode }) {
   if (!memberId) throw new Error("Member Slack wajib dipilih.");
+  if (mode !== undefined && !ARTIST_MODES.includes(mode)) throw new Error("Mode assign gak valid.");
   const cleanCodeName = codeName ? String(codeName).trim().toLowerCase().replace(/[^a-z0-9_+-]/g, "") : null;
   const cleanNickname = nickname ? String(nickname).trim() : null;
   const existing = id ? db.prepare(`SELECT * FROM artist_presets WHERE id = ?`).get(id) : null;
@@ -807,14 +812,15 @@ function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath }) {
     imagePath = staged.storedPath;
   }
   if (existing) {
-    db.prepare(`UPDATE artist_presets SET member_id=?, nickname=?, code_name=?, image_path=? WHERE id=?`).run(memberId, cleanNickname, cleanCodeName, imagePath, id);
+    const nextMode = mode !== undefined ? mode : existing.mode;
+    db.prepare(`UPDATE artist_presets SET member_id=?, nickname=?, code_name=?, image_path=?, mode=? WHERE id=?`).run(memberId, cleanNickname, cleanCodeName, imagePath, nextMode, id);
     return id;
   }
   if (db.prepare(`SELECT 1 FROM artist_presets WHERE member_id = ?`).get(memberId)) {
     throw new Error("Member ini udah punya preset artis.");
   }
   const newId = uuid();
-  db.prepare(`INSERT INTO artist_presets (id, member_id, nickname, code_name, image_path) VALUES (?, ?, ?, ?, ?)`).run(newId, memberId, cleanNickname, cleanCodeName, imagePath);
+  db.prepare(`INSERT INTO artist_presets (id, member_id, nickname, code_name, image_path, mode) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, memberId, cleanNickname, cleanCodeName, imagePath, mode || "mention");
   return newId;
 }
 
@@ -822,6 +828,10 @@ function removeArtistPreset(id) {
   const row = db.prepare(`SELECT image_path FROM artist_presets WHERE id = ?`).get(id);
   if (row?.image_path) removeStoredFile(row.image_path);
   db.prepare(`DELETE FROM artist_presets WHERE id = ?`).run(id);
+}
+
+function getArtistPresetByMember(memberId) {
+  return memberId ? db.prepare(`SELECT * FROM artist_presets WHERE member_id = ?`).get(memberId) || null : null;
 }
 
 // ---------- Reaction (poin revisi) ----------
@@ -996,7 +1006,7 @@ function importProject(payload) {
       const replyFileMap = new Map();
       for (const item of src.items) {
         if (!item || typeof item.name !== "string" || !Array.isArray(item.replies || [])) throw new Error("Data item tidak valid.");
-        const newItemId = addItem(newProject.id, { name: item.name, artistId: item.artist_id, artistName: item.artist_name, artistMode: item.artist_mode, source: item.source });
+        const newItemId = addItem(newProject.id, { name: item.name, artistId: item.artist_id, artistName: item.artist_name, source: item.source });
         itemMap.set(item.id, newItemId);
         for (const reaction of item.reactions || []) addItemReaction(newItemId, { emojiType: reaction.emoji_type, emojiValue: reaction.emoji_value, slackShortcode: reaction.slack_shortcode });
         for (const file of item.files || []) {
@@ -1144,6 +1154,7 @@ module.exports = {
   listArtistPresets,
   saveArtistPreset,
   removeArtistPreset,
+  getArtistPresetByMember,
   listItemReactions,
   addItemReaction,
   addReactionToAllItems,

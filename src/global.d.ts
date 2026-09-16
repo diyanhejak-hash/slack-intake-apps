@@ -54,10 +54,6 @@ export interface ProjectItem {
   name: string;
   artist_id: string | null;
   artist_name: string | null;
-  /** Mode assign Artis Preset (poin revisi) — 2 toggle independen (Mention/React), bukan radio.
-   * 'mention' (default) | 'react' | 'both' (dua-duanya aktif) | 'none' (dua-duanya nonaktif,
-   * artist_id tetap tersimpan tapi gak ada mention/reaction pas kirim). */
-  artist_mode: "mention" | "react" | "both" | "none";
   source: "manual" | "folder-import";
   sort_order: number;
   files: ItemFile[];
@@ -173,6 +169,9 @@ export interface ArtistPreset {
   code_name: string | null;
   /** PNG lokal — preview doang (chip/manajemen preset), gak disinkronkan ke Slack. */
   image_path: string | null;
+  /** Mode assign GLOBAL (poin revisi, bukan per-item lagi) — 2 toggle independen (Mention/React).
+   * 'mention' (default) | 'react' | 'both' (dua-duanya aktif) | 'none' (dua-duanya nonaktif). */
+  mode: "mention" | "react" | "both" | "none";
 }
 
 declare global {
@@ -254,11 +253,12 @@ declare global {
         /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
         pickImage: () => Promise<string | null>;
       };
-      /** Artis Preset (poin revisi) — nickname/code_name/PNG per Slack member. */
+      /** Artis Preset (poin revisi) — nickname/code_name/PNG/mode GLOBAL per Slack member. */
       artistPreset: {
         list: () => Promise<ArtistPreset[]>;
-        /** `id` dikasih = update; gak dikasih = insert baru (member_id wajib belum punya preset). */
-        save: (payload: { id?: string; memberId: string; nickname?: string; codeName?: string; sourcePath?: string }) => Promise<string>;
+        /** `id` dikasih = update; gak dikasih = insert baru (member_id wajib belum punya preset).
+         * `mode` opsional — gak diisi = 'mention' (insert) atau nilai lama dipertahankan (update). */
+        save: (payload: { id?: string; memberId: string; nickname?: string; codeName?: string; sourcePath?: string; mode?: "mention" | "react" | "both" | "none" }) => Promise<string>;
         remove: (id: string) => Promise<void>;
         /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
         pickImage: () => Promise<string | null>;

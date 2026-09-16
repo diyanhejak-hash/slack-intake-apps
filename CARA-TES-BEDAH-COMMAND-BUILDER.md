@@ -995,3 +995,49 @@ Checklist manual:
   modal Kelola Preset Artis kebuka LANGSUNG (gak perlu ke menu Edit).
 - [ ] **Overlay Instant Intake gak numpuk**: pas popover Artis kebuka, overlay Instant Intake di
   cell yang sama TETAP hilang (sama kayak dulu pas dropdown native lagi fokus).
+
+## 33. Koreksi §31/32: mode Mention/React GLOBAL per artis (bukan per-item), 1 modal 2 section (2026-09-16) ✅ (siap dites)
+
+**Koreksi arsitektur** — §31/32 sebelumnya nyimpen mode Mention/React per ITEM (toggle di
+ArtistPicker tiap row). User klarifikasi: mode itu HARUSNYA milik ARTIS (global), bukan per
+assignment — diatur SEKALI di satu tempat, berlaku ke SEMUA item yang di-assign ke artis itu.
+
+- `artist_presets.mode` (kolom baru) — GANTI `items.artist_mode` (kolom lama dibiarin nganggur
+  di DB, gak dipakai lagi, DROP COLUMN beresiko jadi dilewatin). `send:start`/`send:quick` lookup
+  mode lewat `projects.getArtistPresetByMember(artistId)`, bukan `item.artist_mode` lagi.
+- **ArtistPicker** (popover per-row) SEKARANG cuma buat pilih SIAPA — toggle Mention/React DICABUT
+  dari sini total ("hilangkan fungsi atur per row").
+- **Modal Kelola Preset Artis** jadi SATU-SATUNYA tempat pengaturan artis, 2 section collapsible:
+  "Info Artis" (nickname/code_name/PNG, klik header buat collapse/expand) dan "Mode Assign"
+  (toggle @/😊 per artis, klik langsung SIMPAN — gak nunggu tombol Simpan terpisah).
+- **Fix ambiguitas code_name**: input-nya sekarang nampilin DENGAN titik dua (`:rev:`) pas dibuka
+  lagi, bukan polos "rev" — biar jelas itu shortcode ala Slack. Titik dua tetap di-strip otomatis
+  di backend, aman ditulis pake atau tanpa.
+- **Chip di Item tetap muncul**: assign artis yang mode-nya react/both → `queueArtistReaction`
+  (dipanggil dari `handleArtistChange`, lookup mode dari preset SAAT ITU) tetap antre reaction,
+  chip tetap nongol di bawah input Item — gak berubah dari §31, cuma sumber mode-nya yang pindah.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 28 test
+regresi — CRUD test & mention-suppression test disesuaikan ke model baru — + smoke test + build)
+semua lulus.
+**BELUM**: smoke-test manual visual.
+
+Checklist manual (GANTI checklist §31/32 yang nyebut toggle per-row — itu udah gak ada lagi):
+
+- [ ] **Restart app dulu**.
+- [ ] **ArtistPicker gak ada toggle lagi**: buka popover Artis di row mana pun → cuma ada daftar
+  artis + "Kelola preset artis..." — TIDAK ADA icon @/😊 di popover ini lagi.
+- [ ] **Modal 2 section collapsible**: buka "Kelola preset artis..." → ada 2 header section
+  ("Info Artis" & "Mode Assign") dengan chevron, klik header → section collapse/expand.
+- [ ] **Code name tampil dengan titik dua**: isi code_name "rev" di section Info Artis → Simpan →
+  tutup modal → buka lagi → field-nya nampilin ":rev:", bukan "rev" polos.
+- [ ] **Toggle mode langsung tersimpan**: di section Mode Assign, klik icon React buat 1 artis →
+  TANPA klik tombol lain, tutup modal, buka lagi → toggle React masih aktif (kesimpen instan).
+- [ ] **Mode berlaku ke SEMUA item artis itu**: assign artis yang mode-nya "react" ke 2 item
+  berbeda → kirim dua-duanya → cek Slack: dua-duanya reaction doang, TIDAK ada mention, KONSISTEN
+  (gak ada satu item yang beda perilaku).
+- [ ] **Chip react tetap muncul**: assign artis mode "react"/"both" ke item → chip reaction
+  langsung muncul di bawah input Item (Tab Table), sama kayak sebelumnya.
+- [ ] **Ganti mode gak nimpa nickname draft**: di section Info Artis, ketik nickname baru TAPI
+  BELUM klik Simpan → pindah ke section Mode Assign, toggle icon buat artis yang SAMA → balik ke
+  Info Artis → nickname draft yang belum di-Simpan tadi TETAP ada di input (gak ke-reset/ketimpa).

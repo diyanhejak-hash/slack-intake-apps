@@ -93,12 +93,15 @@ CREATE TABLE IF NOT EXISTS artist_groups (
 -- emoji_presets.slack_shortcode pas reactions.add, DIASUMSIKAN custom emoji itu udah ada beneran
 -- di workspace Slack tujuan (gak divalidasi app ini). image_path = PNG lokal, preview doang di
 -- app kita (chip/manajemen preset) — sama sekali gak disinkronkan ke emoji asli di Slack.
+-- mode (poin revisi) — Mention/React GLOBAL per artis (bukan per-item/per-row lagi), 'mention' |
+-- 'react' | 'both' | 'none'. Semua item yang di-assign ke artis ini ngikut mode yang sama.
 CREATE TABLE IF NOT EXISTS artist_presets (
   id TEXT PRIMARY KEY,
   member_id TEXT NOT NULL UNIQUE,
   nickname TEXT,
   code_name TEXT,
-  image_path TEXT
+  image_path TEXT,
+  mode TEXT NOT NULL DEFAULT 'mention'
 );
 
 CREATE TABLE IF NOT EXISTS threads (
@@ -274,10 +277,9 @@ if (!db.prepare('PRAGMA table_info(batch_files)').all().some((c) => c.name === '
 
 if (!db.prepare('PRAGMA table_info(send_attempts)').all().some((c) => c.name === 'pending_phase')) db.exec('ALTER TABLE send_attempts ADD COLUMN pending_phase TEXT');
 
-// Artis Preset (poin revisi) — mode assign per item: 'mention' (perilaku lama, <@artist_id> pas
-// kirim), 'react' (gak ada mention, cuma antre reaction pakai code_name-nya artist_presets),
-// 'both' (dua-duanya). Default 'mention' buat item lama (backward compatible, gak ada perubahan
-// perilaku sama sekali kalau user gak pernah sentuh Artis Preset).
-if (!db.prepare('PRAGMA table_info(items)').all().some((c) => c.name === 'artist_mode')) db.exec(`ALTER TABLE items ADD COLUMN artist_mode TEXT NOT NULL DEFAULT 'mention'`);
+// Artis Preset (poin revisi) — mode Mention/React GLOBAL per artis (BUKAN per-item lagi, revisi
+// dari percobaan sebelumnya yang sempat nyimpen mode di items.artist_mode — kolom itu udah gak
+// dipakai lagi, sengaja dibiarin nganggur di DB lama daripada migrasi DROP COLUMN yang beresiko).
+if (!db.prepare('PRAGMA table_info(artist_presets)').all().some((c) => c.name === 'mode')) db.exec(`ALTER TABLE artist_presets ADD COLUMN mode TEXT NOT NULL DEFAULT 'mention'`);
 
 module.exports = { db, dataDir };

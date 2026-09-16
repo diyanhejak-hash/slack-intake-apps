@@ -277,14 +277,16 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     refresh();
   }
 
-  // Artis Preset (poin revisi) — mode "react"/"both" berarti assign artis JUGA nge-antre reaction
-  // pending pakai code_name preset-nya (infrastruktur item_reactions yang udah ada, sama kayak
-  // Add React manual). Dedupe per item+shortcode udah ditangani addItemReaction sendiri.
-  async function queueArtistReaction(itemId: string, artistId: string | null, mode: string) {
-    if (!artistId || !["react", "both"].includes(mode)) return;
-    const codeName = presetByMember.get(artistId)?.code_name;
-    if (!codeName) return;
-    await window.api.itemReaction.add(itemId, { emojiType: "custom", emojiValue: codeName, slackShortcode: codeName });
+  // Artis Preset (poin revisi) — mode Mention/React sekarang GLOBAL per artis (artist_presets.mode,
+  // diatur di modal Kelola Preset, BUKAN per-item lagi). Assign artis ke item ngecek mode preset-nya
+  // sendiri — kalau "react"/"both", JUGA nge-antre reaction pending pakai code_name preset itu
+  // (infrastruktur item_reactions yang udah ada, sama kayak Add React manual — chip-nya muncul di
+  // bawah input Item). Dedupe per item+shortcode udah ditangani addItemReaction sendiri.
+  async function queueArtistReaction(itemId: string, artistId: string | null) {
+    if (!artistId) return;
+    const preset = presetByMember.get(artistId);
+    if (!preset?.code_name || !["react", "both"].includes(preset.mode)) return;
+    await window.api.itemReaction.add(itemId, { emojiType: "custom", emojiValue: preset.code_name, slackShortcode: preset.code_name });
   }
 
   async function handleArtistChange(item: ProjectItem, artistId: string) {
@@ -296,16 +298,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
       undo: () => window.api.item.update(item.id, { artistId: oldArtistId, artistName: oldArtistName }),
       redo: () => window.api.item.update(item.id, { artistId: artistId || null, artistName: u?.name || null }),
     });
-    await queueArtistReaction(item.id, artistId || null, item.artist_mode);
-    refresh();
-  }
-
-  // Toggle Mention/React/Keduanya (poin revisi, dekat dropdown Artis) — item.artist_id TETAP
-  // dilacak apa pun mode-nya (Workload Distribution dkk gak kepengaruh); mode cuma nentuin cara
-  // KIRIM ke Slack (mention vs reaction vs dua-duanya, lihat send:start/send:quick di main.cjs).
-  async function handleArtistModeChange(item: ProjectItem, mode: "mention" | "react" | "both" | "none") {
-    await window.api.item.update(item.id, { artistMode: mode });
-    await queueArtistReaction(item.id, item.artist_id, mode);
+    await queueArtistReaction(item.id, artistId || null);
     refresh();
   }
 
@@ -567,7 +560,6 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                   canNext={activeIndex >= 0 && activeIndex < project.items.length - 1}
                   users={visibleUsers}
                   onArtistChange={handleArtistChange}
-                  onArtistModeChange={handleArtistModeChange}
                   onManageArtistPresets={() => setShowArtistPresetManager(true)}
                 />
                 </Suspense>
@@ -671,14 +663,13 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                         )}
                       </td>
                       <td style={{ position: "relative" }} {...hoverDelayHandlers()}>
-                        {/* Artis Picker (poin revisi) — satu popover buat pilih artis, toggle
-                            Mention/React, DAN akses Kelola Preset Artis (gak ada lagi native
-                            <select> + toggle terpisah di bawahnya). */}
+                        {/* Artis Picker (poin revisi) — satu popover buat pilih artis + akses
+                            Kelola Preset Artis (gak ada native <select> lagi). Toggle Mention/
+                            React GLOBAL per artis, diatur di modal Kelola Preset — bukan di sini. */}
                         <ArtistPicker
                           item={item}
                           users={visibleUsers}
                           onArtistChange={handleArtistChange}
-                          onArtistModeChange={handleArtistModeChange}
                           onManagePresets={() => setShowArtistPresetManager(true)}
                           onOpenChange={(isOpen) => setEditingCell(isOpen ? { itemId: item.id, col: "artist" } : (c) => (c?.itemId === item.id && c.col === "artist" ? null : c))}
                         />

@@ -76,7 +76,6 @@ export default function Drawer({
   canNext,
   users,
   onArtistChange,
-  onArtistModeChange,
   onManageArtistPresets,
 }: {
   item: ProjectItem;
@@ -90,9 +89,8 @@ export default function Drawer({
   canNext: boolean;
   users: SlackUser[];
   onArtistChange: (item: ProjectItem, artistId: string) => void;
-  /** Toggle Mention/React (Artis Preset, poin revisi) — sama persis kayak Tab Table. */
-  onArtistModeChange: (item: ProjectItem, mode: "mention" | "react" | "both" | "none") => void;
-  /** Buka modal Kelola Preset Artis dari dalam ArtistPicker (poin revisi: "1 sesi"). */
+  /** Buka modal Kelola Preset Artis dari dalam ArtistPicker. Toggle Mention/React GLOBAL per
+   * artis (poin revisi) diatur DI modal itu, bukan di sini lagi. */
   onManageArtistPresets: () => void;
 }) {
   const isMaximized = useIsWindowMaximized();
@@ -283,9 +281,9 @@ export default function Drawer({
             <div className="label" style={{ marginBottom: 4 }}>
               Artis
             </div>
-            {/* Artis Picker (poin revisi) — satu popover buat pilih artis, toggle Mention/React,
-                DAN akses Kelola Preset Artis, sama persis kayak Tab Table. */}
-            <ArtistPicker item={item} users={users} onArtistChange={onArtistChange} onArtistModeChange={onArtistModeChange} onManagePresets={onManageArtistPresets} />
+            {/* Artis Picker (poin revisi) — satu popover buat pilih artis + akses Kelola Preset
+                Artis, sama persis kayak Tab Table. */}
+            <ArtistPicker item={item} users={users} onArtistChange={onArtistChange} onManagePresets={onManageArtistPresets} />
           </div>
 
           <div style={{ flex: 1, overflow: "auto", padding: 16 }} className="scrollbar-thin">

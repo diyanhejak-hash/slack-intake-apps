@@ -194,14 +194,26 @@ async function test(name, fn) {
       assert.equal(row.nickname, "Budi");
       assert.equal(row.code_name, "artis-budi");
       assert.ok(row.image_path && fs.existsSync(row.image_path));
+      // mode (poin revisi) -- gak dikasih pas insert -> default 'mention'.
+      assert.equal(row.mode, "mention");
+      assert.equal(projects.getArtistPresetByMember("U-ARTIST-1").id, id);
       const storedImagePath = row.image_path;
 
-      // Update (id dikasih): ganti nickname, gak upload ulang PNG -> image_path lama dipertahankan.
-      const updatedId = projects.saveArtistPreset({ id, memberId: "U-ARTIST-1", nickname: "Budi Santoso", codeName: "artis-budi" });
+      // Update (id dikasih): ganti nickname + mode, gak upload ulang PNG -> image_path lama
+      // dipertahankan, code_name juga gak disentuh -> tetap kayak semula (bukan ke-null-in).
+      const updatedId = projects.saveArtistPreset({ id, memberId: "U-ARTIST-1", nickname: "Budi Santoso", codeName: "artis-budi", mode: "both" });
       assert.equal(updatedId, id);
       row = projects.listArtistPresets().find((p) => p.id === id);
       assert.equal(row.nickname, "Budi Santoso");
       assert.equal(row.image_path, storedImagePath);
+      assert.equal(row.mode, "both");
+
+      // Update TANPA `mode` (undefined) -- nilai lama ("both") dipertahankan, bukan ke-reset.
+      projects.saveArtistPreset({ id, memberId: "U-ARTIST-1", nickname: "Budi Santoso", codeName: "artis-budi" });
+      assert.equal(projects.listArtistPresets().find((p) => p.id === id).mode, "both");
+
+      // Mode gak valid ditolak.
+      assert.throws(() => projects.saveArtistPreset({ id, memberId: "U-ARTIST-1", mode: "bukan-mode-valid" }), /Mode assign/);
 
       // Satu preset per member_id -- insert baru (gak dikasih id) buat member yang UDAH punya ditolak.
       assert.throws(() => projects.saveArtistPreset({ memberId: "U-ARTIST-1", nickname: "Dobel" }), /udah punya preset/);
@@ -209,6 +221,7 @@ async function test(name, fn) {
       projects.removeArtistPreset(id);
       assert.equal(projects.listArtistPresets().find((p) => p.id === id), undefined);
       assert.equal(fs.existsSync(storedImagePath), false);
+      assert.equal(projects.getArtistPresetByMember("U-ARTIST-1"), null);
     });
     await test("batch survives source removal, import, duplicate, deletion and resync", () => {
       const bp = projects.createProject({ name: "roundtrip", channelId: "CA", channelName: "audit" });
@@ -309,7 +322,7 @@ async function test(name, fn) {
       assert.ok(addedReactions.every((a) => a.channelId === "CA" && a.timestamp === "1234.0001"));
       assert.deepEqual(removedIds, ["R1", "R2"]);
     });
-    await test("quick-send suppresses @mention when Artis Preset mode is react-only", async () => {
+    await test("quick-send suppresses @mention when the assigned artist's preset mode is react-only", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       let sentArtistId = "unset";
@@ -317,10 +330,13 @@ async function test(name, fn) {
       const context = {
         activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
         projects: {
-          getProject: () => ({ channel_id: "CA", items: [{ id: "I", name: "item", replies: [], artist_id: "U1", artist_mode: "react" }] }),
+          getProject: () => ({ channel_id: "CA", items: [{ id: "I", name: "item", replies: [], artist_id: "U1" }] }),
           addLog: () => {},
           listItemReactions: () => [],
           removeItemReaction: () => {},
+          // Mode Mention/React sekarang GLOBAL per artis (artist_presets.mode, poin revisi) --
+          // bukan item.artist_mode lagi. send:quick lookup lewat ini.
+          getArtistPresetByMember: (memberId) => (memberId === "U1" ? { member_id: "U1", mode: "react" } : null),
         },
         currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
         slack: {
@@ -331,7 +347,7 @@ async function test(name, fn) {
       };
       vm.runInNewContext(quick, context);
       await handler({}, { projectId: "P", itemId: "I", scope: "artist" });
-      // artist_mode "react" -> item.artist_id tetap dipakai buat validasi "ada artis ditugaskan"
+      // preset.mode "react" -> item.artist_id tetap dipakai buat validasi "ada artis ditugaskan"
       // (gak nge-throw), tapi TIDAK diteruskan ke sendItem (gak ada @mention di-post) -- assign
       // "react" beneran diberitahu lewat reaction (test terpisah di atas), bukan mention.
       assert.equal(sentArtistId, null);

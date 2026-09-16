@@ -1,23 +1,25 @@
-// Artis Picker (poin revisi) — SATUKAN pilih-artis + toggle Mention/React + akses Kelola Preset
-// jadi 1 sesi (1 popover), ganti native <select> polos yang dipakai sebelumnya. Dipakai 2 tempat
-// (Tab Table MainTable.tsx, Tab Reply Drawer.tsx) — satu komponen shared biar perilaku/tampilan
-// konsisten, sama pola kayak QuickSendButton/ItemReactionBar.
+// Artis Picker (poin revisi) — ganti native <select> polos, popover custom buat pilih artis +
+// akses Kelola Preset. Dipakai 2 tempat (Tab Table MainTable.tsx, Tab Reply Drawer.tsx) — satu
+// komponen shared biar perilaku/tampilan konsisten, sama pola kayak QuickSendButton/
+// ItemReactionBar.
+//
+// Toggle Mention/React (poin revisi lanjutan) — TIDAK lagi di sini. Mode itu sekarang GLOBAL per
+// artis (disimpen di artist_presets.mode), diatur SEKALI di modal Kelola Preset Artis — bukan
+// per-item/per-row lagi. Picker ini murni buat pilih SIAPA yang di-assign.
 import { useEffect, useRef, useState } from "react";
-import { ChevronDown, AtSign, SmilePlus, Settings } from "lucide-react";
+import { ChevronDown, Settings } from "lucide-react";
 import type { ProjectItem, SlackUser } from "../global";
 
 export default function ArtistPicker({
   item,
   users,
   onArtistChange,
-  onArtistModeChange,
   onManagePresets,
   onOpenChange,
 }: {
   item: ProjectItem;
   users: SlackUser[];
   onArtistChange: (item: ProjectItem, artistId: string) => void;
-  onArtistModeChange: (item: ProjectItem, mode: "mention" | "react" | "both" | "none") => void;
   onManagePresets: () => void;
   /** Opsional — dipanggil pas popover buka/tutup, biar caller bisa nyembunyiin overlay lain
    * (misal QuickSendButton) yang numpuk di cell yang sama, konsisten sama pola "hideButton pas
@@ -44,16 +46,6 @@ export default function ArtistPicker({
   }, [open]);
 
   const current = users.find((u) => u.id === item.artist_id);
-  // Mode disimpen 1 string ('mention'/'react'/'both'/'none') tapi TAMPIL sebagai 2 toggle
-  // independen (poin revisi: "hanya 2 button, kalau mau keduanya tinggal aktifin keduanya").
-  const mentionOn = item.artist_mode === "mention" || item.artist_mode === "both";
-  const reactOn = item.artist_mode === "react" || item.artist_mode === "both";
-  function toggle(which: "mention" | "react") {
-    const nextMention = which === "mention" ? !mentionOn : mentionOn;
-    const nextReact = which === "react" ? !reactOn : reactOn;
-    const mode = nextMention && nextReact ? "both" : nextMention ? "mention" : nextReact ? "react" : "none";
-    onArtistModeChange(item, mode);
-  }
 
   return (
     <div ref={rootRef} style={{ position: "relative" }}>
@@ -86,32 +78,9 @@ export default function ArtistPicker({
               </button>
             ))}
           </div>
-          {/* Toggle Mention/React (poin revisi) — icon doang + tooltip, BUKAN teks. Independen
-              (bukan radio) — aktifin dua-duanya = mode "both". Cuma relevan kalau UDAH ada artis
-              di-assign. */}
-          {item.artist_id && (
-            <div style={{ display: "flex", gap: 4, padding: "6px 4px 2px", borderTop: "1px solid var(--border)", marginTop: 4 }}>
-              <button
-                className="icon-btn"
-                title={`Mention (@${current?.name || "artis"} di-post pas kirim) — ${mentionOn ? "aktif" : "nonaktif"}`}
-                onClick={() => toggle("mention")}
-                style={mentionOn ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
-              >
-                <AtSign size={14} />
-              </button>
-              <button
-                className="icon-btn"
-                title={`Reaction (antre code name preset, gak ada mention) — ${reactOn ? "aktif" : "nonaktif"}`}
-                onClick={() => toggle("react")}
-                style={reactOn ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
-              >
-                <SmilePlus size={14} />
-              </button>
-            </div>
-          )}
           <button
             className="btn"
-            style={{ width: "100%", justifyContent: "center", fontSize: 11, marginTop: 4, padding: "4px 0" }}
+            style={{ width: "100%", justifyContent: "center", fontSize: 11, marginTop: 4, padding: "4px 0", borderTop: "1px solid var(--border)", borderRadius: 0 }}
             onClick={() => { setOpen(false); onManagePresets(); }}
           >
             <Settings size={11} /> Kelola preset artis...
