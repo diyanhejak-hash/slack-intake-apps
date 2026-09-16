@@ -81,6 +81,10 @@ contextBridge.exposeInMainWorld("api", {
     remove: (id) => ipcRenderer.invoke("artistPreset:remove", id),
     pickImage: () => ipcRenderer.invoke("artistPreset:pickImage"),
   },
+  artistAssignMode: {
+    get: () => ipcRenderer.invoke("artistAssignMode:get"),
+    set: (mode) => ipcRenderer.invoke("artistAssignMode:set", mode),
+  },
   itemReaction: {
     list: (itemId) => ipcRenderer.invoke("itemReaction:list", itemId),
     add: (itemId, payload) => ipcRenderer.invoke("itemReaction:add", itemId, payload),

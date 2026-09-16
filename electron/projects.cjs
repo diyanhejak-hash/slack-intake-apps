@@ -791,16 +791,11 @@ function listArtistPresets() {
   return db.prepare(`SELECT * FROM artist_presets`).all();
 }
 
-const ARTIST_MODES = ["mention", "react", "both", "none"];
-
 // Upsert (bukan add-only) — satu preset per member_id, wajar untuk EDIT ulang nickname/code
-// name/PNG/mode-nya. `id` dikasih = update baris yang ada; gak dikasih = insert baru (member_id
-// WAJIB belum punya preset). `sourcePath` opsional — gak diisi = PNG lama (kalau ada)
-// dipertahankan. `mode` opsional — gak diisi = 'mention' (insert) atau nilai lama dipertahankan
-// (update, misal caller cuma mau ganti nickname doang, gak nyentuh mode).
-function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath, mode }) {
+// name/PNG-nya. `id` dikasih = update baris yang ada; gak dikasih = insert baru (member_id WAJIB
+// belum punya preset). `sourcePath` opsional — gak diisi = PNG lama (kalau ada) dipertahankan.
+function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath }) {
   if (!memberId) throw new Error("Member Slack wajib dipilih.");
-  if (mode !== undefined && !ARTIST_MODES.includes(mode)) throw new Error("Mode assign gak valid.");
   const cleanCodeName = codeName ? String(codeName).trim().toLowerCase().replace(/[^a-z0-9_+-]/g, "") : null;
   const cleanNickname = nickname ? String(nickname).trim() : null;
   const existing = id ? db.prepare(`SELECT * FROM artist_presets WHERE id = ?`).get(id) : null;
@@ -812,15 +807,14 @@ function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath, mode }
     imagePath = staged.storedPath;
   }
   if (existing) {
-    const nextMode = mode !== undefined ? mode : existing.mode;
-    db.prepare(`UPDATE artist_presets SET member_id=?, nickname=?, code_name=?, image_path=?, mode=? WHERE id=?`).run(memberId, cleanNickname, cleanCodeName, imagePath, nextMode, id);
+    db.prepare(`UPDATE artist_presets SET member_id=?, nickname=?, code_name=?, image_path=? WHERE id=?`).run(memberId, cleanNickname, cleanCodeName, imagePath, id);
     return id;
   }
   if (db.prepare(`SELECT 1 FROM artist_presets WHERE member_id = ?`).get(memberId)) {
     throw new Error("Member ini udah punya preset artis.");
   }
   const newId = uuid();
-  db.prepare(`INSERT INTO artist_presets (id, member_id, nickname, code_name, image_path, mode) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, memberId, cleanNickname, cleanCodeName, imagePath, mode || "mention");
+  db.prepare(`INSERT INTO artist_presets (id, member_id, nickname, code_name, image_path) VALUES (?, ?, ?, ?, ?)`).run(newId, memberId, cleanNickname, cleanCodeName, imagePath);
   return newId;
 }
 
@@ -830,8 +824,18 @@ function removeArtistPreset(id) {
   db.prepare(`DELETE FROM artist_presets WHERE id = ?`).run(id);
 }
 
-function getArtistPresetByMember(memberId) {
-  return memberId ? db.prepare(`SELECT * FROM artist_presets WHERE member_id = ?`).get(memberId) || null : null;
+const ARTIST_ASSIGN_MODES = ["mention", "react", "both", "none"];
+
+// Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis (bukan per-artis/per-item
+// lagi). Singleton 1 baris di artist_assign_mode (id selalu 1, di-seed 'mention' pas migrasi).
+function getArtistAssignMode() {
+  return db.prepare(`SELECT mode FROM artist_assign_mode WHERE id = 1`).get()?.mode || "mention";
+}
+
+function setArtistAssignMode(mode) {
+  if (!ARTIST_ASSIGN_MODES.includes(mode)) throw new Error("Mode assign gak valid.");
+  db.prepare(`UPDATE artist_assign_mode SET mode = ? WHERE id = 1`).run(mode);
+  return mode;
 }
 
 // ---------- Reaction (poin revisi) ----------
@@ -1154,7 +1158,8 @@ module.exports = {
   listArtistPresets,
   saveArtistPreset,
   removeArtistPreset,
-  getArtistPresetByMember,
+  getArtistAssignMode,
+  setArtistAssignMode,
   listItemReactions,
   addItemReaction,
   addReactionToAllItems,

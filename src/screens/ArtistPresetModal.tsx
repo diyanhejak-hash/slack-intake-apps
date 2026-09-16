@@ -1,48 +1,58 @@
 // Modal "Preset Artis" (poin revisi) — SATU modal, 2 section collapsible, gak ada UI/modal
-// terpisah lain buat setting artis (ArtistPicker cuma buat PILIH artis, gak ada pengaturan lagi
-// di situ):
+// terpisah lain buat setting artis:
 //   1. Info Artis — nickname/code_name/PNG per Slack member (upsert per baris).
-//   2. Mode Assign — toggle Mention/React GLOBAL per artis (bukan per-item/per-row lagi). Semua
-//      item yang di-assign ke artis ini ikut mode yang sama, diatur SEKALI di sini.
+//   2. Dropdown Artis — pilih/bikin GRUP (dulu modal "Dropdown Artis" terpisah, sekarang jadi
+//      section di sini) + toggle Mention/React. Toggle ini GLOBAL buat SEMUA artis (BUKAN
+//      per-artis lagi, koreksi dari percobaan sebelumnya) — satu switch, berlaku ke semua
+//      assignment di seluruh app.
 import { useEffect, useState } from "react";
-import { X, Upload, Trash2, ChevronDown, ChevronRight, AtSign, SmilePlus } from "lucide-react";
-import type { ArtistPreset, SlackUser } from "../global";
+import { X, Upload, Trash2, ChevronDown, ChevronRight, AtSign, SmilePlus, CheckSquare, Square, Plus } from "lucide-react";
+import type { ArtistAssignMode, ArtistGroup, ArtistPreset, SlackUser } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
 
-export default function ArtistPresetModal({ onClose }: { onClose: () => void }) {
-  const [users, setUsers] = useState<SlackUser[]>([]);
+export default function ArtistPresetModal({
+  users,
+  groups,
+  activeGroupId,
+  onSelectGroup,
+  onGroupsChanged,
+  onClose,
+}: {
+  users: SlackUser[];
+  groups: ArtistGroup[];
+  activeGroupId: string;
+  onSelectGroup: (id: string) => void;
+  onGroupsChanged: (groups: ArtistGroup[]) => void;
+  onClose: () => void;
+}) {
   const [presets, setPresets] = useState<ArtistPreset[]>([]);
+  const [assignMode, setAssignMode] = useState<ArtistAssignMode>("mention");
   const [infoOpen, setInfoOpen] = useState(true);
-  const [modeOpen, setModeOpen] = useState(true);
+  const [dropdownOpen, setDropdownOpen] = useState(true);
 
   // refreshEmojiPresetCache() JUGA di-panggil di sini (bukan cuma EmojiPresetModal) — cache
   // custom-emoji-name -> PNG dipakai bareng buat nampilin chip reaction (ReactionChip.tsx), dan
   // code_name artis lewat jalur yang SAMA (lihat emojiPresetStore.ts).
-  function refresh() {
+  function refreshPresets() {
     window.api.artistPreset.list().then(setPresets);
     refreshEmojiPresetCache();
   }
   useEffect(() => {
-    window.api.slack.listUsers().then(setUsers);
-    refresh();
+    refreshPresets();
+    window.api.artistAssignMode.get().then(setAssignMode);
   }, []);
 
   const presetByMember = new Map(presets.map((p) => [p.member_id, p]));
 
-  // Toggle mode langsung SIMPAN (gak nunggu tombol Simpan terpisah, beda dari Section 1) — pakai
-  // nickname/code_name/image YANG UDAH TERSIMPAN (dari preset, bukan draft lokal Section 1 yang
-  // mungkin belum di-Simpan), biar toggle mode gak nimpa draft nickname yang lagi diketik user.
-  async function setMode(user: SlackUser, mode: "mention" | "react" | "both" | "none") {
-    const preset = presetByMember.get(user.id);
-    await window.api.artistPreset.save({
-      id: preset?.id,
-      memberId: user.id,
-      nickname: preset?.nickname || undefined,
-      codeName: preset?.code_name || undefined,
-      mode,
-    });
-    refresh();
+  async function toggleAssignMode(which: "mention" | "react") {
+    const mentionOn = assignMode === "mention" || assignMode === "both";
+    const reactOn = assignMode === "react" || assignMode === "both";
+    const nextMention = which === "mention" ? !mentionOn : mentionOn;
+    const nextReact = which === "react" ? !reactOn : reactOn;
+    const next = nextMention && nextReact ? "both" : nextMention ? "mention" : nextReact ? "react" : "none";
+    setAssignMode(next);
+    await window.api.artistAssignMode.set(next);
   }
 
   return (
@@ -62,7 +72,7 @@ export default function ArtistPresetModal({ onClose }: { onClose: () => void }) 
         <div style={{ flex: 1, overflow: "auto" }} className="scrollbar-thin">
           {users.length === 0 && <p className="caption">Belum ada member (login dulu, atau workspace kosong).</p>}
 
-          <SectionHeader title="Info Artis — nickname, code name, PNG" open={infoOpen} onToggle={() => setInfoOpen((v) => !v)} />
+          <SectionHeader title="1. Info Artis — nickname, code name, PNG" open={infoOpen} onToggle={() => setInfoOpen((v) => !v)} />
           {infoOpen && (
             <>
               <p className="caption" style={{ margin: "0 0 8px" }}>
@@ -71,22 +81,40 @@ export default function ArtistPresetModal({ onClose }: { onClose: () => void }) 
                 tujuan. PNG cuma preview lokal, gak disinkron ke Slack.
               </p>
               {users.map((u) => (
-                <ArtistInfoRow key={u.id} user={u} preset={presetByMember.get(u.id) || null} onSaved={refresh} />
+                <ArtistInfoRow key={u.id} user={u} preset={presetByMember.get(u.id) || null} onSaved={refreshPresets} />
               ))}
             </>
           )}
 
-          <SectionHeader title="Mode Assign — Mention / React" open={modeOpen} onToggle={() => setModeOpen((v) => !v)} style={{ marginTop: 14 }} />
-          {modeOpen && (
+          <SectionHeader title="2. Dropdown Artis — mode assign & grup" open={dropdownOpen} onToggle={() => setDropdownOpen((v) => !v)} style={{ marginTop: 14 }} />
+          {dropdownOpen && (
             <>
+              <div className="label" style={{ marginBottom: 4 }}>2a. Mode assign (GLOBAL, berlaku ke SEMUA artis)</div>
               <p className="caption" style={{ margin: "0 0 8px" }}>
-                Berlaku GLOBAL per artis (bukan per item) — semua item yang di-assign ke artis ini
-                ikut mode yang sama. Default Mention aktif. Aktifin dua-duanya buat mention +
-                reaction bareng.
+                Bukan per-artis — satu switch ini berlaku ke semua assignment di seluruh app.
+                Default Mention aktif. Aktifin dua-duanya buat mention + reaction bareng.
               </p>
-              {users.map((u) => (
-                <ArtistModeRow key={u.id} user={u} mode={presetByMember.get(u.id)?.mode || "mention"} onChange={(mode) => setMode(u, mode)} />
-              ))}
+              <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
+                <button
+                  className="icon-btn"
+                  title={`Mention (@artis di-post pas kirim) — ${["mention", "both"].includes(assignMode) ? "aktif" : "nonaktif"}`}
+                  onClick={() => toggleAssignMode("mention")}
+                  style={["mention", "both"].includes(assignMode) ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
+                >
+                  <AtSign size={14} />
+                </button>
+                <button
+                  className="icon-btn"
+                  title={`Reaction (antre code name artis, gak ada mention) — ${["react", "both"].includes(assignMode) ? "aktif" : "nonaktif"}`}
+                  onClick={() => toggleAssignMode("react")}
+                  style={["react", "both"].includes(assignMode) ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
+                >
+                  <SmilePlus size={14} />
+                </button>
+              </div>
+
+              <div className="label" style={{ marginBottom: 4 }}>Grup — filter dropdown Artis</div>
+              <ArtistGroupSection users={users} groups={groups} activeGroupId={activeGroupId} onSelectGroup={onSelectGroup} onGroupsChanged={onGroupsChanged} />
             </>
           )}
         </div>
@@ -126,7 +154,7 @@ function ArtistInfoRow({ user, preset, onSaved }: { user: SlackUser; preset: Art
   async function save() {
     setBusy(true);
     try {
-      const id = await window.api.artistPreset.save({
+      await window.api.artistPreset.save({
         id: preset?.id,
         memberId: user.id,
         nickname: nickname.trim() || undefined,
@@ -135,7 +163,6 @@ function ArtistInfoRow({ user, preset, onSaved }: { user: SlackUser; preset: Art
       });
       setPickedPath(null);
       onSaved();
-      return id;
     } catch (err) {
       alert(err instanceof Error ? err.message : "Gagal nyimpen preset artis.");
     } finally {
@@ -185,35 +212,100 @@ function ArtistInfoRow({ user, preset, onSaved }: { user: SlackUser; preset: Art
   );
 }
 
-function ArtistModeRow({ user, mode, onChange }: { user: SlackUser; mode: "mention" | "react" | "both" | "none"; onChange: (mode: "mention" | "react" | "both" | "none") => void }) {
-  const mentionOn = mode === "mention" || mode === "both";
-  const reactOn = mode === "react" || mode === "both";
-  function toggle(which: "mention" | "react") {
-    const nextMention = which === "mention" ? !mentionOn : mentionOn;
-    const nextReact = which === "react" ? !reactOn : reactOn;
-    onChange(nextMention && nextReact ? "both" : nextMention ? "mention" : nextReact ? "react" : "none");
+// Grup filter dropdown Artis (poin revisi) — dulu modal "Dropdown Artis" terpisah, sekarang
+// section di sini. Klik grup = pilih/highlight doang (GAK auto-nutup modal lagi — beda dari
+// dulu — biar user bisa lanjut kerjain section lain di modal yang sama tanpa buka ulang).
+function ArtistGroupSection({
+  users,
+  groups,
+  activeGroupId,
+  onSelectGroup,
+  onGroupsChanged,
+}: {
+  users: SlackUser[];
+  groups: ArtistGroup[];
+  activeGroupId: string;
+  onSelectGroup: (id: string) => void;
+  onGroupsChanged: (groups: ArtistGroup[]) => void;
+}) {
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
+  const [touched, setTouched] = useState(false);
+
+  async function save() {
+    if (!name.trim() || !memberIds.size) {
+      setTouched(true);
+      return;
+    }
+    await window.api.artistGroup.save({ name: name.trim(), memberIds: Array.from(memberIds) });
+    const updated = await window.api.artistGroup.list();
+    onGroupsChanged(updated);
+    setName("");
+    setMemberIds(new Set());
+    setTouched(false);
+    setCreating(false);
   }
+
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0", borderBottom: "1px solid var(--border)" }}>
-      <div className="caption" style={{ width: 140, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.name}>
-        {user.name}
-      </div>
-      <button
-        className="icon-btn"
-        title={`Mention (@${user.name} di-post pas kirim) — ${mentionOn ? "aktif" : "nonaktif"}`}
-        onClick={() => toggle("mention")}
-        style={mentionOn ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
-      >
-        <AtSign size={14} />
+    <div>
+      <button className="btn" style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }} onClick={() => onSelectGroup("")}>
+        {activeGroupId === "" ? <CheckSquare size={14} /> : <Square size={14} />} Semua Artis ({users.length})
       </button>
-      <button
-        className="icon-btn"
-        title={`Reaction (antre code name preset, gak ada mention) — ${reactOn ? "aktif" : "nonaktif"}`}
-        onClick={() => toggle("react")}
-        style={reactOn ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
-      >
-        <SmilePlus size={14} />
-      </button>
+      {groups.map((g) => (
+        <button key={g.id} className="btn" style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }} onClick={() => onSelectGroup(g.id)}>
+          {activeGroupId === g.id ? <CheckSquare size={14} /> : <Square size={14} />} {g.name} ({g.memberIds.length})
+        </button>
+      ))}
+
+      {creating ? (
+        <div className="card" style={{ padding: 10, marginTop: 8 }}>
+          <input
+            placeholder="Nama grup, mis. Tim BG"
+            value={name}
+            onChange={(e) => setName(e.target.value)}
+            className={touched && !name.trim() ? "input-error" : ""}
+            style={{ width: "100%", marginBottom: 8 }}
+          />
+          <div
+            style={{
+              maxHeight: 180,
+              overflow: "auto",
+              ...(touched && !memberIds.size ? { outline: "2px solid var(--danger)", borderRadius: "var(--radius)" } : {}),
+            }}
+            className="scrollbar-thin"
+          >
+            {users.map((u) => (
+              <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
+                <input
+                  type="checkbox"
+                  checked={memberIds.has(u.id)}
+                  onChange={(e) => {
+                    setMemberIds((prev) => {
+                      const next = new Set(prev);
+                      e.target.checked ? next.add(u.id) : next.delete(u.id);
+                      return next;
+                    });
+                  }}
+                />
+                {u.name}
+              </label>
+            ))}
+          </div>
+          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+            <button className="btn btn-primary" style={{ flex: 1, justifyContent: "center" }} onClick={save}>
+              Simpan Grup
+            </button>
+            <button className="btn" onClick={() => setCreating(false)}>
+              Batal
+            </button>
+          </div>
+        </div>
+      ) : (
+        <button className="btn" style={{ width: "100%", justifyContent: "center", marginTop: 4 }} onClick={() => setCreating(true)}>
+          <Plus size={13} /> Grup Baru
+        </button>
+      )}
     </div>
   );
 }

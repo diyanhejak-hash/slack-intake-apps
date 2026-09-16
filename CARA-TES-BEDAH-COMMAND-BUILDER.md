@@ -1041,3 +1041,48 @@ Checklist manual (GANTI checklist §31/32 yang nyebut toggle per-row — itu uda
 - [ ] **Ganti mode gak nimpa nickname draft**: di section Info Artis, ketik nickname baru TAPI
   BELUM klik Simpan → pindah ke section Mode Assign, toggle icon buat artis yang SAMA → balik ke
   Info Artis → nickname draft yang belum di-Simpan tadi TETAP ada di input (gak ke-reset/ketimpa).
+
+## 34. Koreksi §33: mode Mention/React jadi 1 switch GLOBAL, "Dropdown Artis" (grup) gabung ke modal (2026-09-16) ✅ (siap dites)
+
+**Koreksi lagi** — §33 masih nyimpen mode per ARTIS (`artist_presets.mode`). User klarifikasi
+ULANG: mode itu HARUSNYA satu switch GLOBAL buat SEMUA artis sekaligus, bukan per-artis. DAN,
+modal terpisah "Dropdown Artis" (pilih/bikin GRUP filter) digabung juga ke modal Preset Artis.
+
+- **DB**: `artist_presets.mode` (kolom §33) dibiarin nganggur, GANTI tabel baru
+  `artist_assign_mode` — singleton 1 baris (`id=1`), `mode` default `'mention'`.
+  `projects.getArtistAssignMode()`/`setArtistAssignMode(mode)` — gak butuh `memberId` sama
+  sekali, murni 1 nilai global.
+- **Modal Preset Artis** sekarang PERSIS 2 section sesuai permintaan:
+  1. **Info Artis** — nickname/code_name/PNG (sama kayak §33, gak berubah).
+  2. **Dropdown Artis** — gabungan modal "Dropdown Artis" LAMA (pilih grup filter "Semua Artis"/
+     grup custom + "+ Grup Baru", dulu modal terpisah `ArtistGroupModal`) DAN toggle Mention/
+     React (2a) yang sekarang cuma 2 icon doang, berlaku GLOBAL (bukan per-artis, per-item lagi).
+     Klik grup di section ini SEKARANG GAK auto-nutup modal (beda dari modal lama) — biar bisa
+     lanjut kerjain section lain di sesi yang sama.
+- Trigger "Grup Artis" (MenuBar Settings + Sidebar icon) sekarang buka modal Preset Artis yang
+  sama (bukan modal grup terpisah lagi).
+- `queueArtistReaction` (chip react di Item) baca `artistAssignMode` GLOBAL (state di MainTable.tsx,
+  di-refresh abis modal Preset Artis ditutup), bukan preset per-artis lagi.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `npm run check` (typecheck + 29 test
+regresi — CRUD & mention-suppression test disesuaikan LAGI ke model global — + smoke test +
+build) semua lulus.
+**BELUM**: smoke-test manual visual.
+
+Checklist manual (GANTI checklist §33 yang nyebut "Mode Assign per artis" — itu udah diganti):
+
+- [ ] **Restart app dulu**.
+- [ ] **Modal 2 section, bukan 3**: buka Preset Artis → cuma ada "1. Info Artis" dan "2. Dropdown
+  Artis" — TIDAK ADA section "Mode Assign" terpisah kayak §33 lagi.
+- [ ] **Toggle mode di section 2, cuma 2 icon TOTAL**: buka section "Dropdown Artis" → paling atas
+  ada 2 icon (@ dan senyum) — BUKAN satu per artis, cuma sepasang buat SEMUA artis.
+- [ ] **Grup ada di section yang sama**: di bawah toggle mode (section sama), ada daftar grup
+  ("Semua Artis (N)", grup custom) + "+ Grup Baru" — persis kayak modal "Dropdown Artis" yang
+  lama, cuma sekarang nempel di sini.
+- [ ] **Klik grup gak nutup modal**: klik salah satu grup di section ini → grup ke-highlight
+  (checkbox keisi), TAPI modal Preset Artis TETAP terbuka (beda dari perilaku modal lama yang
+  auto-nutup).
+- [ ] **"Grup Artis" (menu Settings/Sidebar) buka modal yang sama**: klik situ → yang kebuka
+  modal Preset Artis (2 section), BUKAN modal "Dropdown Artis" kecil terpisah lagi.
+- [ ] **Mode benar-benar global**: toggle React aktif → assign artis MANA PUN ke item mana pun →
+  semuanya ikut react-only (gak ada mention), TIDAK ADA artis yang "kecualian".

@@ -169,10 +169,12 @@ export interface ArtistPreset {
   code_name: string | null;
   /** PNG lokal — preview doang (chip/manajemen preset), gak disinkronkan ke Slack. */
   image_path: string | null;
-  /** Mode assign GLOBAL (poin revisi, bukan per-item lagi) — 2 toggle independen (Mention/React).
-   * 'mention' (default) | 'react' | 'both' (dua-duanya aktif) | 'none' (dua-duanya nonaktif). */
-  mode: "mention" | "react" | "both" | "none";
 }
+
+/** Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis (bukan per-artis/per-item
+ * lagi). 2 toggle independen: 'mention' (default) | 'react' | 'both' (dua-duanya aktif) | 'none'
+ * (dua-duanya nonaktif). */
+export type ArtistAssignMode = "mention" | "react" | "both" | "none";
 
 declare global {
   interface Window {
@@ -253,15 +255,19 @@ declare global {
         /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
         pickImage: () => Promise<string | null>;
       };
-      /** Artis Preset (poin revisi) — nickname/code_name/PNG/mode GLOBAL per Slack member. */
+      /** Artis Preset (poin revisi) — nickname/code_name/PNG per Slack member. */
       artistPreset: {
         list: () => Promise<ArtistPreset[]>;
-        /** `id` dikasih = update; gak dikasih = insert baru (member_id wajib belum punya preset).
-         * `mode` opsional — gak diisi = 'mention' (insert) atau nilai lama dipertahankan (update). */
-        save: (payload: { id?: string; memberId: string; nickname?: string; codeName?: string; sourcePath?: string; mode?: "mention" | "react" | "both" | "none" }) => Promise<string>;
+        /** `id` dikasih = update; gak dikasih = insert baru (member_id wajib belum punya preset). */
+        save: (payload: { id?: string; memberId: string; nickname?: string; codeName?: string; sourcePath?: string }) => Promise<string>;
         remove: (id: string) => Promise<void>;
         /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
         pickImage: () => Promise<string | null>;
+      };
+      /** Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis, singleton. */
+      artistAssignMode: {
+        get: () => Promise<ArtistAssignMode>;
+        set: (mode: ArtistAssignMode) => Promise<ArtistAssignMode>;
       };
       /** Reaction PENDING per item (poin revisi) — nunggu dikirim bareng lewat send.start. */
       itemReaction: {

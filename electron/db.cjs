@@ -93,16 +93,22 @@ CREATE TABLE IF NOT EXISTS artist_groups (
 -- emoji_presets.slack_shortcode pas reactions.add, DIASUMSIKAN custom emoji itu udah ada beneran
 -- di workspace Slack tujuan (gak divalidasi app ini). image_path = PNG lokal, preview doang di
 -- app kita (chip/manajemen preset) — sama sekali gak disinkronkan ke emoji asli di Slack.
--- mode (poin revisi) — Mention/React GLOBAL per artis (bukan per-item/per-row lagi), 'mention' |
--- 'react' | 'both' | 'none'. Semua item yang di-assign ke artis ini ngikut mode yang sama.
 CREATE TABLE IF NOT EXISTS artist_presets (
   id TEXT PRIMARY KEY,
   member_id TEXT NOT NULL UNIQUE,
   nickname TEXT,
   code_name TEXT,
-  image_path TEXT,
+  image_path TEXT
+);
+
+-- Mode assign Mention/React (poin revisi — GLOBAL buat SEMUA artis, bukan per-artis/per-item
+-- lagi, koreksi dari percobaan sebelumnya). Singleton 1 baris (id selalu 1) — 'mention' | 'react'
+-- | 'both' | 'none'.
+CREATE TABLE IF NOT EXISTS artist_assign_mode (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
   mode TEXT NOT NULL DEFAULT 'mention'
 );
+INSERT OR IGNORE INTO artist_assign_mode (id, mode) VALUES (1, 'mention');
 
 CREATE TABLE IF NOT EXISTS threads (
   item_name TEXT NOT NULL,
@@ -277,9 +283,9 @@ if (!db.prepare('PRAGMA table_info(batch_files)').all().some((c) => c.name === '
 
 if (!db.prepare('PRAGMA table_info(send_attempts)').all().some((c) => c.name === 'pending_phase')) db.exec('ALTER TABLE send_attempts ADD COLUMN pending_phase TEXT');
 
-// Artis Preset (poin revisi) — mode Mention/React GLOBAL per artis (BUKAN per-item lagi, revisi
-// dari percobaan sebelumnya yang sempat nyimpen mode di items.artist_mode — kolom itu udah gak
-// dipakai lagi, sengaja dibiarin nganggur di DB lama daripada migrasi DROP COLUMN yang beresiko).
-if (!db.prepare('PRAGMA table_info(artist_presets)').all().some((c) => c.name === 'mode')) db.exec(`ALTER TABLE artist_presets ADD COLUMN mode TEXT NOT NULL DEFAULT 'mention'`);
+// Mode assign Mention/React (poin revisi) — udah 2x pindah tempat sepanjang development:
+// items.artist_mode (per-item) -> artist_presets.mode (per-artis) -> artist_assign_mode (GLOBAL,
+// final). Kolom/tabel lama dibiarin nganggur di DB dev yang sempat kena migrasi itu (DROP COLUMN
+// beresiko, gak worth-it buat kolom mati doang) — TIDAK dipakai kode manapun lagi.
 
 module.exports = { db, dataDir };

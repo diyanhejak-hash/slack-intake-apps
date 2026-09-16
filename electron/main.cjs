@@ -385,12 +385,15 @@ handle("emojiPreset:pickImage", async () => {
 
 // ---------- Artis Preset (poin revisi) — global, bukan per-project ----------
 handle("artistPreset:list", () => projects.listArtistPresets());
-handle("artistPreset:save", (_e, { id, memberId, nickname, codeName, sourcePath, mode }) => projects.saveArtistPreset({ id, memberId, nickname, codeName, sourcePath, mode }));
+handle("artistPreset:save", (_e, { id, memberId, nickname, codeName, sourcePath }) => projects.saveArtistPreset({ id, memberId, nickname, codeName, sourcePath }));
 handle("artistPreset:remove", (_e, id) => projects.removeArtistPreset(id));
 handle("artistPreset:pickImage", async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: [{ name: "Gambar", extensions: ["png"] }] });
   return canceled ? null : filePaths[0];
 });
+// Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis, singleton (bukan per-preset).
+handle("artistAssignMode:get", () => projects.getArtistAssignMode());
+handle("artistAssignMode:set", (_e, mode) => projects.setArtistAssignMode(mode));
 
 // ---------- Reaction (poin revisi) ----------
 // PENDING per item — dikirim bareng lewat send:start (lihat loop-nya di atas), bukan langsung.
@@ -520,14 +523,11 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
           if (post) posts.push(post);
         }
       }
-      // Artis Preset (poin revisi) — mode Mention/React sekarang GLOBAL per artis (lookup lewat
-      // preset-nya, bukan item.artist_mode lagi). Mode "react" (gak "mention"/"both") berarti
-      // JANGAN post @mention, walau scope minta artis (reaction pending-nya sendiri udah di-antre
-      // pas artis di-assign, ke-flush lewat loop reaction di bawah — bukan di sini).
-      if (artistId) {
-        const preset = projects.getArtistPresetByMember(artistId);
-        if (!["mention", "both"].includes(preset?.mode || "mention")) artistId = null;
-      }
+      // Artis Preset (poin revisi) — mode Mention/React GLOBAL buat SEMUA artis (bukan per-artis/
+      // per-item lagi). Mode "react" (gak "mention"/"both") berarti JANGAN post @mention, walau
+      // scope minta artis (reaction pending-nya sendiri udah di-antre pas artis di-assign,
+      // ke-flush lewat loop reaction di bawah — bukan di sini).
+      if (artistId && !["mention", "both"].includes(projects.getArtistAssignMode())) artistId = null;
 
       await confirmLegacyThread(projectId, item, targetChannelId);
       const { threadTs, isNew, permalink } = await slack.sendItem({
@@ -612,14 +612,10 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
     posts = post ? [post] : [];
   }
   // scope === "item" (default): artistId null, posts kosong.
-  // Artis Preset (poin revisi) — mode Mention/React GLOBAL per artis, lookup lewat preset-nya
-  // (bukan item.artist_mode). Mode "react" berarti JANGAN post @mention, walau scope-nya "artist"
-  // (reaction pending-nya sendiri udah di-antre pas artis di-assign, ke-flush lewat loop reaction
-  // di bawah — bukan di sini).
-  if (artistId) {
-    const preset = projects.getArtistPresetByMember(artistId);
-    if (!["mention", "both"].includes(preset?.mode || "mention")) artistId = null;
-  }
+  // Artis Preset (poin revisi) — mode Mention/React GLOBAL buat SEMUA artis. Mode "react" berarti
+  // JANGAN post @mention, walau scope-nya "artist" (reaction pending-nya sendiri udah di-antre pas
+  // artis di-assign, ke-flush lewat loop reaction di bawah — bukan di sini).
+  if (artistId && !["mention", "both"].includes(projects.getArtistAssignMode())) artistId = null;
 
   await confirmLegacyThread(projectId, item, targetChannelId);
   const { threadTs, isNew, permalink } = await slack.sendItem({ token, channelId: targetChannelId, itemName: item.name, threadKey: threadKey(projectId, item.id), artistId, posts });

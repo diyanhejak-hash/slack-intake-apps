@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Send, Square, CheckSquare, X, Loader2, MessageSquare, Eye, Plus, ClipboardPaste, Users, ExternalLink, Link as LinkIcon, LayoutTemplate } from "lucide-react";
-import type { ArtistGroup, ArtistPreset, HyperlinkPreset, Project, ProjectItem, SendResult, SlackChannel, SlackUser, Template } from "../global";
+import { ArrowLeft, Send, Square, CheckSquare, X, Loader2, MessageSquare, Eye, Plus, ClipboardPaste, ExternalLink, Link as LinkIcon, LayoutTemplate } from "lucide-react";
+import type { ArtistAssignMode, ArtistGroup, ArtistPreset, HyperlinkPreset, Project, ProjectItem, SendResult, SlackChannel, SlackUser, Template } from "../global";
 const Drawer = lazy(() => import("./Drawer"));
 import BatchFileModal from "./BatchFileModal";
 import MessageLogPanel from "./MessageLogPanel";
@@ -31,7 +31,9 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   const [artistPresets, setArtistPresets] = useState<ArtistPreset[]>([]);
   const [showArtistPresetManager, setShowArtistPresetManager] = useState(false);
   const [activeGroupId, setActiveGroupId] = useState<string>("");
-  const [showGroupEditor, setShowGroupEditor] = useState(false);
+  // Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis, diatur di modal Kelola
+  // Preset Artis (section "Dropdown Artis"), bukan per-artis/per-item lagi.
+  const [artistAssignMode, setArtistAssignModeState] = useState<ArtistAssignMode>("mention");
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ index: number; total: number; itemName: string } | null>(null);
   const [results, setResults] = useState<SendResult[] | null>(null);
@@ -81,6 +83,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     window.api.slack.listUsers().then(setUsers);
     window.api.artistGroup.list().then(setGroups);
     window.api.artistPreset.list().then(setArtistPresets);
+    window.api.artistAssignMode.get().then(setArtistAssignModeState);
     // Cache preset custom emoji (poin revisi) — di-load sedini mungkin biar pas Tab Reply
     // dibuka, EmojiImageNode udah bisa langsung parse ":nama:" tersimpan jadi gambar (bukan
     // nunggu field-nya sendiri yang fetch).
@@ -140,7 +143,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
       if (e.defaultPrevented || document.querySelector('[aria-modal="true"]') ||
-        showGroupEditor || showGenerate || showWorkload || showHelp || showPreview || showBatchFile ||
+        showGenerate || showWorkload || showHelp || showPreview || showBatchFile ||
         showLog || showHyperlinkManager || showEmojiPresetManager || showArtistPresetManager || showSaveAs || showTemplateAll || openMenu || bulkPasteCol) return;
       const active = document.activeElement as HTMLElement | null;
       const tag = (active?.tagName || "").toLowerCase();
@@ -277,16 +280,17 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
     refresh();
   }
 
-  // Artis Preset (poin revisi) — mode Mention/React sekarang GLOBAL per artis (artist_presets.mode,
-  // diatur di modal Kelola Preset, BUKAN per-item lagi). Assign artis ke item ngecek mode preset-nya
-  // sendiri — kalau "react"/"both", JUGA nge-antre reaction pending pakai code_name preset itu
-  // (infrastruktur item_reactions yang udah ada, sama kayak Add React manual — chip-nya muncul di
-  // bawah input Item). Dedupe per item+shortcode udah ditangani addItemReaction sendiri.
+  // Artis Preset (poin revisi) — mode Mention/React GLOBAL buat SEMUA artis (artistAssignMode
+  // state, diatur di modal Kelola Preset section "Dropdown Artis" — BUKAN per-artis/per-item).
+  // Assign artis ke item ngecek mode global saat itu — kalau "react"/"both", JUGA nge-antre
+  // reaction pending pakai code_name preset artis itu (infrastruktur item_reactions yang udah
+  // ada, sama kayak Add React manual — chip-nya muncul di bawah input Item). Dedupe per
+  // item+shortcode udah ditangani addItemReaction sendiri.
   async function queueArtistReaction(itemId: string, artistId: string | null) {
-    if (!artistId) return;
-    const preset = presetByMember.get(artistId);
-    if (!preset?.code_name || !["react", "both"].includes(preset.mode)) return;
-    await window.api.itemReaction.add(itemId, { emojiType: "custom", emojiValue: preset.code_name, slackShortcode: preset.code_name });
+    if (!artistId || !["react", "both"].includes(artistAssignMode)) return;
+    const codeName = presetByMember.get(artistId)?.code_name;
+    if (!codeName) return;
+    await window.api.itemReaction.add(itemId, { emojiType: "custom", emojiValue: codeName, slackShortcode: codeName });
   }
 
   async function handleArtistChange(item: ProjectItem, artistId: string) {
@@ -486,7 +490,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
         onMergeSeparatorChange={setMergeSeparator}
         onToggleWorkload={() => setShowWorkload((v) => !v)}
         onToggleLog={() => setShowLog((v) => !v)}
-        onGroupEditor={() => setShowGroupEditor(true)}
+        onGroupEditor={() => setShowArtistPresetManager(true)}
         onHyperlinkManager={() => setShowHyperlinkManager(true)}
         onEmojiPresetManager={() => setShowEmojiPresetManager(true)}
         onArtistPresetManager={() => setShowArtistPresetManager(true)}
@@ -527,7 +531,7 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
           onGenerateItem={() => setShowGenerate(true)}
           onMerge={() => handleMerge(mergeSeparator)}
           canMerge={selected.size >= 2}
-          onGroupEditor={() => setShowGroupEditor(true)}
+          onGroupEditor={() => setShowArtistPresetManager(true)}
           onRemoveSelected={handleRemoveSelected}
           canRemove={selected.size > 0}
           onBatchFile={() => setShowBatchFile(true)}
@@ -807,17 +811,6 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
         />
       )}
 
-      {showGroupEditor && (
-        <ArtistGroupModal
-          users={users}
-          groups={groups}
-          activeGroupId={activeGroupId}
-          onSelectGroup={setActiveGroupId}
-          onClose={() => setShowGroupEditor(false)}
-          onSaved={(gs) => setGroups(gs)}
-        />
-      )}
-
       {showGenerate && (
         <GenerateItemModal
           onClose={() => setShowGenerate(false)}
@@ -911,9 +904,15 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
       {showEmojiPresetManager && <EmojiPresetModal onClose={() => setShowEmojiPresetManager(false)} />}
       {showArtistPresetManager && (
         <ArtistPresetModal
+          users={users}
+          groups={groups}
+          activeGroupId={activeGroupId}
+          onSelectGroup={setActiveGroupId}
+          onGroupsChanged={setGroups}
           onClose={() => {
             setShowArtistPresetManager(false);
             window.api.artistPreset.list().then(setArtistPresets);
+            window.api.artistAssignMode.get().then(setArtistAssignModeState);
           }}
         />
       )}
@@ -1271,116 +1270,3 @@ function HyperlinkManager({ onClose }: { onClose: () => void }) {
   );
 }
 
-// Gabungan "pilih filter dropdown artis" + "bikin grup baru", 1 modal (poin 1 — sebelumnya
-// filter-nya row terpisah di luar, sekarang jadi bagian dari modal Grup Artis ini).
-function ArtistGroupModal({
-  users,
-  groups,
-  activeGroupId,
-  onSelectGroup,
-  onClose,
-  onSaved,
-}: {
-  users: SlackUser[];
-  groups: ArtistGroup[];
-  activeGroupId: string;
-  onSelectGroup: (id: string) => void;
-  onClose: () => void;
-  onSaved: (groups: ArtistGroup[]) => void;
-}) {
-  const [creating, setCreating] = useState(false);
-  const [name, setName] = useState("");
-  const [memberIds, setMemberIds] = useState<Set<string>>(new Set());
-  const [touched, setTouched] = useState(false);
-
-  async function save() {
-    if (!name.trim() || !memberIds.size) {
-      setTouched(true);
-      return;
-    }
-    await window.api.artistGroup.save({ name: name.trim(), memberIds: Array.from(memberIds) });
-    const updated = await window.api.artistGroup.list();
-    onSaved(updated);
-    setName("");
-    setMemberIds(new Set());
-    setTouched(false);
-    setCreating(false);
-  }
-
-  function pick(id: string) {
-    onSelectGroup(id);
-    onClose();
-  }
-
-  return (
-    <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div className="card" style={{ padding: 16, width: 380, background: "var(--surface)" }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
-          <Users size={16} className="muted" />
-          <h3 style={{ flex: 1 }}>Dropdown Artis</h3>
-          <button className="icon-btn" onClick={onClose}>
-            <X size={13} />
-          </button>
-        </div>
-
-        <button className="btn" style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }} onClick={() => pick("")}>
-          {activeGroupId === "" ? <CheckSquare size={14} /> : <Square size={14} />} Semua Artis ({users.length})
-        </button>
-        {groups.map((g) => (
-          <button key={g.id} className="btn" style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }} onClick={() => pick(g.id)}>
-            {activeGroupId === g.id ? <CheckSquare size={14} /> : <Square size={14} />} {g.name} ({g.memberIds.length})
-          </button>
-        ))}
-
-        {creating ? (
-          <div className="card" style={{ padding: 10, marginTop: 8 }}>
-            <input
-              placeholder="Nama grup, mis. Tim BG"
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className={touched && !name.trim() ? "input-error" : ""}
-              style={{ width: "100%", marginBottom: 8 }}
-            />
-            <div
-              style={{
-                maxHeight: 180,
-                overflow: "auto",
-                ...(touched && !memberIds.size ? { outline: "2px solid var(--danger)", borderRadius: "var(--radius)" } : {}),
-              }}
-              className="scrollbar-thin"
-            >
-              {users.map((u) => (
-                <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
-                  <input
-                    type="checkbox"
-                    checked={memberIds.has(u.id)}
-                    onChange={(e) => {
-                      setMemberIds((prev) => {
-                        const next = new Set(prev);
-                        e.target.checked ? next.add(u.id) : next.delete(u.id);
-                        return next;
-                      });
-                    }}
-                  />
-                  {u.name}
-                </label>
-              ))}
-            </div>
-            <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
-              <button className="btn btn-primary" style={{ flex: 1, justifyContent: "center" }} onClick={save}>
-                Simpan Grup
-              </button>
-              <button className="btn" onClick={() => setCreating(false)}>
-                Batal
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button className="btn" style={{ width: "100%", justifyContent: "center", marginTop: 4 }} onClick={() => setCreating(true)}>
-            <Plus size={13} /> Grup Baru
-          </button>
-        )}
-      </div>
-    </div>
-  );
-}
