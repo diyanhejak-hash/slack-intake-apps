@@ -540,10 +540,10 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
             <table>
               <thead>
                 <tr>
-                  <th onClick={() => toggleAll()} style={{ width: 26, maxWidth: 26, padding: "8px 4px", textAlign: "center" }}>
+                  <th onClick={() => toggleAll()} style={{ width: 16, maxWidth: 16, padding: "8px 1px", textAlign: "center" }}>
                     {selected.size === project.items.length && project.items.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
                   </th>
-                  <th style={{ width: 26, maxWidth: 26, padding: "8px 4px", textAlign: "center" }}>No</th>
+                  <th style={{ width: 16, maxWidth: 16, padding: "8px 1px", textAlign: "center" }}>No</th>
                   <th style={{ width: columnWidths.item, position: "relative" }} onClick={() => setBulkPasteCol("item")} title="Klik buat bulk paste">
                     Item <ClipboardPaste size={10} style={{ display: "inline", verticalAlign: "-1px" }} />
                     <QuickSendButton title="Instant Intake — kirim nama SEMUA item (gak ada artis/reply)" onClick={() => quickSendColumn("item", "Item")} />
@@ -579,11 +579,11 @@ export default function MainTable({ projectId, onBackToStartMenu, onOpenProject 
                             handleCheckboxMouseDown(e as unknown as React.MouseEvent, item.id, index);
                           }
                         }}
-                        style={{ cursor: "pointer", userSelect: "none", padding: "8px 4px" }}
+                        style={{ cursor: "pointer", userSelect: "none", padding: "8px 1px" }}
                       >
                         {selected.has(item.id) ? <CheckSquare size={14} /> : <Square size={14} />}
                       </td>
-                      <td className="caption" style={{ textAlign: "center", padding: "8px 4px" }}>
+                      <td className="caption" style={{ textAlign: "center", padding: "8px 1px" }}>
                         {index + 1}
                       </td>
                       <td style={{ position: "relative" }}>
