@@ -53,7 +53,13 @@ export default function QuickSendButton({ onClick, title, variant = "overlay" }:
         handleClick();
       }}
       style={{
-        ...(variant === "overlay" ? { position: "absolute", top: -8, left: -8, zIndex: 2 } : { flexShrink: 0 }),
+        // top -8 (poke penuh, dulu) SELALU bentrok sama header sticky — baris manapun yang lagi
+        // jadi "paling atas" pas discroll BAKAL nempel PERSIS di batas bawah header (gak ada cara
+        // CSS murni buat nyisain jarak permanen antara sticky header & konten yang scroll di
+        // bawahnya — begitu row jadi "paling atas", 0 gap, selalu). Jadi -8 kepotong ~1/3
+        // lingkaran (keliatan patah, bukan rapi). -3 bikin worst-case clip cuma beberapa pixel,
+        // nyaris gak keliatan, tapi TETAP "nongol dikit" dari pojok buat baris lain.
+        ...(variant === "overlay" ? { position: "absolute", top: -3, left: -8, zIndex: 2 } : { flexShrink: 0 }),
         width: 22,
         height: 22,
         borderRadius: "50%",

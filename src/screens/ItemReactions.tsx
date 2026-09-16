@@ -211,8 +211,10 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             onClick={(e) => { e.stopPropagation(); setOpen((v) => !v); }}
             style={{
               // Di SAMPING KANAN tombol Instant Intake (poin revisi, balik ke posisi ini) —
-              // Instant Intake di top:-8/left:-8 (22px), jadi tombol ini nempel di kanannya.
-              position: "absolute", top: -8, left: 16, width: 22, height: 22, borderRadius: "50%",
+              // Instant Intake di top:-3/left:-8 (22px), jadi tombol ini nempel di kanannya. top
+              // -3 (bukan -8, poin revisi) — sama alasan kayak QuickSendButton, biar clip-nya
+              // minim pas baris ini jadi baris paling atas nempel header sticky.
+              position: "absolute", top: -3, left: 16, width: 22, height: 22, borderRadius: "50%",
               background: "var(--accent)", border: "2px solid var(--surface)", color: "#fff",
               display: "flex", alignItems: "center", justifyContent: "center", padding: 0,
               cursor: "pointer", zIndex: 2, boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
