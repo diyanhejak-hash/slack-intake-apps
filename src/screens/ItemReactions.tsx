@@ -15,6 +15,7 @@ import { useEffect, useState } from "react";
 import { SmilePlus, Loader2 } from "lucide-react";
 import type { EmojiPreset, ItemReaction } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
+import { getCustomEmojiImagePath, subscribeEmojiPresets } from "../lib/emojiPresetStore";
 import EmojiPresetModal from "./EmojiPresetModal";
 
 // "Kelola preset..." (poin revisi: wajib ada di TIAP modal emoji, bukan cuma EmojiPicker.tsx) —
@@ -76,12 +77,19 @@ function ReactionPresetButton({ preset, onClick }: { preset: EmojiPreset; onClic
   );
 }
 
-// Chip pending cuma nampilin teks (unicode karakter, atau ":nama:" buat custom) — item_reactions
-// gak nyimpen image_path (itu ada di emoji_presets), jadi gak coba nampilin thumbnail PNG di sini
-// biar gak perlu cross-reference-in ulang. ":nama:" doang udah cukup informatif buat antrean.
+// Chip pending — unicode tampil karakternya langsung, custom SEKARANG tampil PNG-nya (poin
+// revisi, sebelumnya cuma teks ":nama:" karena item_reactions gak nyimpen image_path). Path-nya
+// di-cross-reference dari cache global emojiPresetStore (sama persis pola EmojiImageNode.tsx
+// buat custom emoji di Lexical editor) — SYNCHRONOUS, gak perlu fetch ulang di sini. Kalau
+// preset-nya udah dihapus/cache belum kemuat, fallback teks ":nama:" biar gak keliatan "rusak".
 // Poin revisi: gak ada tombol X lagi — klik CHIP-nya langsung (seluruh badge) = hapus dari
 // antrean. Poin revisi lagi: gak ada border/background lagi — cukup tampilin react-nya doang.
 function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove: () => void }) {
+  const [, forceTick] = useState(0);
+  useEffect(() => subscribeEmojiPresets(() => forceTick((v) => v + 1)), []);
+  const imagePath = reaction.emoji_type === "custom" ? getCustomEmojiImagePath(reaction.emoji_value) : undefined;
+  const url = useFileBlobUrl(imagePath || null);
+
   return (
     <button
       onClick={onRemove}
@@ -96,7 +104,13 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
         cursor: "pointer",
       }}
     >
-      {reaction.emoji_type === "unicode" ? reaction.emoji_value : `:${reaction.emoji_value}:`}
+      {reaction.emoji_type === "unicode" ? (
+        reaction.emoji_value
+      ) : imagePath ? (
+        <img src={url || undefined} alt={`:${reaction.emoji_value}:`} style={{ width: 16, height: 16, objectFit: "contain" }} />
+      ) : (
+        `:${reaction.emoji_value}:`
+      )}
     </button>
   );
 }
