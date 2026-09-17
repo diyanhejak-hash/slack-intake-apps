@@ -90,6 +90,31 @@ function currentToken() {
   return info?.accessToken || null;
 }
 
+// Auto-refresh (poin revisi) — dipanggil dari handle() begitu ada panggilan Slack gagal dengan
+// token_expired. Single-flight lewat refreshPromise: kalau BEBERAPA panggilan expired hampir
+// bareng (misal app baru resume dari sleep semalaman), semuanya nunggu SATU refresh yang sama,
+// bukan masing-masing nembak oauth.v2.access sendiri-sendiri — refresh_token biasanya SEKALI
+// pakai (di-rotate tiap dipakai), refresh paralel bisa saling gagalin satu sama lain kalau gak
+// di-single-flight. Balikin false (bukan throw) kalau gak ada refresh_token tersimpan atau
+// refresh-nya sendiri gagal — caller tetap lempar error asli, user tetap harus login ulang manual.
+let refreshPromise = null;
+async function tryRefreshToken() {
+  if (!refreshPromise) {
+    const info = authStore.loadToken();
+    if (!info?.refreshToken) return false;
+    refreshPromise = slack
+      .refreshAccessToken({ clientId: process.env.SLACK_CLIENT_ID, refreshToken: info.refreshToken })
+      .then((refreshed) => authStore.saveToken({ ...info, ...refreshed }))
+      .finally(() => { refreshPromise = null; });
+  }
+  try {
+    await refreshPromise;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 // Buka Slack — SELALU coba slack:// langsung ke app desktop dulu (gak ada deteksi "app
 // kepasang atau enggak" — itu kebukti gak reliable, shell.openExternal bisa "resolve" walau
 // ujungnya cuma nampilin dialog error, bukan beneran buka app). teamId MURNI dari token login
@@ -122,7 +147,20 @@ function handle(channel, fn) {
       const trusted = trustedURL(senderUrl);
       if (!trusted || !win || event.sender !== win.webContents || event.senderFrame !== win.webContents.mainFrame) throw new Error("IPC ditolak dari halaman yang tidak dipercaya.");
       validateAccess(channel, args);
-      const result = await fn(event, ...args);
+      let result;
+      try {
+        result = await fn(event, ...args);
+      } catch (err) {
+        // Token Slack expired (poin revisi, auto-refresh) — coba tukar refresh_token ke
+        // access_token baru SEKALI, retry panggilan yang gagal itu. Kalau App Slack-nya gak
+        // pakai Token Rotation (gak ada refresh_token tersimpan) atau refresh-nya sendiri
+        // gagal, error ASLI tetap dilempar — user tetap harus login ulang manual kayak sebelumnya.
+        if (err?.data?.error === "token_expired" && (await tryRefreshToken())) {
+          result = await fn(event, ...args);
+        } else {
+          throw err;
+        }
+      }
       if (/:pickFiles$/.test(channel)) allowFiles(result || []);
       if (channel === "emojiPreset:pickImage" && result) allowFiles([result]);
       return result;

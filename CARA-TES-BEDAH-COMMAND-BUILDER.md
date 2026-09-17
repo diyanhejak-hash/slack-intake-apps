@@ -1539,3 +1539,41 @@ Checklist manual:
   `hb-apps` gak dapet pesan Offline apa pun.
 - [ ] **Instant Intake TIDAK ikut lapor**: klik tombol Instant Intake (bukan "Kirim ke Slack") →
   channel `hb-apps` TIDAK dapet pesan "Eksekusi job" apa pun (cuma buat kirim batch).
+
+## 46. Auto-refresh token Slack yang expired (2026-09-17) ✅ (siap dites)
+
+**Bug ketemu user**: `Error invoking remote method 'slack:listUsers': Error: An API error
+occurred: token_expired` — muncul abis app ditinggal semalaman. Root cause: App Slack ini punya
+"Token Rotation" aktif (access_token cuma valid ~12 jam, wajib ditukar pakai refresh_token buat
+lanjut). Kode LAMA nyimpen `access_token` doang, `refresh_token`/`expires_in` dari respons login
+dibuang gitu aja — begitu access_token expired, SEMUA panggilan Slack gagal permanen, satu-satunya
+jalan logout+login manual.
+
+**Fix**: 
+- `slack.cjs` — `completeLoginFromUrl` sekarang nangkep & nyimpen `refresh_token`+`expires_in`
+  (kalau App-nya emang pakai Token Rotation — kalau enggak, dua-duanya null/undefined, gak
+  ngefek apa-apa). Fungsi baru `refreshAccessToken` — tukar refresh_token jadi access_token baru
+  lewat `oauth.v2.access` yang SAMA (`grant_type: "refresh_token"`), TANPA client_secret (PKCE
+  public client, persis kayak login awal) — bentuk respons dicek dari
+  `OauthV2AccessResponse.d.ts` bawaan `@slack/web-api`, bukan tebakan.
+- `main.cjs` — wrapper `handle()` (dipakai SEMUA ~30 IPC handler) sekarang: kalau panggilan gagal
+  dengan `token_expired`, coba refresh SEKALI (single-flight — beberapa panggilan gagal
+  bersamaan cuma nunggu 1 refresh yang sama, gak masing-masing nembak Slack), retry panggilan
+  yang gagal itu. Refresh gagal (gak ada refresh_token tersimpan, App gak pakai Token Rotation,
+  dst) → error ASLI tetap dilempar, user tetap harus login ulang manual kayak sebelumnya —
+  perilaku lama TETAP jadi fallback, gak ada yang lebih buruk dari sebelumnya.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 46 test regresi lulus (4 test baru: retry
+otomatis token_expired sukses/gagal/gak-relevan lewat handle(), completeLoginFromUrl nangkep
+refresh_token, refreshAccessToken tukar token tanpa client_secret), `vite build` bersih.
+**BELUM**: smoke-test manual visual — susah disimulasikan beneran expired tanpa nunggu ~12 jam,
+tapi bisa dites logout-login ulang normal masih jalan (gak ada regresi).
+
+Checklist manual:
+
+- [ ] **Restart app dulu, login ulang sekali** (biar refresh_token baru ke-simpen).
+- [ ] **Login/logout normal masih jalan**: logout → login lagi → semua fitur normal (buka
+  project, listUsers, dll gak ada error).
+- [ ] **(Opsional, butuh nunggu lama)** biarin app kebuka ~12+ jam tanpa logout → coba buka
+  project/listUsers lagi → HARUSNYA tetap jalan normal (auto-refresh diam-diam di belakang
+  layar), BUKAN muncul error token_expired lagi.

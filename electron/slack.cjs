@@ -83,6 +83,11 @@ async function completeLoginFromUrl(urlString) {
     console.log("[debug] oauth.v2.access result.team =", JSON.stringify(result.team));
     resolve({
       accessToken: userToken,
+      // refresh_token/expires_in (poin revisi, auto-refresh) — CUMA ada kalau App Slack-nya
+      // punya "Token Rotation" aktif (kalau enggak, keduanya undefined/null, token gak pernah
+      // expired — auto-refresh jadi no-op aman, gak nge-break App yang gak pakai rotation).
+      refreshToken: result.authed_user.refresh_token || null,
+      expiresAt: result.authed_user.expires_in ? Date.now() + result.authed_user.expires_in * 1000 : null,
       userId: result.authed_user.id,
       team: result.team?.name,
       teamId: result.team?.id, // buat deep-link slack://channel?team=...&id=... pas kirim
@@ -91,6 +96,26 @@ async function completeLoginFromUrl(urlString) {
   } catch (err) {
     reject(new Error(`${err.message} Gagal tukar code jadi token.`));
   }
+}
+
+// Auto-refresh (poin revisi) — token_expired (dilempar Slack begitu access_token abis masa
+// berlaku, App dengan Token Rotation aktif) sebelumnya matiin total app (semua panggilan Slack
+// gagal, satu-satunya jalan logout+login manual). oauth.v2.access endpoint yang SAMA dipakai
+// buat tukar refresh_token -> access_token baru, `grant_type: "refresh_token"` — TANPA
+// client_secret (PKCE public client, sama kayak login awal). Response-nya sama-sama nyimpen di
+// authed_user.* (dicek dari OauthV2AccessResponse.d.ts di @slack/web-api, bukan tebakan).
+async function refreshAccessToken({ clientId, refreshToken }) {
+  if (!clientId || !refreshToken) throw new Error("Refresh token tidak tersedia — login ulang diperlukan.");
+  const client = new WebClient();
+  const result = await client.oauth.v2.access({ client_id: clientId, grant_type: "refresh_token", refresh_token: refreshToken });
+  const newToken = result.authed_user?.access_token;
+  if (!newToken) throw new Error("Gagal refresh token — login ulang diperlukan.");
+  return {
+    accessToken: newToken,
+    // Fallback ke refresh_token lama kalau Slack (jarang) gak ngasih yang baru di response ini.
+    refreshToken: result.authed_user.refresh_token || refreshToken,
+    expiresAt: result.authed_user.expires_in ? Date.now() + result.authed_user.expires_in * 1000 : null,
+  };
 }
 
 function client(token) {
@@ -519,4 +544,4 @@ async function createPrivateChannel({ token, name, memberIds = [] }) {
   return { channelId, name: safeName };
 }
 
-module.exports = { loginWithBrowser, completeLoginFromUrl, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, postSimpleMessage, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests, setReactionIntervalForTests };
+module.exports = { loginWithBrowser, completeLoginFromUrl, refreshAccessToken, client, listChannels, listUsers, sendItem, ensureRoot, sendArtistMention, sendReplies, postSimpleMessage, createPrivateChannel, findThreadChannel, findThreadInfo, addReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests, setReactionIntervalForTests };

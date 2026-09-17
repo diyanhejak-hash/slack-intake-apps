@@ -61,7 +61,17 @@ class MockSlack {
       reactionCalls.push(args);
     },
   };
-  oauth = { v2: { access: async (args) => { oauthAccessCalls.push(args); return { authed_user: { access_token: "xoxp-mock", id: "U-MOCK" }, team: { name: "Mock Team", id: "T-MOCK" } }; } } };
+  oauth = {
+    v2: {
+      access: async (args) => {
+        oauthAccessCalls.push(args);
+        if (args.grant_type === "refresh_token") {
+          return { authed_user: { access_token: `xoxp-refreshed-${args.refresh_token}`, refresh_token: "rt-new", expires_in: 43200 } };
+        }
+        return { authed_user: { access_token: "xoxp-mock", id: "U-MOCK", refresh_token: "rt-initial", expires_in: 43200 }, team: { name: "Mock Team", id: "T-MOCK" } };
+      },
+    },
+  };
   users = {
     list: async () => (++this.userPage === 1
       ? { members: [{ id: "U1", name: "First" }], response_metadata: { next_cursor: "next" } }
@@ -382,6 +392,56 @@ async function test(name, fn) {
       await slack.sendReplies({ token: "MOCK", channelId: "CA", threadKey: "phase-post", threadTs: root.threadTs, posts });
       assert.equal(calls.filter((c) => c.text === "phase first" && c.thread_ts === root.threadTs).length, 1);
     });
+    await test("handle() auto-refresh token_expired sekali lalu retry, gagal kalau refresh gagal (poin revisi)", async () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const block = source.match(/function handle\(channel, fn\) \{[\s\S]*?\n\}\n/)[0];
+      function makeContext(tryRefreshToken) {
+        const webContents = {};
+        webContents.mainFrame = {};
+        let registered;
+        const context = {
+          ipcMain: { handle: (_channel, cb) => { registered = cb; } },
+          trustedURL: () => true,
+          win: { webContents },
+          validateAccess: () => {},
+          allowFiles: () => {},
+          tryRefreshToken,
+          projects: { addLog: () => {} },
+        };
+        vm.runInNewContext(block, context);
+        const fakeEvent = { sender: webContents, senderFrame: webContents.mainFrame };
+        return { handle: context.handle, invoke: () => registered(fakeEvent) };
+      }
+      const tokenExpiredError = () => { const err = new Error("An API error occurred: token_expired"); err.data = { error: "token_expired" }; return err; };
+
+      // Skenario 1: token_expired sekali -> refresh sukses -> retry sukses.
+      {
+        let calls = 0, refreshCalls = 0;
+        const { handle: h, invoke } = makeContext(async () => { refreshCalls++; return true; });
+        h("test:ok", async () => { calls++; if (calls === 1) throw tokenExpiredError(); return "hasil-sukses"; });
+        assert.equal(await invoke(), "hasil-sukses");
+        assert.equal(calls, 2); // gagal 1x (token_expired), retry 1x abis refresh sukses
+        assert.equal(refreshCalls, 1);
+      }
+      // Skenario 2: token_expired, tapi refresh GAGAL (gak ada refresh_token tersimpan, dst) ->
+      // error ASLI tetap dilempar, fn cuma dipanggil sekali (gak ada retry percuma).
+      {
+        let calls = 0;
+        const { handle: h, invoke } = makeContext(async () => false);
+        h("test:no-refresh", async () => { calls++; throw tokenExpiredError(); });
+        await assert.rejects(invoke(), /token_expired/);
+        assert.equal(calls, 1);
+      }
+      // Skenario 3: error LAIN (bukan token_expired) -> gak coba refresh sama sekali.
+      {
+        let calls = 0, refreshCalls = 0;
+        const { handle: h, invoke } = makeContext(async () => { refreshCalls++; return true; });
+        h("test:other-error", async () => { calls++; throw new Error("network down"); });
+        await assert.rejects(invoke(), /network down/);
+        assert.equal(calls, 1);
+        assert.equal(refreshCalls, 0);
+      }
+    });
     await test("quick-send holds its lock during await and releases it on rejection", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
@@ -555,6 +615,34 @@ async function test(name, fn) {
       // The verifier Slack received must actually match the challenge published on the
       // authorize URL (S256), not just be present.
       assert.equal(crypto.createHash("sha256").update(sent.code_verifier).digest("base64url"), challenge);
+    });
+    await test("completeLoginFromUrl (poin revisi, auto-refresh) nangkep refresh_token & expires_in kalau ada", async () => {
+      const oauth3 = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
+      let authorizeUrl3;
+      const promise3 = oauth3.loginWithBrowser({ clientId: "fake", redirectUri: "slackintakeapps://callback" }, (url) => { authorizeUrl3 = url; });
+      await Promise.resolve(); await Promise.resolve();
+      const state3 = new URL(authorizeUrl3).searchParams.get("state");
+      const before = Date.now();
+      await oauth3.completeLoginFromUrl("slackintakeapps://callback?state=" + state3 + "&code=fake-code");
+      const info = await promise3;
+      assert.equal(info.refreshToken, "rt-initial");
+      // expiresAt = Date.now() pas login + expires_in(43200s)*1000 -- rentang longgar biar gak flaky.
+      assert.ok(info.expiresAt >= before + 43200 * 1000 && info.expiresAt <= Date.now() + 43200 * 1000 + 5000);
+    });
+    await test("slack.refreshAccessToken (poin revisi) tukar refresh_token jadi access_token baru, tanpa client_secret", async () => {
+      const oauth4 = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
+      const before = oauthAccessCalls.length;
+      const refreshed = await oauth4.refreshAccessToken({ clientId: "fake", refreshToken: "rt-old" });
+      assert.equal(refreshed.accessToken, "xoxp-refreshed-rt-old");
+      assert.equal(refreshed.refreshToken, "rt-new");
+      assert.ok(refreshed.expiresAt > Date.now());
+      const sent = oauthAccessCalls[oauthAccessCalls.length - 1];
+      assert.equal(oauthAccessCalls.length, before + 1);
+      assert.equal(sent.grant_type, "refresh_token");
+      assert.equal(sent.refresh_token, "rt-old");
+      assert.equal("client_secret" in sent, false); // PKCE public client -- gak pernah kirim secret
+      // Gagal (gak ada refresh_token/clientId) -- lempar error yang jelas, bukan crash mentah.
+      await assert.rejects(oauth4.refreshAccessToken({ clientId: "fake", refreshToken: "" }), /login ulang/);
     });
 
     await test("merge memecah reply gabungan yang lewat 10 file jadi reply baru (poin revisi)", () => {
