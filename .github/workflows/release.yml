@@ -52,6 +52,12 @@ jobs:
       - name: Install Xvfb (Linux headless display, dibutuhin Electron walau window disembunyikan)
         if: matrix.target == 'linux'
         run: sudo apt-get update && sudo apt-get install -y xvfb
+      # Binary Electron didownload LAZY (pas pertama kali cli.js dipanggil), bukan langsung abis
+      # `npm ci` -- chown di bawah butuh dist/chrome-sandbox udah ADA duluan, jadi dipaksa
+      # download eksplisit di sini dulu.
+      - name: Download binary Electron (Linux, biar chown sandbox di bawah gak "No such file")
+        if: matrix.target == 'linux'
+        run: node node_modules/electron/install.js
       # chrome-sandbox Electron WAJIB owned root + setuid (mode 4755) di Linux -- npm install
       # biasa naruhnya owned user CI biasa, Electron nolak jalan sama sekali (SIGTRAP) tanpa
       # ini kalau gak dikasih --no-sandbox (sengaja DIHINDARIN, --no-sandbox matiin fitur
