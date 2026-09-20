@@ -1,20 +1,28 @@
 name: Build & Release
 
 # Jalan pas tag versi (v0.2.0, dst) di-push, ATAU manual lewat tab Actions ("Run workflow").
-# Build Windows DAN macOS sekaligus (paralel, matrix) — macOS gak bisa di-build dari mesin
-# Windows lokal, jadi ini satu-satunya jalur buat dapetin installer Mac.
+# Build Windows, macOS, DAN Linux sekaligus (paralel, matrix) — macOS/Linux gak praktis
+# di-build dari mesin Windows lokal, jadi ini satu-satunya jalur buat dapetin ketiga installer
+# sekaligus dari 1 commit/tag yang sama.
 on:
   push:
     tags:
       - "v*.*.*"
   workflow_dispatch: {}
 
-# Wajib buat electron-builder bisa upload installer ke GitHub Release pakai GITHUB_TOKEN bawaan
+# Wajib buat job "release" bisa bikin GitHub Release + upload asset pakai GITHUB_TOKEN bawaan
 # Actions (gak perlu bikin PAT terpisah lagi buat ini).
 permissions:
   contents: write
 
 jobs:
+  # Cuma BUILD di sini (publish: never) -- release-nya sengaja dipisah ke job "release" di bawah
+  # yang jalan SEKALI setelah SEMUA platform kelar. Sebelumnya tiap platform publish sendiri-
+  # sendiri (paralel) -- electron-builder bikin/pakai GitHub Release "draft" per tag, dan karena
+  # 2+ job jalan BARENGAN, masing-masing bisa gagal nemuin draft punya job LAIN (belum sempat
+  # ke-buat pas dicek) terus bikin draft DUPLIKAT sendiri-sendiri buat tag yang sama -- installer
+  # ke-split ke beberapa release "v0.3.2" yang berbeda, bikin bingung. Build-only + 1 job release
+  # terpisah menghindari race ini total.
   build:
     strategy:
       fail-fast: false
@@ -24,34 +32,64 @@ jobs:
             target: win
           - os: macos-latest
             target: mac
+          - os: ubuntu-latest
+            target: linux
     runs-on: ${{ matrix.os }}
     env:
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
       SLACK_REDIRECT_URI: ${{ secrets.SLACK_REDIRECT_URI }}
       GITHUB_REPO: ${{ secrets.RELEASE_REPO }}
       GITHUB_RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
       - run: npm ci
-      # typecheck + 24 test regresi + smoke test Electron sungguhan + build renderer — pipeline
-      # verifikasi yang sama kayak dipakai lokal (npm run check), gagal di sini = gak lanjut publish.
-      - run: npm run check
-      # --publish always: bikin/update GitHub Release buat tag ini, upload installer sebagai asset.
-      # Kalau ini bukan tag push (workflow_dispatch manual), electron-builder tetap build tapi
-      # publish-nya di-skip otomatis (gak ada tag versi buat dikaitkan).
-      - name: Build & publish
-        run: npx electron-builder --${{ matrix.target }} --publish ${{ startsWith(github.ref, 'refs/tags/') && 'always' || 'never' }}
-      # Simpen juga sebagai artifact run — biar bisa didownload dari tab Actions walau BUKAN
-      # dari tag push (misal lagi tes workflow_dispatch manual, belum mau bikin Release beneran).
+      # test:smoke jalanin Electron sungguhan (walau window-nya disembunyikan, show:false) --
+      # runner Linux gak punya display sama sekali (headless), Electron/Chromium tetap butuh
+      # server X buat init walau gak nampilin apa-apa. Xvfb = display virtual, cuma buat Linux.
+      - name: Install Xvfb (Linux headless display, dibutuhin Electron walau window disembunyikan)
+        if: matrix.target == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y xvfb
+      # typecheck + 113 test regresi + smoke test Electron sungguhan + build renderer -- pipeline
+      # verifikasi yang sama kayak dipakai lokal (npm run check), gagal di sini = gak lanjut build.
+      - name: Run checks
+        shell: bash
+        run: |
+          if [ "${{ matrix.target }}" = "linux" ]; then
+            xvfb-run -a npm run check
+          else
+            npm run check
+          fi
+      - name: Build installer (publish belakangan, lihat job "release")
+        run: npx electron-builder --${{ matrix.target }} --publish never
       - uses: actions/upload-artifact@v4
-        if: ${{ !startsWith(github.ref, 'refs/tags/') }}
         with:
           name: installer-${{ matrix.target }}
           path: |
             release/*.exe
             release/*.dmg
+            release/*.AppImage
           if-no-files-found: ignore
+
+  # Jalan SEKALI abis semua platform di atas kelar (always() -- TETAP jalan walau salah satu
+  # platform gagal, publish installer platform yang SUKSES aja, sama kayak perilaku lama).
+  # Cuma jalan pas tag push -- workflow_dispatch manual TETAP cuma nyimpen artifact biasa (tab
+  # Actions), gak bikin Release beneran, biar gak numpuk Release buat percobaan/tes.
+  release:
+    needs: build
+    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: release
+          pattern: installer-*
+          merge-multiple: true
+      - name: Publish GitHub Release (1 release, semua installer platform yang sukses jadi asset)
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release create "${{ github.ref_name }}" release/* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes

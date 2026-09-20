@@ -1,6 +1,6 @@
 {
   "name": "slack-intake-apps",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "private": true,
   "type": "module",
   "description": "Slack Intake Apps — migrasi Command Builder ke desktop lokal (Win/Mac), kirim thread task produksi ke Slack sebagai identitas Koor asli",
@@ -15,6 +15,7 @@
     "build": "npm run check && electron-builder",
     "build:win": "npm run check && electron-builder --win",
     "build:mac": "npm run check && electron-builder --mac",
+    "build:linux": "npm run check && electron-builder --linux",
     "typecheck": "tsc --noEmit",
     "test": "node test/regression.cjs",
     "test:smoke": "electron test/electron-smoke.cjs",
@@ -98,6 +99,11 @@
       },
       "identity": null,
       "icon": "Asset/HB5_new.png"
+    },
+    "linux": {
+      "target": ["AppImage"],
+      "icon": "Asset/HB5_new.png",
+      "category": "Office"
     }
   }
 }

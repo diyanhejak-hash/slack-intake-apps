@@ -232,7 +232,7 @@ async function test(name, fn) {
       );
     });
     await test("send:start (poin revisi, bug ditemukan lewat audit D15) — token_expired di TENGAH batch auto-refresh SEKALI & retry item yang gagal; kalau refresh gagal, batch dihentikan (item sisanya di-skip, bukan digagalkan satu-satu percuma)", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("send:start",[\s\S]*?\n\}\);/)[0];
       function makeContext(refreshSucceeds) {
         let tokenValue = "OLD-TOKEN";
@@ -1129,7 +1129,7 @@ async function test(name, fn) {
       assert.equal(calls.filter((c) => c.text === "phase first" && c.thread_ts === root.threadTs).length, 1);
     });
     await test("handle() auto-refresh token_expired sekali lalu retry, gagal kalau refresh gagal (poin revisi)", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/function handle\(channel, fn\) \{[\s\S]*?\n\}\n/)[0];
       function makeContext(tryRefreshToken, lastRefreshFailureReason) {
         const webContents = {};
@@ -1193,7 +1193,7 @@ async function test(name, fn) {
       }
     });
     await test("tryRefreshToken (poin revisi, diagnostik \"auth:testRefresh\") — bedain 3 skenario: gak ada refresh_token, sukses, gagal — dipakai user buat ngetes tanpa nunggu ~12 jam", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/let refreshPromise = null;[\s\S]*?\n\}\n/)[0];
       function makeContext({ storedInfo, refreshImpl }) {
         const savedTokens = [];
@@ -1239,7 +1239,7 @@ async function test(name, fn) {
       }
     });
     await test("withItemArtistLock (poin revisi, multi-artist realtime) serialize per item, item BEDA jalan bebas", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);\nfunction withItemArtistLock[\s\S]*?\n}\n/)[0];
       const context = {};
       vm.runInNewContext(block, context);
@@ -1273,7 +1273,7 @@ async function test(name, fn) {
       assert.equal(ranAfterReject, true);
     });
     await test("file:readBytes (bug dilaporkan: \"File tidak terdaftar di project\" pas preview emoji Slack yang BARU di-download) — pakai gerbang isFileAccessible YANG SAMA kayak validateFile, bukan isManagedFile doang", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const gateBlock = source.match(/const fileGrants = new Set\(\);[\s\S]*?\nfunction validateFile[\s\S]*?\n\}\n/)[0];
       const readBytesSrc = source.match(/handle\("file:readBytes", (async \(_e, filePath\) => \{[\s\S]*?\n\})\);/)[1];
       const managed = new Set();
@@ -1307,7 +1307,7 @@ async function test(name, fn) {
       assert.ok(bytes2.toString().includes("already-managed.png"));
     });
     await test("itemReaction:remove (poin revisi, chip react persisten) — pending cuma batal antre lokal, sent manggil reactions.remove, gagal Slack = baris lokal TETAP (gak kepisah sinkron)", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("itemReaction:remove",[\s\S]*?\n\}\);/)[0];
       function makeContext({ reaction, removeReactionImpl }) {
         const removedLocalIds = [];
@@ -1365,7 +1365,7 @@ async function test(name, fn) {
       }
     });
     await test("quick-send holds its lock during await and releases it on rejection", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       let handler, finish;
       const context = { activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
@@ -1380,7 +1380,7 @@ async function test(name, fn) {
       assert.equal(context.activeSend, null);
     });
     await test("quick-send also flushes pending reactions after sendItem succeeds", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       const addedReactions = [];
       const sentIds = [];
@@ -1415,7 +1415,7 @@ async function test(name, fn) {
       assert.deepEqual(sentIds, ["R1", "R2"]);
     });
     await test("quick-send (poin revisi) sinkron assign message lewat syncAssignMessage buat SEMUA scope, gak lewat sendItem lagi — suppressed pas mode react", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       function makeContext(mode) {
         let sentArtistIds = "unset";
@@ -1463,7 +1463,7 @@ async function test(name, fn) {
       }
     });
     await test("send:quick scope \"replies\"/\"field\" (poin revisi, bug ditemukan lewat audit D10) — reply.sent DI-SKIP dari payload, Instant Intake gak ngirim ulang field yang udah terkirim", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       function makeContext() {
         const sendItemCalls = [];
@@ -1518,7 +1518,7 @@ async function test(name, fn) {
       }
     });
     await test("quick-send scope \"artist\" pada item TANPA artis (poin revisi, bug dilaporkan) — TIDAK throw, placeholder tetap ke-post (mention) / no-op aman (react)", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       function makeContext(mode) {
         let syncCalls = 0, syncArgs;
@@ -1561,7 +1561,7 @@ async function test(name, fn) {
       }
     });
     await test("quick-send (poin revisi, \"Instant Intake jadi sumber kebenaran\") — resolveAttempt(\"restart\") dipanggil SEBELUM sendItem, bersihin bookkeeping percobaan lama biar gak keblokir \"Isi berubah sejak kiriman parsial\"", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       const callOrder = [];
       let handler;
@@ -1585,7 +1585,7 @@ async function test(name, fn) {
       assert.equal(callOrder[1][0], "sendItem"); // urutannya WAJIB resolveAttempt DULU, baru sendItem
     });
     await test("artistAssign:syncProject (poin revisi, tombol manual \"Update\"; bug ditemukan lewat audit D13) — target SEMUA item yang PUNYA thread (bukan cuma yang punya artis/status SAAT INI, biar item yang BARU dilepas artis terakhirnya & item rename-only ikut kesinkron), item TANPA thread di-skip, gagal 1 item gak nge-abort yang lain", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("artistAssign:syncProject",[\s\S]*?\n\}\);/)[0];
       const reconciledItemIds = [];
       const logs = [];
@@ -1639,7 +1639,7 @@ async function test(name, fn) {
       assert.ok(logs.some((m) => m.includes("Item C"))); // gagal tetap ke-log, gak diem-diem ilang
     });
     await test("artistAssign:syncProject (poin revisi lanjutan, fitur Status) — item TANPA artis tapi PUNYA status (atau nyisa sent_shortcode) ikut disinkron, bukan cuma yang punya artis", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("artistAssign:syncProject",[\s\S]*?\n\}\);/)[0];
       const statusAddCalls = [];
       const statusRemoveCalls = [];
@@ -1694,7 +1694,7 @@ async function test(name, fn) {
       // "status-old" doang yang masuk daftar, gak ada entry ketiga dari C).
     });
     await test("slackPull:syncProject (poin revisi, tombol Pull manual) — react state-diff (assign/lepas artis ngikutin react TERKINI di Slack) + replay kata kunci di reply thread, 1 item gagal fetch gak nge-abort item lain", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("slackSocket:clearToken",[\s\S]*?\n\}\);/)[0];
 
       let i1Artists = [{ artist_id: "U-IKSAN", artist_name: "Iksan" }];
@@ -1784,7 +1784,7 @@ async function test(name, fn) {
       assert.deepEqual(notifyPushes.map((p) => p.itemId).sort(), ["I1", "I2"]);
     });
     await test("artistAssign:syncItem & slackPull:syncItem (poin revisi, Pull/Push scope per-item di Tab Input) — cuma proses SATU item, item lain di project TIDAK ikut kesentuh, throw jelas kalau item gak ketemu", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("slackSocket:clearToken",[\s\S]*?\n\}\);/)[0];
 
       let i1Artists = [{ artist_id: "U-DIYAN", artist_name: "Diyan" }];
@@ -1871,7 +1871,7 @@ async function test(name, fn) {
       await assert.rejects(handlers["slackPull:syncItem"]({}, { projectId: "P", itemId: "I-GAK-ADA" }), /Item tidak ditemukan/);
     });
     await test("pullItemFromSlack (poin revisi, diminta user \"pull dan push bisa ubah nama item\") — nama item ikut Pull kalau beda dari pesan root Slack, lucutin tanda bintang pembungkus, no-op kalau udah sama", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("slackSocket:clearToken",[\s\S]*?\n\}\);/)[0];
       const updateItemCalls = [];
       const notifyPushes = [];
@@ -1919,7 +1919,7 @@ async function test(name, fn) {
       assert.equal(updateItemCalls.length, 1); // tetap 1, gak nambah
     });
     await test("reconcileItemAssignState (poin revisi, bug dilaporkan: \"ganti mode, react lama masih tertinggal\") — bersihin reaction stale + sinkron mention sesuai mode SAAT INI, siapa pun triggernya", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("item:removeArtist",[\s\S]*?\n\}\)\);/)[0];
 
       let mode = "react";
@@ -1992,7 +1992,7 @@ async function test(name, fn) {
       assert.deepEqual(syncCalls[syncCalls.length - 1], ["U-ADRIAN"]);
     });
     await test("reconcileItemAssignState: mention DAN react bisa aktif BARENG (poin revisi terbaru, bukan mutually-exclusive lagi)", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("item:removeArtist",[\s\S]*?\n\}\)\);/)[0];
 
       const mentionOn = true, reactOn = true; // DUA-duanya ON bareng
@@ -2048,7 +2048,7 @@ async function test(name, fn) {
       assert.equal(syncCalls[syncCalls.length - 1].length, 0);
     });
     await test("reconcileItemAssignState (poin revisi, urutan reaction) — react status yang UDAH nempel duluan di-bump ke belakang tiap ada react artis BARU, biar artis SELALU tampil duluan", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("item:removeArtist",[\s\S]*?\n\}\)\);/)[0];
 
       const itemArtists = [];
@@ -2095,7 +2095,7 @@ async function test(name, fn) {
       assert.deepEqual(reactionOps, [["add", "diyan"], ["remove", "ngerja"], ["add", "ngerja"]]);
     });
     await test("item:setStatus / reconcileItemStatusState (poin revisi, fitur Status) — ganti status lepas reaction lama pasang yang baru, force=true gak buka Slack, no-op kalau udah sinkron", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("item:setStatus",[\s\S]*?\n\}\)\);/)[0];
 
       const realtime = true;
@@ -2148,7 +2148,7 @@ async function test(name, fn) {
       assert.equal(removeCalls.length, 2);
     });
     await test("reconcileItemStatusState (poin revisi, bug ditemukan lewat audit D14) — removeReaction GAGAL -> sent_shortcode TETAP nyimpen shortcode LAMA (bukan di-null-in buta), reconcile berikutnya masih nyoba lepas lagi", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("item:setStatus",[\s\S]*?\n\}\)\);/)[0];
 
       let itemStatus = { status_id: null, sent_shortcode: "old-status" }; // reaction lama UDAH live di Slack
@@ -2193,7 +2193,7 @@ async function test(name, fn) {
       assert.equal(itemStatus.sent_shortcode, null); // sekarang beneran bersih
     });
     await test("handleIncomingReaction (poin revisi, sync 2 arah reaction Slack->App) — cocok artis/status auto-assign/lepas TANPA nembak reactions.add/remove lagi (udah ada di Slack), abaikan thread/reaction yang gak dikenal", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/async function onIncomingArtistReaction[\s\S]*?handle\("slackSocket:clearToken",[\s\S]*?\n\}\);/)[0];
 
       let itemArtists = [];
@@ -2305,7 +2305,7 @@ async function test(name, fn) {
       assert.equal(logs.length, 0); // gak ada satu pun yang nyampe nge-log error
     });
     await test("handleIncomingReaction (poin revisi, toggle Realtime Sync sekarang gate arah Slack->App juga) — toggle OFF = react dari Slack di-skip total, gak nyentuh state lokal sama sekali", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/async function onIncomingArtistReaction[\s\S]*?handle\("slackSocket:clearToken",[\s\S]*?\n\}\);/)[0];
       let itemArtists = [];
       const context = {
@@ -2360,7 +2360,7 @@ async function test(name, fn) {
       assert.equal(startCalls, 2);
     });
     await test("updateSocketModeConnectionState (poin revisi, Level 2) — connect kalau salah satu toggle ON & belum jalan, disconnect kalau dua-duanya OFF & lagi jalan, token TETAP TERSIMPAN (gak clearAppToken)", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("slackSocket:clearToken",[\s\S]*?\n\}\);/)[0];
       let realtimeOn = false, keywordOn = false, running = false;
       const startCalls = [], stopCalls = [], logs = [];
@@ -2411,7 +2411,7 @@ async function test(name, fn) {
       assert.ok(logs.some(([level, msg]) => level === "info" && msg.includes("Socket Mode diputus")));
     });
     await test("keywordAutomationRegex (poin revisi, bug ditemukan lewat audit D07) — cek batas KEDUA sisi (bukan cuma belakang), keyword simbol-di-awal/akhir (\"@WIP\"/\"DONE!\") tetap cocok", () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/function keywordAutomationRegex[\s\S]*?\n\}/)[0];
       const context = {};
       vm.runInNewContext(block, context);
@@ -2430,7 +2430,7 @@ async function test(name, fn) {
       assert.equal(keywordAutomationRegex("DONE!").test("field ini UNDONE!"), false);
     });
     await test("handleIncomingMessage (poin revisi, Otomasi Kata Kunci — digeneralisasi dari \"Otomasi WIP\") — kata kunci BEBAS di reply thread item -- trigger set status ATAU assign artis sesuai mapping user, OFF by default, abaikan subtype/di-luar-thread/kata mirip/target kehapus", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/function keywordAutomationRegex[\s\S]*?handle\("keywordAutomation:remove",[\s\S]*?\n\}\);/)[0];
 
       let enabled = true;
@@ -2552,7 +2552,7 @@ async function test(name, fn) {
       assert.ok(logs[logs.length - 1][1].includes('preset Status target-nya udah gak ada'));
     });
     await test("send:start (poin revisi 4-fase) kirim per-fase lintas semua item, item gagal di-skip fase berikutnya", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("send:start",[\s\S]*?\n\}\);/)[0];
       const callLog = [];
       const reactionCalls = [];
@@ -2621,7 +2621,7 @@ async function test(name, fn) {
       assert.equal(results.find((r) => r.itemId === "B").status, "gagal");
     });
     await test("send:start scope \"item\"/\"replies\" (poin revisi, Instant Intake per-kolom) TETAP sinkron assign message, gak di-skip lagi", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("send:start",[\s\S]*?\n\}\);/)[0];
       function makeContext(scope) {
         const syncCalls = [];
@@ -2666,7 +2666,7 @@ async function test(name, fn) {
     });
 
     await test("send:start fase post (poin revisi, bug ditemukan lewat audit D10) — reply.sent DI-SKIP dari payload, batch berikutnya TIDAK ngirim ulang field yang udah terkirim", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("send:start",[\s\S]*?\n\}\);/)[0];
       const sendRepliesCalls = [];
       let handler;
@@ -2715,7 +2715,7 @@ async function test(name, fn) {
       assert.equal(sendRepliesCalls[0].posts[0].text, "field baru");
     });
     await test("send:start fase post (poin revisi, bug dilaporkan: merge >10 file misahin field jadi 2, field HASIL PECAHAN gak kekirim) — field yang gagal TETAP dicoba (gak ke-skip gara-gara field lain), field yang sukses TETAP di-lock walau field tetangganya gagal", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("send:start",[\s\S]*?\n\}\);/)[0];
       const sendRepliesCalls = [];
       const markedSent = [];
@@ -2824,7 +2824,7 @@ async function test(name, fn) {
       assert.equal(attempt, 2);
     });
     await test("requireAdminMember (poin revisi, bug ditemukan lewat audit D08) — dipanggil di AWAL artistRealtimeAssign:set/slackSocket:setToken&clearToken/keywordAutomation:setEnabled&save&remove (verifikasi manual di source), fungsinya sendiri TOLAK non-admin-member, LOLOS admin-member", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/async function requireAdminMember\(\)[\s\S]*?\n\}/)[0];
       // Poin revisi (audit D08) — pastiin KEENAM handler yang seharusnya digate BENERAN manggil
       // requireAdminMember() di baris pertama badan fungsinya, bukan cuma fungsi guard-nya doang
@@ -2846,14 +2846,14 @@ async function test(name, fn) {
       await context.requireAdminMember(); // gak throw
     });
     await test("auth:login & auth:logout (poin revisi, bug ditemukan lewat audit D18) — keduanya manggil adminAccess.invalidateCache(), biar cache admin-member gak nempel ke akun BERIKUTNYA yang login di proses app yang sama", () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const loginBlock = source.match(/handle\("auth:login",[\s\S]*?\n\}\);/)[0];
       const logoutBlock = source.match(/handle\("auth:logout",[\s\S]*?\n\}\);/)[0];
       assert.ok(loginBlock.includes("adminAccess.invalidateCache()"), "auth:login harusnya manggil adminAccess.invalidateCache()");
       assert.ok(logoutBlock.includes("adminAccess.invalidateCache()"), "auth:logout harusnya manggil adminAccess.invalidateCache()");
     });
     await test("admin:getStatus & requireOwner (poin revisi, sistem Admin/Member) — isOwner murni lokal (cocokin email token tersimpan), admin:addMember/removeMember/listChannelMembers TOLAK non-owner walau dipanggil IPC langsung", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("admin:getStatus",[\s\S]*?handle\("admin:removeMember",[\s\S]*?\n\}\);/)[0];
       const handlers = {};
       let savedToken = { email: "diyanhejak@gmail.com" };
@@ -3065,7 +3065,7 @@ async function test(name, fn) {
       await hb.postStatus(mockSlack, "TOKEN", "test"); // gak boleh throw -- status gak boleh nge-block alur utama
     });
     await test("hbStatus:goOnline (poin revisi, diminta user) — \"Mulai Sesi\" auto-buka Slack ke channel status hb-apps abis post Online", async () => {
-      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8");
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("hbStatus:goOnline",[\s\S]*?\n\}\);/)[0];
       const postStatusCalls = [];
       const openSlackCalls = [];
