@@ -60,6 +60,8 @@ export default function CapturePoolStrip({
       </div>
       {previewing && (
         <div
+          role="dialog"
+          aria-modal="true"
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.7)", zIndex: 80, display: "flex", alignItems: "center", justifyContent: "center" }}
           onClick={() => setPreviewing(null)}
         >

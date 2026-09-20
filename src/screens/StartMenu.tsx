@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { FolderOpen, Plus, Upload, Hash, LogOut, Lock, Trash2 } from "lucide-react";
+import { FolderOpen, Plus, Upload, Hash, LogOut, Lock, Trash2, Settings } from "lucide-react";
 import type { AuthStatus, ProjectSummary, SlackChannel, SlackUser } from "../global";
 import ChannelPicker from "./ChannelPicker";
+import SlackSyncSettingsModal from "./SlackSyncSettingsModal";
 
 // Sama kayak UX asli Slack pas bikin channel: lowercase & spasi->dash langsung pas ngetik,
 // karakter gak valid ditolak (gak sekadar dibersihin pas submit). Cermin regex server-side
@@ -11,7 +12,22 @@ function sanitizeChannelInput(raw: string) {
   return raw.toLowerCase().replace(/\s+/g, "-").replace(/[^a-z0-9_-]/g, "");
 }
 
-export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; onOpenProject: (id: string) => void }) {
+export default function StartMenu({
+  auth,
+  isOwner,
+  isAdminMember,
+  onOpenProject,
+}: {
+  auth: AuthStatus;
+  /** Sistem Admin/Member (poin revisi, diminta user) — buka section "Manage Member Admin" DI
+   * DALAM modal Sync & Otomasi Slack. */
+  isOwner: boolean;
+  /** Gate munculnya gear Settings ini sama sekali — user biasa (bukan admin-member channel
+   * "hb-adm") gak butuh liat App-Level Token paste UI, gak ada fitur yang mereka bisa nyalain
+   * dari situ. */
+  isAdminMember: boolean;
+  onOpenProject: (id: string) => void;
+}) {
   const [legacyCount, setLegacyCount] = useState(0);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [channels, setChannels] = useState<SlackChannel[]>([]);
@@ -37,6 +53,10 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
   // navigasi keluar-masuk Start Menu dalam sesi yang sama).
   const [showHbModal, setShowHbModal] = useState(false);
   const [hbBusy, setHbBusy] = useState(false);
+  // Sync 2 Arah Reaction Slack (poin revisi, pindah dari menu Settings dalam project) — ini
+  // pengaturan GLOBAL (App-Level Token, bukan per-project), jadi lebih pas diakses dari Start
+  // Menu (sebelum/di luar buka project manapun), bukan nested di menu bar dalam 1 project.
+  const [showSlackSyncSettings, setShowSlackSyncSettings] = useState(false);
 
   useEffect(() => {
     window.api.project.legacyCount().then(setLegacyCount).catch((err) => setError(err.message));
@@ -152,6 +172,18 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
           <span className="caption">
             {auth.userId} · {auth.team}
           </span>
+          {/* Sistem Admin/Member (poin revisi, diminta user) — gear ini (App-Level Token paste,
+              yang ngaktifin Realtime Sync/Otomasi Kata Kunci) cuma buat admin-member channel
+              "hb-adm", disembunyiin total dari user biasa. Poin revisi (bug ditemukan lewat
+              audit, S01) — OWNER juga HARUS bisa buka ini walau BELUM jadi admin-member (channel
+              "hb-adm" belum pernah dibuat) -- gate isAdminMember doang bikin owner baru gak
+              pernah bisa buka modal yang justru fungsinya bikin channel itu (deadlock diri
+              sendiri). isOwner || isAdminMember: owner SELALU bisa masuk buat onboarding. */}
+          {(isOwner || isAdminMember) && (
+            <button className="icon-btn" title="Sync 2 Arah Reaction Slack..." onClick={() => setShowSlackSyncSettings(true)}>
+              <Settings size={15} />
+            </button>
+          )}
           <button
             className="icon-btn"
             title="Logout"
@@ -341,6 +373,8 @@ export default function StartMenu({ auth, onOpenProject }: { auth: AuthStatus; o
           </div>
         </div>
       )}
+
+      {showSlackSyncSettings && <SlackSyncSettingsModal isOwner={isOwner} onClose={() => setShowSlackSyncSettings(false)} />}
     </div>
   );
 }

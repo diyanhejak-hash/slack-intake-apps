@@ -20,8 +20,15 @@ import {
   Square,
   CheckSquare,
   FileVideo,
+  Check,
+  Settings,
+  Loader2,
+  ChevronDown,
+  ChevronUp,
+  Lock,
+  Unlock,
 } from "lucide-react";
-import type { ItemFile, ProjectItem, Reply, SlackUser, Template, TemplateField } from "../global";
+import type { ArtistPreset, ItemFile, ProjectItem, Reply, SlackUser, StatusPreset, Template, TemplateField } from "../global";
 import { useFileBlobUrl, fileKind } from "../lib/fileUrl";
 const PdfViewer = lazy(() => import("./PdfViewer"));
 const VideoPlayer = lazy(() => import("./VideoPlayer"));
@@ -32,6 +39,7 @@ import QuickSendButton from "./QuickSendButton";
 import EmojiPicker from "./EmojiPicker";
 import { ItemReactionBar, InstantReactionOverlay } from "./ItemReactions";
 import ArtistPicker from "./ArtistPicker";
+import StatusDropdown, { StatusEmoji } from "./StatusDropdown";
 import { hoverDelayHandlers } from "../lib/hoverDelay";
 
 // Slack sendiri gak publish angka resmi "maksimal berapa file per pesan" (dicek: dokumentasi
@@ -75,12 +83,25 @@ export default function Drawer({
   canPrev,
   canNext,
   users,
-  onArtistChange,
+  artistPresets,
+  onAddArtist,
+  onRemoveArtist,
   onManageArtistPresets,
+  statusPresets,
+  onSetStatus,
+  onManageStatusPresets,
   instantIntakeEnabled,
+  onToggleInstantIntake,
+  syncing,
+  reactionTick,
+  phase,
 }: {
   item: ProjectItem;
   projectId: string;
+  /** Tahap alur kerja Setup/Input (poin revisi, diminta user; nama lama "Assign") — "setup"
+   * nyembunyiin dropdown Artis & Status (belum relevan pas masih nyusun daftar item), "input"
+   * nampilin keduanya. */
+  phase: "setup" | "input";
   /** General Display (poin b1 revisi) — level PROJECT, gak reset pas ganti item. */
   projectFiles: ItemFile[];
   onChanged: () => void;
@@ -89,27 +110,47 @@ export default function Drawer({
   canPrev: boolean;
   canNext: boolean;
   users: SlackUser[];
-  onArtistChange: (item: ProjectItem, artistId: string) => void;
+  /** Poin revisi — buat nampilin icon react/emoji preset tiap artis di ArtistPicker. */
+  artistPresets: ArtistPreset[];
+  /** Multi-artist (poin revisi) — assign/lepas 1 artis, dipanggil tiap toggle klik ArtistPicker. */
+  onAddArtist: (item: ProjectItem, artistId: string, artistName: string | null) => void;
+  onRemoveArtist: (item: ProjectItem, artistId: string) => void;
   /** Buka modal Kelola Preset Artis dari dalam ArtistPicker. Toggle Mention/React GLOBAL per
-   * artis (poin revisi) diatur DI modal itu, bukan di sini lagi. */
+   * artis (poin revisi) diatur DI modal itu, bukan di sini lagi. Icon "Assign Mode" di header
+   * section Artis (poin revisi) buka modal yang SAMA — shortcut, gak duplikat toggle-nya. */
   onManageArtistPresets: () => void;
+  /** Fitur Status (poin revisi) — sama pola shared kayak Artis di atas. */
+  statusPresets: StatusPreset[];
+  onSetStatus: (item: ProjectItem, statusId: string | null) => void;
+  onManageStatusPresets: () => void;
   /** Toggle global Instant Intake + Instant Reaction (poin revisi) — matiin QuickSendButton DAN
    * InstantReactionOverlay di sini, "Add React" (ItemReactionBar) TETAP gak kesentuh. */
   instantIntakeEnabled: boolean;
+  onToggleInstantIntake: () => void;
+  /** Poin revisi (diminta user) — item ini lagi nunggu roundtrip reconcile ke Slack (assign/status
+   * baru aja diganti), tampilin animasi spin di label "Artis" sebagai penanda, BUKAN nge-disable
+   * ArtistPicker/StatusDropdown (tetap responsive, update-nya optimistic di MainTable). */
+  syncing?: boolean;
+  /** Poin revisi — refetch trigger buat ItemReactionBar di bawah item Pill (lihat MainTable.tsx),
+   * biar chip react artis langsung nongol abis assign artis dari ArtistPicker TANPA pindah tab. */
+  reactionTick: number;
 }) {
   const isMaximized = useIsWindowMaximized();
-  // Popover Reaction Instan (pil item) ikut ketutup pas pill-hover-zone-nya ilang (mouse out) —
-  // pola sama kayak MainTable.tsx punya reactionCloseTick, audit poin revisi.
-  const [pillCloseTick, setPillCloseTick] = useState(0);
   const [templates, setTemplates] = useState<Template[]>([]);
   const [selectedReplyIds, setSelectedReplyIds] = useState<Set<string>>(new Set());
   const [showTemplateBuilder, setShowTemplateBuilder] = useState(false);
+  // Section Field/Reply collapsible (poin revisi, diminta user) — preferensi tampilan doang,
+  // SENGAJA gak di-reset pas ganti item (lihat useEffect [item.id] di bawah) biar konsisten
+  // selama sesi buka Drawer, bukan kebuka/ketutup sendiri tiap pindah item.
+  const [repliesCollapsed, setRepliesCollapsed] = useState(false);
   // Apa yang lagi tampil di DisplayPane — poin revisi terbaru: General Display (project_files,
   // per-file, statis) DAN Field Display (per REPLY, bisa punya banyak file digabung 1 chip,
   // ada halaman/pager kalau lebih dari 1) sekarang 2 KONSEP TERPISAH, bukan 1 daftar chip datar
   // per-file kayak sebelumnya. Bisa dipicu dari chip DisplayPane sendiri ATAU dari klik file
   // yang nempel di salah satu field kanan.
   const [selection, setSelection] = useState<{ kind: "general"; fileId: string } | { kind: "field"; replyId: string; fileIndex: number } | null>(null);
+  // Poin revisi — status AKTIF item ini, buat chip read-only di bawah item Pill.
+  const statusPreset = statusPresets.find((p) => p.id === item.status_id) || null;
   function selectField(replyId: string, fileId?: string) {
     const reply = item.replies.find((r) => r.id === replyId);
     const idx = fileId ? Math.max(0, reply?.files.findIndex((f) => f.id === fileId) ?? 0) : 0;
@@ -237,12 +278,12 @@ export default function Drawer({
             <ChevronLeft size={16} />
           </button>
         </div>
-        <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+        <div style={{ textAlign: "center", display: "flex", alignItems: "center", justifyContent: "center" }}>
           {/* Koreksi poin revisi sebelumnya — bukan badge sumber (Manual/Folder Import) terpisah,
               tapi NAMA ITEM-nya sendiri yang dibungkus pil. Dibungkus lagi "pill-hover-zone" —
               poin revisi fitur Reaction: overlay reaction INSTAN nongol di pojok pil pas di-hover
               (pola sama kayak Instant Intake, delay 0.5s lewat CSS `.row-quicksend`). */}
-          <div className="pill-hover-zone" style={{ position: "relative", display: "inline-block" }} {...hoverDelayHandlers(undefined, () => setPillCloseTick((v) => v + 1))}>
+          <div className="pill-hover-zone" style={{ position: "relative", display: "inline-flex", alignItems: "center" }} {...hoverDelayHandlers()}>
             <span
               style={{
                 fontWeight: 800,
@@ -255,11 +296,19 @@ export default function Drawer({
             >
               {item.name}
             </span>
-            {instantIntakeEnabled && <InstantReactionOverlay projectId={projectId} itemId={item.id} closeSignal={pillCloseTick} />}
+            {instantIntakeEnabled && <InstantReactionOverlay projectId={projectId} itemId={item.id} />}
+            {/* Poin revisi (diminta user) — chip react (status + artis assignment) sekarang di
+                KANAN title, absolute biar title-nya TETAP CENTER (gak ikut flex yang ngelebarin
+                pill). Tombol "Add React" dihapus (hideButton) — bar ini sekarang murni display. */}
+            <div style={{ position: "absolute", left: "100%", top: "50%", transform: "translateY(-50%)", marginLeft: 8, display: "flex", alignItems: "center", gap: 4, whiteSpace: "nowrap" }}>
+              {statusPreset && (
+                <span title={`Status: ${statusPreset.name}`} style={{ display: "inline-flex", alignItems: "center", padding: 2, fontSize: 15 }}>
+                  <StatusEmoji preset={statusPreset} />
+                </span>
+              )}
+              <ItemReactionBar projectId={projectId} itemId={item.id} refreshToken={reactionTick} hideButton />
+            </div>
           </div>
-          {/* Icon reaction PENDING — selalu kelihatan (beda dari overlay di atas), nambah ke
-              antrean yang dikirim bareng pas "Kirim ke Slack" biasa. */}
-          <ItemReactionBar projectId={projectId} itemId={item.id} />
         </div>
         <div style={{ textAlign: "right" }}>
           <button className="icon-btn" title="Item berikutnya" onClick={onNext} disabled={!canNext}>
@@ -295,31 +344,65 @@ export default function Drawer({
             borderLeft: "1px solid var(--border)",
           }}
         >
-          {/* C7 — ganti artis langsung dari Tab Reply, data sama persis dgn kolom Artis di Tab Table. */}
-          <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border)" }}>
-            <div className="label" style={{ marginBottom: 4 }}>
-              Artis
+          {/* Tahap Setup/Assign (poin revisi, diminta user) — dropdown Artis & Status disembunyiin
+              pas tahap Setup (belum relevan, item-nya sendiri masih disusun), nongol lagi pas
+              tahap Assign. C7 — ganti artis langsung dari Tab Reply, data sama persis dgn kolom
+              Artis di Tab Table. */}
+          {phase === "input" && (
+            <div style={{ padding: "10px 16px", borderBottom: "1px solid var(--border)" }}>
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span className="label" style={{ marginBottom: 0 }}>Artis</span>
+                  {/* Poin revisi (diminta user) — Toggle Realtime Sync + tombol Update dihapus dari
+                      sini, sekarang 1 kontrol GLOBAL di atas tombol "Kirim ke Slack" (MainTable.tsx),
+                      kepake baik dari Tab Table maupun Tab Input. */}
+                  {syncing && <span title="Lagi sinkron ke Slack…" style={{ display: "inline-flex" }}><Loader2 size={12} className="spin" /></span>}
+                </div>
+                {/* Icon "Assign Mode" (poin revisi) — shortcut buka Kelola Preset Artis (section
+                    Mode Mention/React) tanpa perlu buka dropdown Artis Picker dulu. */}
+                <button className="icon-btn" title="Assign Mode (Mention/React)" onClick={onManageArtistPresets}>
+                  <Settings size={14} />
+                </button>
+              </div>
+              {/* Artis Picker (poin revisi) — satu popover buat pilih artis + akses Kelola Preset
+                  Artis, sama persis kayak Tab Table. */}
+              <ArtistPicker item={item} users={users} artistPresets={artistPresets} onAddArtist={onAddArtist} onRemoveArtist={onRemoveArtist} />
+
+              {/* Status (poin revisi, fitur baru) — DI BAWAH Dropdown Artis, sama persis kayak
+                  permintaan lokasi UI-nya. */}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginTop: 8, marginBottom: 4 }}>
+                <span className="label" style={{ marginBottom: 0 }}>Status</span>
+                <button className="icon-btn" title="Kelola Status" onClick={onManageStatusPresets}>
+                  <Settings size={14} />
+                </button>
+              </div>
+              <StatusDropdown statusId={item.status_id} presets={statusPresets} onChange={(statusId) => onSetStatus(item, statusId)} />
             </div>
-            {/* Artis Picker (poin revisi) — satu popover buat pilih artis + akses Kelola Preset
-                Artis, sama persis kayak Tab Table. */}
-            <ArtistPicker item={item} users={users} onArtistChange={onArtistChange} onManagePresets={onManageArtistPresets} />
-          </div>
+          )}
 
           <div style={{ flex: 1, overflow: "auto", padding: 16 }} className="scrollbar-thin">
-            {item.replies.length > 0 && (
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-                <span className="label">Replies ({item.replies.length})</span>
+            {/* Field/Reply section collapsible (poin revisi, diminta user) — header SELALU
+                nongol (klik buat expand/collapse), beda dari sebelumnya yang cuma muncul kalau
+                udah ada reply. Collapse nyembunyiin daftar reply DAN tombol "+ Reply" di footer
+                (lihat di bawah), select-all/trash ikut kesembunyi karena gak ada gunanya kalau
+                daftarnya lagi ketutup. */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6, cursor: "pointer" }} onClick={() => setRepliesCollapsed((v) => !v)}>
+              <span className="label" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                {repliesCollapsed ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+                Replies ({item.replies.length})
+              </span>
+              {!repliesCollapsed && item.replies.length > 0 && (
                 <div style={{ display: "flex", gap: 2 }}>
-                  <button className="icon-btn" title={allSelected ? "Batal pilih semua" : "Pilih semua"} onClick={toggleSelectAll}>
+                  <button className="icon-btn" title={allSelected ? "Batal pilih semua" : "Pilih semua"} onClick={(e) => { e.stopPropagation(); toggleSelectAll(); }}>
                     {allSelected ? <CheckSquare size={14} /> : <Square size={14} />}
                   </button>
-                  <button className="icon-btn" title="Hapus reply terpilih di item ini" onClick={clearSelectedThisItem} disabled={!selectedReplyIds.size}>
+                  <button className="icon-btn" title="Hapus reply terpilih di item ini" onClick={(e) => { e.stopPropagation(); clearSelectedThisItem(); }} disabled={!selectedReplyIds.size}>
                     <Trash2 size={14} />
                   </button>
                 </div>
-              </div>
-            )}
-            {selectedReplyIds.size > 0 && (
+              )}
+            </div>
+            {!repliesCollapsed && selectedReplyIds.size > 0 && (
               <button
                 className="btn"
                 onClick={clearSelectedAllItems}
@@ -329,7 +412,7 @@ export default function Drawer({
                 <Trash2 size={13} /> Hapus di Semua Item ({selectedReplyIds.size})
               </button>
             )}
-            {showTemplateBuilder && (
+            {!repliesCollapsed && showTemplateBuilder && (
               <TemplateBuilder
                 onCancel={() => setShowTemplateBuilder(false)}
                 onSaved={async (tpl) => {
@@ -341,7 +424,7 @@ export default function Drawer({
               />
             )}
 
-            {item.replies.length > 0 && (
+            {!repliesCollapsed && item.replies.length > 0 && (
               <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
                 {item.replies.map((reply) => (
                   <ReplyRow
@@ -371,9 +454,13 @@ export default function Drawer({
           </div>
 
           <div style={{ borderTop: "1px solid var(--border)", padding: 10, display: "flex", gap: 6 }}>
-            <button className="btn" onClick={addBlankField} style={{ flex: 1, justifyContent: "center" }}>
-              <Plus size={14} /> Reply
-            </button>
+            {/* "+ Reply" (poin revisi, diminta user) — disembunyiin pas section Replies ketutup,
+                gak ada gunanya nambah field ke daftar yang lagi disembunyiin. */}
+            {!repliesCollapsed && (
+              <button className="btn" onClick={addBlankField} style={{ flex: 1, justifyContent: "center" }}>
+                <Plus size={14} /> Reply
+              </button>
+            )}
             {/* Template Baru (poin revisi) — dulu cuma bisa dibuat pas item MASIH kosong (lewat
                 picker yang sekarang dihapus, field Default langsung keisi otomatis). Tombol ini
                 satu-satunya jalur bikin template custom baru yang tersisa, jadi TETAP dipertahankan
@@ -656,8 +743,14 @@ function ReplyRow({
   // kalau langsung pakai boolean bakal kedip-kedip. Cuma beneran "leave" (balik ke 0) yang
   // matiin highlight.
   const dragCounter = useRef(0);
+  // Read-only lock (poin revisi, diminta user) — field yang UDAH kekirim ke Slack gak bisa
+  // diedit lagi (isi Slack gak ikut ke-update kalau diedit belakangan), tapi thumbnail file
+  // TETAP tampil & bisa di-klik buat preview. Backend (projects.cjs assertReplyEditable) udah
+  // nolak panggilan edit apa pun buat reply ini juga -- ini cuma nyembunyiin UI-nya.
+  const locked = reply.sent;
 
   async function attachFiles() {
+    if (locked) return;
     const room = capFileRoom(reply.files.length);
     if (room <= 0) return;
     const paths = await window.api.item.pickFiles();
@@ -678,7 +771,7 @@ function ReplyRow({
     setFieldDragOver(false);
     const poolId = e.dataTransfer.getData("application/x-capture-id");
     if (poolId) {
-      if (capFileRoom(reply.files.length) <= 0) return;
+      if (locked || capFileRoom(reply.files.length) <= 0) return;
       const captured = capturePool.find((p) => p.id === poolId);
       if (!captured) return;
       window.api.reply.addCapturedToReply(reply.id, itemId, captured.dataUrl, captured.filename).then(() => {
@@ -688,6 +781,7 @@ function ReplyRow({
       return;
     }
     if (e.dataTransfer.files.length > 0) {
+      if (locked) return;
       const room = capFileRoom(reply.files.length);
       if (room <= 0) return;
       const paths = Array.from(e.dataTransfer.files)
@@ -771,17 +865,26 @@ function ReplyRow({
           // perubahan dari luar (mis. konsolidasi reply pas Merge) tanpa remount paksa.
           key={`${reply.id}:${reply.title}`}
           defaultValue={reply.title}
+          disabled={locked}
           onBlur={(e) => e.target.value !== reply.title && window.api.reply.update(reply.id, { title: e.target.value }).then(onChanged)}
           style={{ flex: 1, border: "none", background: "transparent", fontWeight: 600, padding: "2px 0" }}
         />
         <div className="reply-actions" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          {/* Instant Intake per-field (poin revisi) — kirim CUMA field/reply ini, gak ada modal. */}
-          {instantIntakeEnabled && (
-            <QuickSendButton
-              variant="inline"
-              title="Instant Intake — kirim field ini aja"
-              onClick={() => window.api.send.quick({ projectId, itemId, scope: "field", replyId: reply.id }).then(onChanged)}
-            />
+          {locked && (
+            <>
+              <span title="Udah kekirim ke Slack — gak bisa diedit lagi" style={{ display: "inline-flex", color: "var(--text-muted)" }}><Lock size={12} /></span>
+              <button
+                className="icon-btn"
+                title="Buka gembok — pakai HANYA kalau field ini SEBENARNYA gagal terkirim (mis. field lain di kiriman yang sama gagal), biar bisa dikirim ulang lewat Instant Intake"
+                onClick={() => {
+                  if (confirm("Buka gembok field ini? Cuma lakuin ini kalau field ini BENERAN belum/gagal terkirim ke Slack — kalau ternyata udah kekirim, kirim ulang bisa bikin pesan dobel di Slack.")) {
+                    window.api.reply.unlock(reply.id).then(onChanged);
+                  }
+                }}
+              >
+                <Unlock size={12} />
+              </button>
+            </>
           )}
           <input type="checkbox" checked={selected} onChange={onToggleSelected} />
           <button className="icon-btn" title="Broadcast ke semua item kategori sama" onClick={() => window.api.reply.broadcast(reply.id, projectId).then(onChanged)}>
@@ -795,8 +898,16 @@ function ReplyRow({
 
       {/* Field unified (poin D1) — teks dan file bisa keisi bareng di 1 field yang sama. Tool
           text cuma nongol pas fokus di area ini (CSS :focus-within, lihat styles.css), dan area
-          ini juga terima drag-drop file dari luar & paste gambar/file langsung. */}
-      <div className="field-editor-wrap" onPasteCapture={onFieldPasteCapture}>
+          ini juga terima drag-drop file dari luar & paste gambar/file langsung. Poin revisi
+          (diminta user) — field yang UDAH kekirim (locked) gak nampilin toolbar/editor sama
+          sekali, diganti teks read-only biasa (thumbnail filenya tetap di AttachedFilesRow di
+          bawah, di luar blok ini). */}
+      {locked ? (
+        <div style={{ padding: "4px 0", whiteSpace: "pre-wrap", color: "var(--text-muted)", fontSize: 13 }}>
+          {reply.text_value || <em>(kosong)</em>}
+        </div>
+      ) : (
+      <div className="field-editor-wrap" style={{ position: "relative" }} onPasteCapture={onFieldPasteCapture}>
         {/* onMouseDown preventDefault di tiap tombol toolbar — WAJIB, tanpa ini klik tombol
             narik fokus DOM keluar dari contentEditable SEBELUM handler-nya jalan, bikin Lexical
             baca selection null pas insert (bug: klik Bold/Emoji di editor kosong = gak ngefek). */}
@@ -859,9 +970,39 @@ function ReplyRow({
           defaultValue={reply.text_value || ""}
           onBlurValue={(markdown) => window.api.reply.update(reply.id, { textValue: markdown }).then(onChanged)}
         />
+        {/* Icon centang "selesai edit" (poin revisi) — alternatif klik-di-luar buat commit teks,
+            biar gak disangka tombol lain. Cuma nongol pas field lagi fokus (sama gating :focus-within
+            kayak .field-toolbar, lihat styles.css), overlay di pojok kanan-bawah AREA TEKS-nya. */}
+        <button
+          className="icon-btn field-done-btn"
+          title="Selesai edit"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={() => editorRef.current?.commitAndBlur()}
+        >
+          <Check size={13} />
+        </button>
       </div>
+      )}
 
-      <AttachedFilesRow files={reply.files} onRemove={(fileId) => window.api.reply.removeFile(fileId).then(onChanged)} onSelect={(fileId) => onSelectFile(reply.id, fileId)} />
+      {/* Instant Intake per-field (poin revisi) — pindah ke bawah-kanan field (dulu di baris atas
+          sejajar checkbox/broadcast/trash, ambigu kesenggol). Aktif cuma kalau field-nya udah ada
+          isinya (teks atau file) — gak ada gunanya ngirim field kosong. Koreksi (poin revisi
+          lanjutan): visibility BALIK ke hover-reveal (posisi bawah-kanan TETAP) — pakai className
+          "reply-actions" yang SAMA biar ikut rule CSS fade in/out punya .reply-bubble:hover yang
+          udah ada, bukan selalu-tampil. Poin revisi (diminta user) — field yang UDAH kekirim
+          (locked) gak nampilin tombol ini lagi, gak ada isi baru yang bisa dikirim ulang. */}
+      {!locked && instantIntakeEnabled && (
+        <div className="reply-actions" style={{ display: "flex", justifyContent: "flex-end", marginTop: 4 }}>
+          <QuickSendButton
+            variant="inline"
+            title="Instant Intake — kirim field ini aja"
+            disabled={!(reply.text_value || "").trim() && reply.files.length === 0}
+            onClick={() => window.api.send.quick({ projectId, itemId, scope: "field", replyId: reply.id }).then(onChanged)}
+          />
+        </div>
+      )}
+
+      <AttachedFilesRow files={reply.files} locked={locked} onRemove={(fileId) => window.api.reply.removeFile(fileId).then(onChanged)} onSelect={(fileId) => onSelectFile(reply.id, fileId)} />
 
       {showLinkPrompt && (
         <PromptModal
@@ -887,10 +1028,14 @@ function ReplyRow({
 // scrollbar/wheel yang kurang jelas keliatannya).
 function AttachedFilesRow({
   files,
+  locked,
   onRemove,
   onSelect,
 }: {
   files: { id: string; stored_path: string; original_name: string }[];
+  /** Poin revisi (diminta user) — field UDAH kekirim: thumbnail TETAP tampil & bisa di-klik
+   * buat preview, tapi badge hapus (X) disembunyiin (gak boleh diedit lagi). */
+  locked?: boolean;
   onRemove: (fileId: string) => void;
   onSelect: (fileId: string) => void;
 }) {
@@ -919,7 +1064,7 @@ function AttachedFilesRow({
         style={{ display: "flex", gap: 6, overflowX: "auto", paddingTop: 6 }}
       >
         {files.map((f) => (
-          <AttachedThumb key={f.id} file={f} onRemove={() => onRemove(f.id)} onSelect={() => onSelect(f.id)} />
+          <AttachedThumb key={f.id} file={f} locked={locked} onRemove={() => onRemove(f.id)} onSelect={() => onSelect(f.id)} />
         ))}
       </div>
       {canLeft && (
@@ -948,10 +1093,12 @@ function AttachedFilesRow({
 
 function AttachedThumb({
   file,
+  locked,
   onRemove,
   onSelect,
 }: {
   file: { id: string; stored_path: string; original_name: string };
+  locked?: boolean;
   onRemove: () => void;
   onSelect: () => void;
 }) {
@@ -985,31 +1132,35 @@ function AttachedThumb({
         )}
       </div>
       {/* Lingkaran merah solid (bukan outline tipis lagi) — poin revisi: badge X sebelumnya
-          nyaris gak keliatan di atas thumbnail terang. */}
-      <button
-        style={{
-          position: "absolute",
-          top: -5,
-          right: -5,
-          width: 16,
-          height: 16,
-          borderRadius: "50%",
-          background: "var(--danger)",
-          border: "1.5px solid var(--surface)",
-          color: "#fff",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          padding: 0,
-        }}
-        title="Hapus file ini"
-        onClick={(e) => {
-          e.stopPropagation();
-          onRemove();
-        }}
-      >
-        <X size={10} strokeWidth={3} />
-      </button>
+          nyaris gak keliatan di atas thumbnail terang. Poin revisi lanjutan (diminta user) —
+          field UDAH kekirim (locked): badge hapus disembunyiin, thumbnail TETAP tampil & bisa
+          diklik buat preview (onSelect di div luar gak kesentuh). */}
+      {!locked && (
+        <button
+          style={{
+            position: "absolute",
+            top: -5,
+            right: -5,
+            width: 16,
+            height: 16,
+            borderRadius: "50%",
+            background: "var(--danger)",
+            border: "1.5px solid var(--surface)",
+            color: "#fff",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 0,
+          }}
+          title="Hapus file ini"
+          onClick={(e) => {
+            e.stopPropagation();
+            onRemove();
+          }}
+        >
+          <X size={10} strokeWidth={3} />
+        </button>
+      )}
     </div>
   );
 }
@@ -1272,7 +1423,7 @@ function CapturePreviewModal({
   onCancel: () => void;
 }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div className="card" style={{ padding: 12, background: "var(--surface)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>Preview hasil capture</div>

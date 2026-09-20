@@ -44,6 +44,10 @@ export interface RichTextEditorHandle {
   /** Baca isi editor saat ini sebagai string Slack mrkdwn — buat submit aktif (mis. composer
    * pas Enter), beda dari onBlurValue yang cuma jalan pas blur. */
   getMarkdown: () => string;
+  /** Poin revisi: icon centang "selesai edit" di dalam field — alternatif klik-di-luar buat commit
+   * perubahan. Blur DOM root-nya aja (bukan reimplement logic commit) — native onBlur yang udah
+   * ada (handleBlur) yang jalanin convert+onBlurValue, sama persis kayak klik area luar. */
+  commitAndBlur: () => void;
 }
 
 // Nempel LexicalEditor instance dari context (cuma bisa dibaca dari DALAM LexicalComposer) ke
@@ -182,6 +186,9 @@ const RichTextEditor = forwardRef<
           markdown = $convertToMarkdownString(SLACK_TRANSFORMERS, undefined, true);
         });
         return markdown;
+      },
+      commitAndBlur() {
+        editorRef.current?.getRootElement()?.blur();
       },
     }),
     []

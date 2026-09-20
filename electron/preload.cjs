@@ -7,11 +7,20 @@ contextBridge.exposeInMainWorld("api", {
     status: () => ipcRenderer.invoke("auth:status"),
     login: () => ipcRenderer.invoke("auth:login"),
     logout: () => ipcRenderer.invoke("auth:logout"),
+    testRefresh: () => ipcRenderer.invoke("auth:testRefresh"),
+  },
+  admin: {
+    getStatus: () => ipcRenderer.invoke("admin:getStatus"),
+    listChannelMembers: () => ipcRenderer.invoke("admin:listChannelMembers"),
+    addMember: (userId) => ipcRenderer.invoke("admin:addMember", userId),
+    removeMember: (userId) => ipcRenderer.invoke("admin:removeMember", userId),
   },
   slack: {
     listChannels: () => ipcRenderer.invoke("slack:listChannels"),
     listUsers: () => ipcRenderer.invoke("slack:listUsers"),
     createChannel: (payload) => ipcRenderer.invoke("slack:createChannel", payload),
+    listCustomEmojis: () => ipcRenderer.invoke("slack:listCustomEmojis"),
+    downloadEmojiImage: (url) => ipcRenderer.invoke("slack:downloadEmojiImage", url),
   },
   project: {
     releaseUndo: (id) => ipcRenderer.invoke("project:releaseUndo", id),
@@ -21,6 +30,7 @@ contextBridge.exposeInMainWorld("api", {
     list: () => ipcRenderer.invoke("project:list"),
     load: (id) => ipcRenderer.invoke("project:load", id),
     rename: (id, name) => ipcRenderer.invoke("project:rename", id, name),
+    setPhase: (id, phase) => ipcRenderer.invoke("project:setPhase", id, phase),
     delete: (id) => ipcRenderer.invoke("project:delete", id),
     duplicate: (id, newName) => ipcRenderer.invoke("project:duplicate", id, newName),
     export: (id) => ipcRenderer.invoke("project:export", id),
@@ -38,10 +48,21 @@ contextBridge.exposeInMainWorld("api", {
     pickFiles: () => ipcRenderer.invoke("item:pickFiles"),
     attachFiles: (itemId, filePaths) => ipcRenderer.invoke("item:attachFiles", itemId, filePaths),
     removeFile: (fileId) => ipcRenderer.invoke("item:removeFile", fileId),
+    addArtist: (payload) => ipcRenderer.invoke("item:addArtist", payload),
+    removeArtist: (payload) => ipcRenderer.invoke("item:removeArtist", payload),
+    setStatus: (payload) => ipcRenderer.invoke("item:setStatus", payload),
+    // Push dari sync 2 arah reaction Slack->App (poin revisi) — item berubah di BACKGROUND (bukan
+    // hasil aksi user di renderer ini), renderer perlu tau biar auto-refresh.
+    onChanged: (cb) => {
+      const listener = (_e, data) => cb(data);
+      ipcRenderer.on("item:changed", listener);
+      return () => ipcRenderer.removeListener("item:changed", listener);
+    },
   },
   reply: {
     add: (payload) => ipcRenderer.invoke("reply:add", payload),
     update: (replyId, patch) => ipcRenderer.invoke("reply:update", replyId, patch),
+    unlock: (replyId) => ipcRenderer.invoke("reply:unlock", replyId),
     remove: (replyId) => ipcRenderer.invoke("reply:remove", replyId),
     removeMany: (replyIds) => ipcRenderer.invoke("reply:removeMany", replyIds),
     removeFile: (fileId) => ipcRenderer.invoke("reply:removeFile", fileId),
@@ -80,13 +101,50 @@ contextBridge.exposeInMainWorld("api", {
     save: (payload) => ipcRenderer.invoke("artistPreset:save", payload),
     remove: (id) => ipcRenderer.invoke("artistPreset:remove", id),
   },
+  statusPreset: {
+    list: () => ipcRenderer.invoke("statusPreset:list"),
+    save: (payload) => ipcRenderer.invoke("statusPreset:save", payload),
+    remove: (id) => ipcRenderer.invoke("statusPreset:remove", id),
+    reorder: (orderedIds) => ipcRenderer.invoke("statusPreset:reorder", orderedIds),
+  },
   artistAssignMode: {
     get: () => ipcRenderer.invoke("artistAssignMode:get"),
-    set: (mode) => ipcRenderer.invoke("artistAssignMode:set", mode),
+    setMention: (enabled) => ipcRenderer.invoke("artistAssignMode:setMention", enabled),
+    setReact: (enabled) => ipcRenderer.invoke("artistAssignMode:setReact", enabled),
   },
   instantIntake: {
     get: () => ipcRenderer.invoke("instantIntake:get"),
     set: (enabled) => ipcRenderer.invoke("instantIntake:set", enabled),
+  },
+  artistRealtimeAssign: {
+    get: () => ipcRenderer.invoke("artistRealtimeAssign:get"),
+    set: (enabled) => ipcRenderer.invoke("artistRealtimeAssign:set", enabled),
+  },
+  artistAssign: {
+    syncProject: (projectId) => ipcRenderer.invoke("artistAssign:syncProject", projectId),
+    syncItem: (payload) => ipcRenderer.invoke("artistAssign:syncItem", payload),
+  },
+  slackPull: {
+    syncProject: (projectId) => ipcRenderer.invoke("slackPull:syncProject", projectId),
+    syncItem: (payload) => ipcRenderer.invoke("slackPull:syncItem", payload),
+  },
+  slackSocket: {
+    hasToken: () => ipcRenderer.invoke("slackSocket:hasToken"),
+    isRunning: () => ipcRenderer.invoke("slackSocket:isRunning"),
+    setToken: (token) => ipcRenderer.invoke("slackSocket:setToken", token),
+    clearToken: () => ipcRenderer.invoke("slackSocket:clearToken"),
+    onStatus: (cb) => {
+      const listener = (_e, data) => cb(data);
+      ipcRenderer.on("slackSocket:status", listener);
+      return () => ipcRenderer.removeListener("slackSocket:status", listener);
+    },
+  },
+  keywordAutomation: {
+    getEnabled: () => ipcRenderer.invoke("keywordAutomation:getEnabled"),
+    setEnabled: (enabled) => ipcRenderer.invoke("keywordAutomation:setEnabled", enabled),
+    list: () => ipcRenderer.invoke("keywordAutomation:list"),
+    save: (payload) => ipcRenderer.invoke("keywordAutomation:save", payload),
+    remove: (id) => ipcRenderer.invoke("keywordAutomation:remove", id),
   },
   itemReaction: {
     list: (itemId) => ipcRenderer.invoke("itemReaction:list", itemId),

@@ -21,7 +21,7 @@
 // permanen sampai baris itu di-hover+leave lagi. Fix: simpen timer di ELEMEN DOM-nya sendiri
 // (bukan closure JS), jadi handler mana pun yang lagi aktif (dari render manapun) baca/tulis ke
 // tempat yang SAMA — gak ada lagi "timer orphan" yang gak kejangkau.
-export function hoverDelayHandlers(delayMs = 500, onLeave?: () => void) {
+export function hoverDelayHandlers(delayMs = 500) {
   return {
     onMouseEnter: (e: React.MouseEvent<HTMLElement & { _hoverTimer?: ReturnType<typeof setTimeout> }>) => {
       const el = e.currentTarget;
@@ -32,7 +32,6 @@ export function hoverDelayHandlers(delayMs = 500, onLeave?: () => void) {
       const el = e.currentTarget;
       if (el._hoverTimer) { clearTimeout(el._hoverTimer); el._hoverTimer = undefined; }
       el.classList.remove("hover-ready");
-      onLeave?.();
     },
   };
 }

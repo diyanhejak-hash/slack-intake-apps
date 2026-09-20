@@ -69,7 +69,7 @@ function referencedFile(file) {
   for (const table of ["project_files", "item_files", "reply_files"]) {
     if (db.prepare(`SELECT 1 FROM ${table} WHERE stored_path=?`).get(file)) return true;
   }
-  if (db.prepare(`SELECT 1 FROM batch_files WHERE path=?`).get(file) || db.prepare(`SELECT 1 FROM emoji_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM artist_presets WHERE image_path=?`).get(file)) return true;
+  if (db.prepare(`SELECT 1 FROM batch_files WHERE path=?`).get(file) || db.prepare(`SELECT 1 FROM emoji_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM artist_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM status_presets WHERE image_path=?`).get(file)) return true;
   return [...deletedItems.values(), ...mergedItems.values()].some((s) => JSON.stringify(s).includes(JSON.stringify(file)));
 }
 
@@ -94,12 +94,14 @@ function isManagedFile(filePath) {
     `SELECT 1 FROM reply_files f JOIN replies r ON r.id=f.reply_id JOIN items i ON i.id=r.item_id JOIN projects p ON p.id=i.project_id WHERE f.stored_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
   ].some((sql) => db.prepare(sql).get(resolved, activeScope.userId, activeScope.teamId));
   if (scoped) return true;
-  // emoji_presets/artist_presets GLOBAL (gak ada owner_user_id/owner_team_id, pola sama kayak
-  // hyperlink_presets) — bug yang pernah ketauan (poin revisi): thumbnail custom emoji gagal
-  // kebaca terus-terusan ("File tidak terdaftar di project") gara-gara tabel ini kelewat di-cek
-  // di atas. artist_presets.image_path ikut ditambah dari awal biar gak kena bug yang sama.
+  // emoji_presets/artist_presets/status_presets GLOBAL (gak ada owner_user_id/owner_team_id,
+  // pola sama kayak hyperlink_presets) — bug yang pernah ketauan (poin revisi): thumbnail custom
+  // emoji gagal kebaca terus-terusan ("File tidak terdaftar di project") gara-gara tabel ini
+  // kelewat di-cek di atas. status_presets ditambah di sini juga (poin revisi fitur Status) biar
+  // gak kena bug SAMA PERSIS lagi.
   return !!db.prepare(`SELECT 1 FROM emoji_presets WHERE image_path = ?`).get(resolved)
-    || !!db.prepare(`SELECT 1 FROM artist_presets WHERE image_path = ?`).get(resolved);
+    || !!db.prepare(`SELECT 1 FROM artist_presets WHERE image_path = ?`).get(resolved)
+    || !!db.prepare(`SELECT 1 FROM status_presets WHERE image_path = ?`).get(resolved);
 }
 
 function ownsProject(id) { return !!getProject(id); }
@@ -120,15 +122,50 @@ function ownsFile(id) {
 function createProject({ name, channelId, channelName }) {
   if (!activeScope.userId || !activeScope.teamId) throw new Error("Sesi Slack tidak valid.");
   const id = uuid();
+  // phase='setup' (poin revisi, tahap Setup/Input) -- project BARU mulai dari nyusun daftar
+  // item dulu, beda dari default kolom 'input' di ALTER TABLE (db.cjs) yang khusus buat project
+  // LAMA biar gak tiba-tiba kehilangan kolom Artis/Status/Pull/Push yang udah dipakai.
   db.prepare(
-    `INSERT INTO projects (id, owner_user_id, owner_team_id, name, channel_id, channel_name, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO projects (id, owner_user_id, owner_team_id, name, channel_id, channel_name, phase, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, 'setup', ?, ?)`
   ).run(id, activeScope.userId, activeScope.teamId, name, channelId, channelName, now(), now());
   return getProject(id);
+}
+
+// Tahapan gak boleh dilewatin (poin revisi, diminta user) -- Setup->Input digate: SEMUA item
+// harus udah punya thread (nama item-nya kekirim ke Slack) dulu, reply/field boleh nyusul di
+// tahap Input. Input->Setup (poin revisi lanjutan, diminta user) SEKARANG diblok total -- SEKALI
+// masuk Input gak bisa balik lagi (one-way door), gak kayak keputusan awal yang masih ngebolehin
+// mundur bebas. Guard di BACKEND juga (bukan cuma tombol UI di-disable), biar gak bisa dilewatin
+// lewat panggilan IPC langsung.
+function setProjectPhase(id, phase) {
+  if (phase !== "setup" && phase !== "input") throw new Error("Tahap tidak valid.");
+  const project = getProject(id);
+  if (!project) throw new Error("Project tidak ditemukan.");
+  if (phase === "setup" && project.phase === "input") {
+    throw new Error("Tahap Input gak bisa dibalikin lagi ke Setup.");
+  }
+  if (phase === "input") {
+    if (!project.items.length || !project.items.every((i) => i.has_thread)) {
+      throw new Error("Semua item harus udah terkirim ke Slack dulu (tahap Setup) sebelum lanjut ke tahap Input.");
+    }
+  }
+  db.prepare(`UPDATE projects SET phase = ?, updated_at = ? WHERE id = ? AND owner_user_id=? AND owner_team_id=?`).run(phase, now(), id, activeScope.userId, activeScope.teamId);
 }
 
 function listProjects() {
   if (!activeScope.userId || !activeScope.teamId) return [];
   return db.prepare(`SELECT * FROM projects WHERE owner_user_id=? AND owner_team_id=? ORDER BY updated_at DESC`).all(activeScope.userId, activeScope.teamId);
+}
+
+// Poin revisi (diminta user) — "punya thread apa belum" per item, dibutuhin frontend buat mutusin
+// overlay Instant Intake (item BARU, belum pernah kirim) vs Push (item UDAH ADA, tinggal sinkron
+// ulang assign/status, gak perlu kirim ulang isi). Key-nya SAMA persis kayak threadKey() main.cjs
+// (JSON.stringify([teamId, userId, projectId, itemId])) — activeScope.userId/teamId di sini SELALU
+// sama kayak authStore.loadToken() pas user lagi login (setScope dipanggil abis auth:status/login).
+function itemHasThread(projectId, itemId) {
+  if (!activeScope.userId || !activeScope.teamId) return false;
+  const key = JSON.stringify([activeScope.teamId, activeScope.userId, projectId, itemId]);
+  return !!db.prepare(`SELECT 1 FROM threads WHERE item_name = ?`).get(key);
 }
 
 function getProject(id) {
@@ -137,10 +174,20 @@ function getProject(id) {
   const items = db.prepare(`SELECT * FROM items WHERE project_id = ? ORDER BY sort_order ASC`).all(id);
   for (const item of items) {
     item.reactions = listItemReactions(item.id);
+    item.artists = listItemArtists(item.id);
+    item.has_thread = itemHasThread(id, item.id);
+    // status_sent_shortcode (poin revisi) -- dibutuhin backend (artistAssign:syncProject) buat
+    // tau item mana yang MASIH punya reaction status live di Slack walau status_id-nya udah null
+    // (mis. preset status-nya dihapus) -- perlu ikut disinkron/dibersihin, bukan cuma yang
+    // status_id-nya keisi doang.
+    const statusRow = getItemStatus(item.id);
+    item.status_id = statusRow?.status_id || null;
+    item.status_sent_shortcode = statusRow?.sent_shortcode || null;
     item.files = db.prepare(`SELECT * FROM item_files WHERE item_id = ? ORDER BY sort_order ASC`).all(item.id);
     item.replies = db.prepare(`SELECT * FROM replies WHERE item_id = ? ORDER BY sort_order ASC`).all(item.id);
     for (const reply of item.replies) {
       reply.files = db.prepare(`SELECT * FROM reply_files WHERE reply_id = ?`).all(reply.id);
+      reply.sent = !!reply.sent_at;
     }
   }
   // General Display (project_files) — beda dari item.files, lihat catatan skema di db.cjs.
@@ -172,6 +219,12 @@ function addItem(projectId, { name, artistId, artistName, source }) {
   db.prepare(
     `INSERT INTO items (id, project_id, name, artist_id, artist_name, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(id, projectId, name, artistId || null, artistName || null, maxOrder + 1, source || "manual");
+  // Poin revisi (bug ditemukan lewat audit, D12) — artistId DULU cuma nulis ke kolom LEGACY
+  // items.artist_id/artist_name (dipertahankan buat kompatibilitas snapshot Undo/merge lama),
+  // padahal render/pengiriman SEKARANG baca dari item_artists (multi-artist, listItemArtists).
+  // Caller yang nyuplai artistId (mis. item:addManual) diam-diam KEHILANGAN assignment-nya --
+  // item ke-buat, tapi artists:[] kosong di UI. Sekarang item_artists ikut keisi juga.
+  if (artistId) addItemArtist(id, artistId, artistName);
   touchProject(projectId);
   return id;
 }
@@ -193,6 +246,27 @@ function updateItem(itemId, patch) {
   if (projectId) touchProject(projectId);
 }
 
+// Multi-artist per item (poin revisi) — ganti items.artist_id/artist_name tunggal. UNIQUE
+// (item_id,artist_id) di skema jaga 1 artis gak dobel keassign; INSERT OR IGNORE bikin add
+// idempoten kalau kepanggil ulang (mis. race klik cepat).
+function listItemArtists(itemId) {
+  return db.prepare(`SELECT id, artist_id, artist_name FROM item_artists WHERE item_id = ? ORDER BY sort_order ASC`).all(itemId);
+}
+
+function addItemArtist(itemId, artistId, artistName) {
+  if (!artistId) return;
+  const maxOrder = db.prepare(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM item_artists WHERE item_id = ?`).get(itemId).m;
+  db.prepare(`INSERT OR IGNORE INTO item_artists (id, item_id, artist_id, artist_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(uuid(), itemId, artistId, artistName || null, maxOrder + 1);
+  const projectId = projectIdForItem(itemId);
+  if (projectId) touchProject(projectId);
+}
+
+function removeItemArtist(itemId, artistId) {
+  db.prepare(`DELETE FROM item_artists WHERE item_id = ? AND artist_id = ?`).run(itemId, artistId);
+  const projectId = projectIdForItem(itemId);
+  if (projectId) touchProject(projectId);
+}
+
 function removeItem(itemId) {
   const projectId = projectIdForItem(itemId);
   if (!ownsItem(itemId)) throw new Error("Item tidak ditemukan.");
@@ -210,13 +284,25 @@ function restoreItem(snapshot) {
   db.prepare(
     `INSERT INTO items (id, project_id, name, artist_id, artist_name, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)`
   ).run(snapshot.id, snapshot.project_id, snapshot.name, snapshot.artist_id, snapshot.artist_name, snapshot.sort_order, snapshot.source);
+  for (const a of snapshot.artists || []) {
+    db.prepare(`INSERT OR IGNORE INTO item_artists (id, item_id, artist_id, artist_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(uuid(), snapshot.id, a.artist_id, a.artist_name, 0);
+  }
+  // Poin revisi (bug ditemukan lewat audit, D03) — snapshot.status GAK PERNAH ada, getProject()
+  // (sumber deletedItems.set di removeItem) nulis status_id/status_sent_shortcode LANGSUNG ke
+  // item, bukan nested di field "status" -- baca dari situ, bukan snapshot.status.
+  if (snapshot.status_id && db.prepare(`SELECT 1 FROM status_presets WHERE id = ?`).get(snapshot.status_id)) {
+    db.prepare(`INSERT INTO item_status (item_id, status_id, sent_shortcode, updated_at) VALUES (?, ?, ?, ?)`).run(snapshot.id, snapshot.status_id, snapshot.status_sent_shortcode, new Date().toISOString());
+  }
   for (const f of snapshot.files) {
     db.prepare(`INSERT INTO item_files (id, item_id, stored_path, original_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(f.id, snapshot.id, f.stored_path, f.original_name, f.sort_order);
   }
   for (const r of snapshot.replies) {
+    // Poin revisi (bug ditemukan lewat audit, D03) — sent_at HARUS ikut restore, biar field yang
+    // UDAH terkirim sebelum dihapus TETAP kekunci read-only setelah Undo (bukan kebuka lagi buat
+    // diedit padahal Slack udah punya isi lama itu).
     db.prepare(
-      `INSERT INTO replies (id, item_id, category, type, title, text_value, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)`
-    ).run(r.id, snapshot.id, r.category, r.type, r.title, r.text_value, r.sort_order);
+      `INSERT INTO replies (id, item_id, category, type, title, text_value, sort_order, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(r.id, snapshot.id, r.category, r.type, r.title, r.text_value, r.sort_order, r.sent_at || null);
     for (const rf of r.files) {
       db.prepare(`INSERT INTO reply_files (id, reply_id, stored_path, original_name) VALUES (?, ?, ?, ?)`).run(rf.id, r.id, rf.stored_path, rf.original_name);
     }
@@ -233,7 +319,10 @@ function undoRelations(itemId) {
 }
 
 function restoreRelations(item) {
-  for (const r of item.reactions || []) db.prepare('INSERT OR IGNORE INTO item_reactions(id,item_id,emoji_type,emoji_value,slack_shortcode,sort_order) VALUES(?,?,?,?,?,?)').run(r.id, item.id, r.emoji_type, r.emoji_value, r.slack_shortcode, r.sort_order);
+  // sent (poin revisi, bug ditemukan lewat audit D03) — reaction yang UDAH beneran ada di Slack
+  // sebelum item dihapus harus TETAP tercatat "sent" abis Undo, bukan ke-reset jadi pending lagi
+  // (defaultnya kolom ini 0 kalau gak disebut eksplisit).
+  for (const r of item.reactions || []) db.prepare('INSERT OR IGNORE INTO item_reactions(id,item_id,emoji_type,emoji_value,slack_shortcode,sort_order,sent) VALUES(?,?,?,?,?,?,?)').run(r.id, item.id, r.emoji_type, r.emoji_value, r.slack_shortcode, r.sort_order, r.sent ? 1 : 0);
   for (const a of item.applications || []) if (a.reply_file_id && db.prepare('SELECT 1 FROM batch_files WHERE id=?').get(a.file_id) && db.prepare('SELECT 1 FROM reply_files WHERE id=?').get(a.reply_file_id)) db.prepare('INSERT OR REPLACE INTO batch_applications(file_id,item_id,reply_file_id) VALUES(?,?,?)').run(a.file_id, item.id, a.reply_file_id);
   for (const t of item.targets || []) if (db.prepare('SELECT 1 FROM batch_sections WHERE id=?').get(t.section_id) && db.prepare('SELECT 1 FROM replies WHERE id=?').get(t.reply_id)) db.prepare('INSERT OR REPLACE INTO batch_targets(section_id,item_id,reply_id) VALUES(?,?,?)').run(t.section_id, item.id, t.reply_id);
 }
@@ -278,6 +367,8 @@ function snapshotItemDeep(row) {
     name: row.name,
     artist_id: row.artist_id,
     artist_name: row.artist_name,
+    artists: listItemArtists(row.id),
+    status: getItemStatus(row.id),
     sort_order: row.sort_order,
     source: row.source,
     fileIds: db.prepare(`SELECT id FROM item_files WHERE item_id = ?`).all(row.id).map((x) => x.id),
@@ -296,6 +387,13 @@ function snapshotItemDeep(row) {
 function mergeItems(itemIds, separator = ", ") {
   if (!Array.isArray(itemIds) || new Set(itemIds).size !== itemIds.length || !itemIds.every(ownsItem) || new Set(itemIds.map(projectIdForItem)).size !== 1) throw new Error("Merge hanya boleh untuk item berbeda dalam satu project.");
   if (itemIds.length < 2) return { keepId: itemIds[0], snapshot: null };
+  // Merge dimatikan total pas tahap Input (poin revisi, diminta user) -- item yang udah kekirim
+  // beresiko bikin pesan Slack yatim (orphan) kalau ikut di-merge/dihapus, ditunda ke versi
+  // berikutnya (lihat diskusi merge-sync-ke-Slack). Guard di BACKEND, bukan cuma tombol UI.
+  const mergeProjectId = projectIdForItem(itemIds[0]);
+  if (getProject(mergeProjectId)?.phase === "input") {
+    throw new Error("Merge gak bisa dipakai lagi setelah tahap Input (item udah kekirim ke Slack).");
+  }
   const rows = itemIds.map((id) => db.prepare(`SELECT * FROM items WHERE id = ?`).get(id)).filter(Boolean);
   rows.sort((a, b) => a.sort_order - b.sort_order);
   const keep = rows[0];
@@ -315,48 +413,89 @@ function mergeItems(itemIds, separator = ", ") {
   for (const r of rest) {
     db.prepare(`UPDATE item_files SET item_id = ? WHERE item_id = ?`).run(keep.id, r.id);
     db.prepare(`UPDATE replies SET item_id = ? WHERE item_id = ?`).run(keep.id, r.id);
+    // Artis item yang digabung ikut di-UNION ke keep (poin revisi multi-artist) — bukan dibuang,
+    // item_artists.item_id CASCADE-DELETE begitu item r dihapus di bawah kalau gak dipindah dulu.
+    for (const a of listItemArtists(r.id)) addItemArtist(keep.id, a.artist_id, a.artist_name);
     db.prepare(`DELETE FROM items WHERE id = ?`).run(r.id);
   }
 
   // Konsolidasi reply kategori sama jadi 1 di bawah keep.id. Poin revisi: gabungan file-nya
   // gak boleh numpuk lewat 10 di 1 reply (sinkron batas manual attach, MAX_FILES_PER_REPLY di
   // Drawer.tsx) -- kelebihan dipecah jadi reply BARU (kategori/title/type sama), bukan 1 reply
-  // segepok. nextSortOrder dihitung SEKALI di luar loop kategori (bukan per-kategori) karena
-  // sort_order itu GLOBAL per item_id (lintas kategori), bukan per-kategori sendiri-sendiri.
+  // segepok.
   const MERGE_MAX_FILES_PER_REPLY = 10;
-  const replies = db.prepare(`SELECT * FROM replies WHERE item_id = ?`).all(keep.id);
+  const replies = db.prepare(`SELECT * FROM replies WHERE item_id = ? ORDER BY sort_order ASC`).all(keep.id);
   const byCategory = new Map();
   for (const r of replies) {
     if (!byCategory.has(r.category)) byCategory.set(r.category, []);
     byCategory.get(r.category).push(r);
   }
-  let nextSortOrder = (db.prepare(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM replies WHERE item_id = ?`).get(keep.id).m) + 1;
+  // Poin revisi (bug dilaporkan: "Animatic, General Note, Animatic" -- urutan field kacau abis
+  // merge) -- reply overflow (hasil split >10 file) DULU dikasih sort_order dari counter GLOBAL
+  // (MAX(sort_order)+1), jadi selalu numpuk di UJUNG urutan semua field, bukan nempel di bawah
+  // primary-nya sendiri. Fix: overflow dikasih sort_order SEMENTARA (0, gak penting), dicatat di
+  // overflowsByPrimary, lalu SEMUA reply (bukan cuma yang di-split) di-renumber ulang di akhir —
+  // urutan asli antar-kategori tetap kejaga (dari `replies` yang udah ORDER BY sort_order),
+  // overflow disisipkan PERSIS setelah primary-nya.
+  const deletedReplyIds = new Set();
+  const overflowsByPrimary = new Map();
   for (const group of byCategory.values()) {
     if (group.length < 2) continue;
     group.sort((a, b) => a.sort_order - b.sort_order);
     const primary = group[0];
-    const combinedText = group.map((g) => g.text_value).filter(Boolean).join("\n") || null;
+    // Poin revisi: teks identik (100%, after trim) di antara reply yang digabung gak usah dobel —
+    // cukup 1. Dedup SEBELUM join, urutan tetap ikut sort_order (kemunculan pertama yang dipakai).
+    const seenText = new Set();
+    const texts = [];
+    for (const g of group) {
+      const t = (g.text_value || "").trim();
+      if (!t || seenText.has(t)) continue;
+      seenText.add(t);
+      texts.push(t);
+    }
+    const combinedText = texts.join("\n") || null;
     db.prepare(`UPDATE replies SET text_value = ? WHERE id = ?`).run(combinedText, primary.id);
 
     // Kumpulin urutan file dari SEMUA reply di group (termasuk punya primary sendiri) SEBELUM
     // hapus baris reply lama -- reply_files.reply_id ON DELETE CASCADE, jadi file yang masih
     // nunjuk ke reply lama ikut kehapus kalau baris itu dihapus duluan sebelum di-assign ulang.
-    const fileIds = [];
-    for (const r of group) fileIds.push(...db.prepare(`SELECT id FROM reply_files WHERE reply_id = ?`).all(r.id).map((f) => f.id));
+    const files = [];
+    for (const r of group) files.push(...db.prepare(`SELECT id, original_name FROM reply_files WHERE reply_id = ?`).all(r.id));
 
     let targetReplyId = primary.id;
     let countInTarget = 0;
-    for (const fileId of fileIds) {
+    // Poin revisi: file identik (nama sama) dalam 1 field (reply target) yang sama gak usah dobel
+    // — cukup 1. Dedup per-target (bukan global), biar konsisten sama batas 10/reply. File yang
+    // di-skip DIBIARKAN nunjuk ke reply lama-nya, ikut CASCADE-DELETE pas reply lama dihapus di bawah.
+    let namesInTarget = new Set();
+    for (const file of files) {
+      if (namesInTarget.has(file.original_name)) continue;
       if (countInTarget >= MERGE_MAX_FILES_PER_REPLY) {
         targetReplyId = uuid();
         db.prepare(`INSERT INTO replies (id, item_id, category, type, title, text_value, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)`)
-          .run(targetReplyId, keep.id, primary.category, primary.type, primary.title, null, nextSortOrder++);
+          .run(targetReplyId, keep.id, primary.category, primary.type, primary.title, null, 0);
+        if (!overflowsByPrimary.has(primary.id)) overflowsByPrimary.set(primary.id, []);
+        overflowsByPrimary.get(primary.id).push(targetReplyId);
         countInTarget = 0;
+        namesInTarget = new Set();
       }
-      db.prepare(`UPDATE reply_files SET reply_id = ? WHERE id = ?`).run(targetReplyId, fileId);
+      db.prepare(`UPDATE reply_files SET reply_id = ? WHERE id = ?`).run(targetReplyId, file.id);
+      namesInTarget.add(file.original_name);
       countInTarget++;
     }
-    for (const dup of group.slice(1)) db.prepare(`DELETE FROM replies WHERE id = ?`).run(dup.id);
+    for (const dup of group.slice(1)) {
+      db.prepare(`DELETE FROM replies WHERE id = ?`).run(dup.id);
+      deletedReplyIds.add(dup.id);
+    }
+  }
+
+  let order = 0;
+  for (const r of replies) {
+    if (deletedReplyIds.has(r.id)) continue;
+    db.prepare(`UPDATE replies SET sort_order = ? WHERE id = ?`).run(order++, r.id);
+    for (const overflowId of overflowsByPrimary.get(r.id) || []) {
+      db.prepare(`UPDATE replies SET sort_order = ? WHERE id = ?`).run(order++, overflowId);
+    }
   }
 
   mergedItems.set(snapshot.undoId, snapshot);
@@ -371,6 +510,7 @@ function unmergeItems(snapshot) {
   snapshot = mergedItems.get(snapshot.undoId);
   if (!snapshot || !snapshot.items.every((i) => ownsProject(i.project_id))) throw new Error("Snapshot merge tidak tersedia untuk sesi ini.");
   db.prepare('DELETE FROM item_files WHERE item_id=?').run(snapshot.keepId);
+  db.prepare('DELETE FROM item_artists WHERE item_id=?').run(snapshot.keepId); // buang hasil UNION merge, restore ke daftar asli keep dari snapshot di bawah
   for (const r of db.prepare(`SELECT id FROM replies WHERE item_id = ?`).all(snapshot.keepId)) {
     db.prepare(`DELETE FROM replies WHERE id = ?`).run(r.id);
   }
@@ -382,6 +522,7 @@ function unmergeItems(snapshot) {
         `INSERT INTO items (id, project_id, name, artist_id, artist_name, sort_order, source) VALUES (?, ?, ?, ?, ?, ?, ?)`
       ).run(item.id, item.project_id, item.name, item.artist_id, item.artist_name, item.sort_order, item.source);
     }
+    for (const a of item.artists || []) db.prepare(`INSERT OR IGNORE INTO item_artists (id, item_id, artist_id, artist_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(uuid(), item.id, a.artist_id, a.artist_name, 0);
     for (const f of item.files) db.prepare('INSERT INTO item_files(id,item_id,stored_path,original_name,sort_order) VALUES(?,?,?,?,?)').run(f.id, item.id, f.stored_path, f.original_name, f.sort_order);
     for (const rep of item.replies) {
       db.prepare(
@@ -510,7 +651,36 @@ function addReplyWithFiles(itemId, { title, textValue, filePaths = [] }) {
   return id;
 }
 
+// Read-only lock (poin revisi, diminta user) — field yang UDAH PERNAH kekirim ke Slack gak
+// boleh diedit lagi (isi Slack gak ikut ke-update kalau field diedit setelah terkirim, lihat
+// diskusi rename item yang gak nyampe ke pesan root) -- guard di BACKEND, bukan cuma UI, biar
+// gak bisa dilewatin lewat panggilan IPC langsung.
+function isReplySent(replyId) {
+  return !!db.prepare(`SELECT sent_at FROM replies WHERE id = ?`).get(replyId)?.sent_at;
+}
+function assertReplyEditable(replyId) {
+  if (isReplySent(replyId)) throw new Error("Field ini udah kekirim ke Slack, gak bisa diedit lagi.");
+}
+function markReplySent(replyId) {
+  db.prepare(`UPDATE replies SET sent_at = ? WHERE id = ?`).run(now(), replyId);
+}
+
+// "Buka gembok" (poin revisi, diminta user) — override manual field yang kelanjur ke-lock
+// (sent_at) padahal SEBENARNYA gagal terkirim (mis. field lain di batch yang sama gagal, atau
+// kiriman parsial yang gak jelas nasibnya di Slack) — biar user bisa kirim ulang lewat Instant
+// Intake per-field tanpa harus lewat "Pulihkan Kiriman" (yang cuma nongol di ringkasan hasil
+// kirim, gak selalu kepegang lagi kalau modal itu udah ketutup). Sengaja gak ngapa-ngapain ke
+// Slack sendiri (murni lokal) -- user yang tanggung jawab pastiin gak dobel post kalau field-nya
+// TERNYATA udah beneran nyampe di Slack.
+function unlockReply(replyId) {
+  db.prepare(`UPDATE replies SET sent_at = NULL WHERE id = ?`).run(replyId);
+  const row = db.prepare(`SELECT item_id FROM replies WHERE id=?`).get(replyId);
+  const projectId = row && projectIdForItem(row.item_id);
+  if (projectId) touchProject(projectId);
+}
+
 function updateReply(replyId, { title, textValue }) {
+  assertReplyEditable(replyId);
   const fields = [];
   const values = [];
   if (title !== undefined) {
@@ -547,7 +717,8 @@ function removeReplies(replyIds) {
 // Hapus SATU file dari reply (bukan seluruh reply) — reply unified (D1) bisa punya banyak file
 // bareng, jadi butuh cara lepas satu tanpa ngehapus field-nya total.
 function removeReplyFile(fileId) {
-  const row = db.prepare(`SELECT rf.stored_path, r.item_id FROM reply_files rf JOIN replies r ON r.id=rf.reply_id WHERE rf.id=?`).get(fileId);
+  const row = db.prepare(`SELECT rf.stored_path, rf.reply_id, r.item_id FROM reply_files rf JOIN replies r ON r.id=rf.reply_id WHERE rf.id=?`).get(fileId);
+  if (row) assertReplyEditable(row.reply_id);
   db.prepare(`DELETE FROM reply_files WHERE id = ?`).run(fileId);
   removeStoredFile(row?.stored_path);
 }
@@ -573,6 +744,7 @@ function removeRepliesByCategory(projectId, categories) {
 
 function addFilesToReply(replyId, itemId, sourcePaths) {
   if (db.prepare('SELECT item_id FROM replies WHERE id=?').get(replyId)?.item_id !== itemId) throw new Error("Reply tidak berada dalam item ini.");
+  assertReplyEditable(replyId);
   for (const p of sourcePaths) {
     const { storedPath, originalName } = stageFile(itemId, p);
     db.prepare(`INSERT INTO reply_files (id, reply_id, stored_path, original_name) VALUES (?, ?, ?, ?)`).run(uuid(), replyId, storedPath, originalName);
@@ -600,8 +772,15 @@ function broadcastReply(replyId, projectId) {
     transaction(() => {
       for (const { id: itemId } of otherItems) {
         const existing = db.prepare(`SELECT * FROM replies WHERE item_id = ? AND category = ?`).get(itemId, source.category);
-        const targetReplyId = existing ? existing.id : uuid();
-        if (existing) {
+        // Poin revisi (bug ditemukan lewat audit, D02) — target yang UDAH kekirim/dikunci
+        // (sent_at) gak boleh ketiban-timpa broadcast (kontradiksi sama read-only lock: UI masih
+        // nunjukin "terkunci/terkirim" padahal isinya udah beda dari Slack). Kalau ketemu locked,
+        // treat kayak GAK ADA existing match -- bikin reply BARU di kategori sama (normal, merge
+        // udah biasa nanganin >1 reply kategori sama), biar isi broadcast tetap nyampe tanpa
+        // ngerusak field yang udah final.
+        const overwritable = existing && !existing.sent_at;
+        const targetReplyId = overwritable ? existing.id : uuid();
+        if (overwritable) {
           oldPaths.push(...db.prepare(`SELECT stored_path FROM reply_files WHERE reply_id=?`).all(existing.id).map((r) => r.stored_path));
           db.prepare(`UPDATE replies SET title = ?, type = ?, text_value = ? WHERE id = ?`).run(source.title, source.type, source.text_value, existing.id);
           db.prepare(`DELETE FROM reply_files WHERE reply_id = ?`).run(existing.id);
@@ -647,6 +826,7 @@ function addCapturedFile(itemId, dataUrl, filename) {
 
 function addCapturedFileToReply(replyId, itemId, dataUrl, filename) {
   if (db.prepare('SELECT item_id FROM replies WHERE id=?').get(replyId)?.item_id !== itemId) throw new Error("Reply tidak berada dalam item ini.");
+  assertReplyEditable(replyId);
   const storedPath = writeDataUrlFile_(itemId, dataUrl, filename);
   db.prepare(`INSERT INTO reply_files (id, reply_id, stored_path, original_name) VALUES (?, ?, ?, ?)`).run(uuid(), replyId, storedPath, filename);
   const projectId = projectIdForItem(itemId);
@@ -724,16 +904,25 @@ function applyBatchSections(projectId) {
         }
       }
     }
+    // Batasan 10 file per field (poin revisi, diminta user: "batch file masukin file ke field
+    // apa adanya, harusnya per field 10 file") -- sinkron sama batas manual attach
+    // (MAX_FILES_PER_REPLY, Drawer.tsx) & merge (MERGE_MAX_FILES_PER_REPLY di atas). batch_targets
+    // dipakai sebagai "pointer ke field yang lagi nerima file BARU" doang (bukan riwayat penuh) --
+    // begitu field itu PENUH (>=10) atau UDAH TERKIRIM (sent_at, dikunci read-only), pointer-nya
+    // di-upsert ke field baru; file yang UDAH kepasang di field lama TETAP di situ, gak dipindah.
+    const BATCH_MAX_FILES_PER_REPLY = 10;
     transaction(() => {
       for (const entry of staged) {
-        let target = db.prepare(`SELECT reply_id FROM batch_targets WHERE section_id=? AND item_id=?`).get(entry.section.id, entry.itemId);
-        if (!target || !db.prepare(`SELECT 1 FROM replies WHERE id=?`).get(target.reply_id)) {
-          const replyId = addReplyWithFiles(entry.itemId, { title: entry.section.name });
+        const target = db.prepare(`SELECT reply_id FROM batch_targets WHERE section_id=? AND item_id=?`).get(entry.section.id, entry.itemId);
+        const targetRow = target && db.prepare(`SELECT sent_at FROM replies WHERE id=?`).get(target.reply_id);
+        const currentCount = targetRow ? db.prepare(`SELECT COUNT(*) AS n FROM reply_files WHERE reply_id=?`).get(target.reply_id).n : 0;
+        let replyId = target?.reply_id;
+        if (!targetRow || targetRow.sent_at || currentCount >= BATCH_MAX_FILES_PER_REPLY) {
+          replyId = addReplyWithFiles(entry.itemId, { title: entry.section.name });
           db.prepare(`INSERT INTO batch_targets(section_id,item_id,reply_id) VALUES(?,?,?) ON CONFLICT(section_id,item_id) DO UPDATE SET reply_id=excluded.reply_id`).run(entry.section.id, entry.itemId, replyId);
-          target = { reply_id: replyId };
         }
         const replyFileId = uuid();
-        db.prepare(`INSERT INTO reply_files(id,reply_id,stored_path,original_name) VALUES(?,?,?,?)`).run(replyFileId, target.reply_id, entry.storedPath, entry.file.filename);
+        db.prepare(`INSERT INTO reply_files(id,reply_id,stored_path,original_name) VALUES(?,?,?,?)`).run(replyFileId, replyId, entry.storedPath, entry.file.filename);
         db.prepare(`INSERT INTO batch_applications(file_id,item_id,reply_file_id) VALUES(?,?,?)`).run(entry.file.id, entry.itemId, replyFileId);
       }
       touchProject(projectId);
@@ -771,7 +960,7 @@ function nextEmojiPresetOrder() {
 }
 
 // `shortcode` (poin revisi: fitur Reaction) — nama Slack TANPA titik dua, dari field `colons`
-// picker mr-emoji (contoh emoji.colons ":grinning:" -> disimpan "grinning"). Opsional buat jaga
+// picker emoji-mart (contoh emoji.colons ":grinning:" -> disimpan "grinning"). Opsional buat jaga
 // kompatibilitas kalau ada caller lama yang belum ngasih, tapi SEMUA pemanggil baru wajib ngasih
 // biar preset ini bisa dipakai jadi reaction.
 function addUnicodeEmojiPreset(char, shortcode) {
@@ -815,28 +1004,40 @@ function listArtistPresets() {
 
 // Upsert (bukan add-only) — satu preset per member_id, wajar untuk EDIT ulang nickname/code
 // name/PNG-nya. `id` dikasih = update baris yang ada; gak dikasih = insert baru (member_id WAJIB
-// belum punya preset). `sourcePath` opsional — gak diisi = PNG lama (kalau ada) dipertahankan.
-function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath }) {
+// belum punya preset). `sourcePath`/`unicodeValue` OPSIONAL DAN saling eksklusif — gak dikasih
+// dua-duanya = emoji lama (kalau ada) dipertahankan apa adanya (cuma edit nickname doang, gak
+// nyentuh emoji). `sourcePath` dikasih = gambar baru menang, unicode value lama dikosongin.
+// `unicodeValue` dikasih = emoji standar baru menang, gambar lama (kalau ada) dikosongin+dihapus.
+// (poin revisi, bug dilaporkan: "abis Simpan, emoji standar balik jadi kode nama lagi" — dulu
+// gak ada tempat nyimpen KARAKTER-nya sendiri, cuma code_name/shortcode doang, jadi abis reload
+// gak ada cara nampilin balik emoji-nya, cuma teks shortcode.)
+function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath, unicodeValue }) {
   if (!memberId) throw new Error("Member Slack wajib dipilih.");
   const cleanCodeName = codeName ? String(codeName).trim().toLowerCase().replace(/[^a-z0-9_+-]/g, "") : null;
   const cleanNickname = nickname ? String(nickname).trim() : null;
   const existing = id ? db.prepare(`SELECT * FROM artist_presets WHERE id = ?`).get(id) : null;
   if (id && !existing) throw new Error("Preset artis tidak ditemukan.");
   let imagePath = existing?.image_path || null;
+  let unicodeVal = existing?.unicode_value || null;
   if (sourcePath) {
     const staged = stageFile("artist-presets", sourcePath);
     if (existing?.image_path) removeStoredFile(existing.image_path);
     imagePath = staged.storedPath;
+    unicodeVal = null;
+  } else if (unicodeValue) {
+    if (existing?.image_path) removeStoredFile(existing.image_path);
+    imagePath = null;
+    unicodeVal = unicodeValue;
   }
   if (existing) {
-    db.prepare(`UPDATE artist_presets SET member_id=?, nickname=?, code_name=?, image_path=? WHERE id=?`).run(memberId, cleanNickname, cleanCodeName, imagePath, id);
+    db.prepare(`UPDATE artist_presets SET member_id=?, nickname=?, code_name=?, image_path=?, unicode_value=? WHERE id=?`).run(memberId, cleanNickname, cleanCodeName, imagePath, unicodeVal, id);
     return id;
   }
   if (db.prepare(`SELECT 1 FROM artist_presets WHERE member_id = ?`).get(memberId)) {
     throw new Error("Member ini udah punya preset artis.");
   }
   const newId = uuid();
-  db.prepare(`INSERT INTO artist_presets (id, member_id, nickname, code_name, image_path) VALUES (?, ?, ?, ?, ?)`).run(newId, memberId, cleanNickname, cleanCodeName, imagePath);
+  db.prepare(`INSERT INTO artist_presets (id, member_id, nickname, code_name, image_path, unicode_value) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, memberId, cleanNickname, cleanCodeName, imagePath, unicodeVal);
   return newId;
 }
 
@@ -846,20 +1047,98 @@ function removeArtistPreset(id) {
   db.prepare(`DELETE FROM artist_presets WHERE id = ?`).run(id);
 }
 
-// "both" DIHAPUS (poin revisi) — mode assign sekarang HARUS salah satu (Mention ATAU React),
-// gak boleh dua-duanya aktif sekaligus. "none" tetap ada buat kasus "matiin dua-duanya".
-const ARTIST_ASSIGN_MODES = ["mention", "react", "none"];
-
-// Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis (bukan per-artis/per-item
-// lagi). Singleton 1 baris di artist_assign_mode (id selalu 1, di-seed 'mention' pas migrasi).
-function getArtistAssignMode() {
-  return db.prepare(`SELECT mode FROM artist_assign_mode WHERE id = 1`).get()?.mode || "mention";
+// ---------- Status Preset (poin revisi, fitur "Status" per item) ----------
+// GLOBAL, daftar bebas (bukan 1 per member) — lihat catatan skema di db.cjs.
+function listStatusPresets() {
+  return db.prepare(`SELECT * FROM status_presets ORDER BY sort_order ASC`).all();
 }
 
-function setArtistAssignMode(mode) {
-  if (!ARTIST_ASSIGN_MODES.includes(mode)) throw new Error("Mode assign gak valid.");
-  db.prepare(`UPDATE artist_assign_mode SET mode = ? WHERE id = 1`).run(mode);
-  return mode;
+// `sourcePath`/`unicodeValue` saling eksklusif, sama aturan kayak saveArtistPreset (lihat
+// komentar di situ) — poin revisi, bug dilaporkan: emoji standar balik jadi teks kode nama abis
+// Simpan, gara-gara dulu gak ada tempat nyimpen KARAKTER-nya sendiri.
+function saveStatusPreset({ id, name, codeName, sourcePath, unicodeValue }) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) throw new Error("Nama status wajib diisi.");
+  const cleanCodeName = codeName ? String(codeName).trim().toLowerCase().replace(/[^a-z0-9_+-]/g, "") : "";
+  if (!cleanCodeName) throw new Error("Emoji status wajib dipilih.");
+  const existing = id ? db.prepare(`SELECT * FROM status_presets WHERE id = ?`).get(id) : null;
+  if (id && !existing) throw new Error("Preset status tidak ditemukan.");
+  let imagePath = existing?.image_path || null;
+  let unicodeVal = existing?.unicode_value || null;
+  if (sourcePath) {
+    const staged = stageFile("status-presets", sourcePath);
+    if (existing?.image_path) removeStoredFile(existing.image_path);
+    imagePath = staged.storedPath;
+    unicodeVal = null;
+  } else if (unicodeValue) {
+    if (existing?.image_path) removeStoredFile(existing.image_path);
+    imagePath = null;
+    unicodeVal = unicodeValue;
+  }
+  if (existing) {
+    db.prepare(`UPDATE status_presets SET name=?, code_name=?, image_path=?, unicode_value=? WHERE id=?`).run(cleanName, cleanCodeName, imagePath, unicodeVal, id);
+    return id;
+  }
+  const maxOrder = db.prepare(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM status_presets`).get().m;
+  const newId = uuid();
+  db.prepare(`INSERT INTO status_presets (id, name, code_name, image_path, unicode_value, sort_order) VALUES (?, ?, ?, ?, ?, ?)`).run(newId, cleanName, cleanCodeName, imagePath, unicodeVal, maxOrder + 1);
+  return newId;
+}
+
+function removeStatusPreset(id) {
+  const row = db.prepare(`SELECT image_path FROM status_presets WHERE id = ?`).get(id);
+  if (row?.image_path) removeStoredFile(row.image_path);
+  db.prepare(`DELETE FROM status_presets WHERE id = ?`).run(id);
+}
+
+// Drag-reorder (poin revisi, diminta user) — sama pola persis reorderReplies, urutan ini yang
+// dipakai listStatusPresets() (ORDER BY sort_order ASC) buat urutan tampil di dropdown Status.
+function reorderStatusPresets(orderedIds) {
+  const stmt = db.prepare(`UPDATE status_presets SET sort_order = ? WHERE id = ?`);
+  orderedIds.forEach((id, i) => stmt.run(i, id));
+}
+
+// Status AKTIF per item (poin revisi) — CUMA 1 per item, lihat catatan skema item_status di
+// db.cjs buat kenapa terpisah dari item_reactions.
+function getItemStatus(itemId) {
+  return db.prepare(`SELECT status_id, sent_shortcode FROM item_status WHERE item_id = ?`).get(itemId) || null;
+}
+
+function setItemStatus(itemId, statusId) {
+  db.prepare(
+    `INSERT INTO item_status (item_id, status_id, sent_shortcode, updated_at) VALUES (?, ?, NULL, ?)
+     ON CONFLICT(item_id) DO UPDATE SET status_id = excluded.status_id, updated_at = excluded.updated_at`
+  ).run(itemId, statusId || null, new Date().toISOString());
+  const projectId = projectIdForItem(itemId);
+  if (projectId) touchProject(projectId);
+}
+
+// Dipanggil reconcileItemStatusState (main.cjs) abis reactions.add/remove beneran sukses ke
+// Slack -- nyimpen shortcode yang SEKARANG live, biar reconcile berikutnya tau apa yang perlu
+// dihapus kalau status ganti lagi. `sent_shortcode=null` = gak ada reaction status live sama sekali.
+function setItemStatusSentShortcode(itemId, shortcode) {
+  db.prepare(
+    `INSERT INTO item_status (item_id, status_id, sent_shortcode, updated_at) VALUES (?, NULL, ?, ?)
+     ON CONFLICT(item_id) DO UPDATE SET sent_shortcode = excluded.sent_shortcode, updated_at = excluded.updated_at`
+  ).run(itemId, shortcode || null, new Date().toISOString());
+}
+
+// Mode assign Mention/React (poin revisi — balik lagi bisa DUA-duanya aktif bareng, koreksi dari
+// percobaan sebelumnya yang sempat dipaksa mutually-exclusive) — GLOBAL buat SEMUA artis (bukan
+// per-artis/per-item), 2 flag independen. Singleton 1 baris di artist_assign_mode.
+function getArtistAssignModes() {
+  const row = db.prepare(`SELECT mention_enabled, react_enabled FROM artist_assign_mode WHERE id = 1`).get();
+  return { mention: !!row?.mention_enabled, react: !!row?.react_enabled };
+}
+
+function setMentionEnabled(enabled) {
+  db.prepare(`UPDATE artist_assign_mode SET mention_enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
+  return !!enabled;
+}
+
+function setReactEnabled(enabled) {
+  db.prepare(`UPDATE artist_assign_mode SET react_enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
+  return !!enabled;
 }
 
 // Toggle global Instant Intake/Instant Reaction (poin revisi) — singleton, gak mempengaruhi
@@ -870,6 +1149,58 @@ function getInstantIntakeEnabled() {
 
 function setInstantIntakeEnabled(enabled) {
   db.prepare(`UPDATE instant_intake_setting SET enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
+  return !!enabled;
+}
+
+// Otomasi Kata Kunci (poin revisi — digeneralisasi dari "Otomasi WIP" yang awalnya hardcode).
+// GLOBAL, OFF default. Deteksi kata + eksekusi (set status/assign artis)-nya dikerjain di main.cjs
+// (perlu Socket Mode + slack.cjs), fungsi di sini cuma simpan ON/OFF-nya + CRUD daftar mapping-nya.
+function getKeywordAutomationEnabled() {
+  return !!db.prepare(`SELECT enabled FROM keyword_automation_setting WHERE id = 1`).get()?.enabled;
+}
+
+function setKeywordAutomationEnabled(enabled) {
+  db.prepare(`UPDATE keyword_automation_setting SET enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
+  return !!enabled;
+}
+
+function listKeywordAutomations() {
+  return db.prepare(`SELECT * FROM keyword_automations ORDER BY sort_order ASC`).all();
+}
+
+// Upsert -- `id` dikasih = update baris yang ada; gak dikasih = insert baru. Keyword yang SAMA
+// boleh dipakai lebih dari 1 baris (misal "@WIP" mau trigger status DAN artis sekaligus) — gak
+// ada constraint UNIQUE, masing-masing baris independen.
+function saveKeywordAutomation({ id, keyword, targetType, targetId }) {
+  const cleanKeyword = String(keyword || "").trim();
+  if (!cleanKeyword) throw new Error("Kata kunci wajib diisi.");
+  if (!["status", "artist"].includes(targetType)) throw new Error("Tipe target harus \"status\" atau \"artist\".");
+  if (!targetId) throw new Error("Target (status/artis) wajib dipilih.");
+  if (id) {
+    if (!db.prepare(`SELECT 1 FROM keyword_automations WHERE id = ?`).get(id)) throw new Error("Otomasi kata kunci tidak ditemukan.");
+    db.prepare(`UPDATE keyword_automations SET keyword=?, target_type=?, target_id=? WHERE id=?`).run(cleanKeyword, targetType, targetId, id);
+    return id;
+  }
+  const maxOrder = db.prepare(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM keyword_automations`).get().m;
+  const newId = uuid();
+  db.prepare(`INSERT INTO keyword_automations (id, keyword, target_type, target_id, sort_order) VALUES (?, ?, ?, ?, ?)`).run(newId, cleanKeyword, targetType, targetId, maxOrder + 1);
+  return newId;
+}
+
+function removeKeywordAutomation(id) {
+  db.prepare(`DELETE FROM keyword_automations WHERE id = ?`).run(id);
+}
+
+// Toggle global "sesi assign artis realtime" (poin revisi) — GLOBAL, dipakai bareng ArtistPicker
+// Tab Table & Tab Reply. Sinkronisasi live-nya sendiri (post/update pesan mention, add/remove
+// reaction) dikerjain di main.cjs (butuh akses slack.cjs + token) -- fungsi di sini cuma simpan
+// state ON/OFF-nya.
+function getRealtimeAssignEnabled() {
+  return !!db.prepare(`SELECT enabled FROM artist_realtime_assign WHERE id = 1`).get()?.enabled;
+}
+
+function setRealtimeAssignEnabled(enabled) {
+  db.prepare(`UPDATE artist_realtime_assign SET enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
   return !!enabled;
 }
 
@@ -897,8 +1228,33 @@ function addItemReaction(itemId, { emojiType, emojiValue, slackShortcode }) {
   return id;
 }
 
-function removeItemReaction(id) {
+// unassignArtist=false (poin revisi) dipakai internal pas reaction ini SUKSES KEKIRIM ke Slack
+// dan baris pending-nya dibersihin (send:start/send:quick) -- itu bukan user "batal assign",
+// gak boleh ikut lepas chip artis-nya. Default true = user beneran klik X chip react (lewat
+// itemReaction:remove) -- ITU baru "batal", chip artis terkait ikut kehapus (bidirectional).
+function removeItemReaction(id, { unassignArtist = true } = {}) {
+  const row = db.prepare(`SELECT item_id, emoji_type, emoji_value FROM item_reactions WHERE id = ?`).get(id);
+  if (unassignArtist && row?.emoji_type === "custom") {
+    const artist = db.prepare(
+      `SELECT ia.artist_id FROM item_artists ia JOIN artist_presets ap ON ap.member_id = ia.artist_id WHERE ia.item_id = ? AND ap.code_name = ?`
+    ).get(row.item_id, row.emoji_value);
+    if (artist) removeItemArtist(row.item_id, artist.artist_id);
+  }
   db.prepare(`DELETE FROM item_reactions WHERE id = ?`).run(id);
+}
+
+// Poin revisi (bug dilaporkan: "chip react hilang abis kekirim, ambigu") — dipanggil GANTI
+// removeItemReaction begitu reactions.add SUKSES (send:start/send:quick/realtime artis) —
+// baris-nya TETAP ada (chip tetap kelihatan), cuma ditandain "sent" biar beda gaya dari yang
+// masih pending. Hapus beneran (dari Slack maupun lokal) baru kejadian kalau user KLIK
+// chip-nya (itemReaction:remove, main.cjs — cek `sent` dulu, kalau iya reactions.remove ke
+// Slack duluan sebelum baris lokal ikut dihapus).
+function markItemReactionSent(id) {
+  db.prepare(`UPDATE item_reactions SET sent = 1 WHERE id = ?`).run(id);
+}
+
+function getItemReaction(id) {
+  return db.prepare(`SELECT * FROM item_reactions WHERE id = ?`).get(id) || null;
 }
 
 // Poin revisi: "React semua Item, atau React hanya item ini" — antre reaction yang SAMA ke
@@ -1040,9 +1396,21 @@ function importProject(payload) {
       const replyFileMap = new Map();
       for (const item of src.items) {
         if (!item || typeof item.name !== "string" || !Array.isArray(item.replies || [])) throw new Error("Data item tidak valid.");
-        const newItemId = addItem(newProject.id, { name: item.name, artistId: item.artist_id, artistName: item.artist_name, source: item.source });
+        const newItemId = addItem(newProject.id, { name: item.name, source: item.source });
         itemMap.set(item.id, newItemId);
+        // item.artists (baru) ATAU fallback item.artist_id tunggal (file export lama, poin
+        // revisi multi-artist belum ada) — biar file export lawas tetap ke-import bener.
+        const artists = item.artists?.length ? item.artists : item.artist_id ? [{ artist_id: item.artist_id, artist_name: item.artist_name }] : [];
+        for (const artist of artists) addItemArtist(newItemId, artist.artist_id, artist.artist_name);
         for (const reaction of item.reactions || []) addItemReaction(newItemId, { emojiType: reaction.emoji_type, emojiValue: reaction.emoji_value, slackShortcode: reaction.slack_shortcode });
+        // Poin revisi (bug ditemukan lewat audit, D04) — exportProject NYERTAIN status_id/
+        // status_sent_shortcode (lewat getProject()), tapi importProject DULU gak pernah
+        // mbaliki-in -- Export/Import & Save As (yang numpang fungsi ini) diam-diam ngebuang
+        // status item. Preset-nya dicek masih ada di instalasi TUJUAN (bisa beda dari yang
+        // export, presetnya global bukan ikut export) sebelum di-restore.
+        if (item.status_id && db.prepare(`SELECT 1 FROM status_presets WHERE id = ?`).get(item.status_id)) {
+          db.prepare(`INSERT INTO item_status (item_id, status_id, sent_shortcode, updated_at) VALUES (?, ?, ?, ?)`).run(newItemId, item.status_id, item.status_sent_shortcode || null, now());
+        }
         for (const file of item.files || []) {
           const storedPath = stageWrite(newItemId, Buffer.from(file.dataBase64, "base64"), file.original_name); staged.push(storedPath);
           db.prepare(`INSERT INTO item_files (id, item_id, stored_path, original_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(uuid(), newItemId, storedPath, file.original_name, file.sort_order || 0);
@@ -1136,7 +1504,9 @@ module.exports = {
   ownsItem,
   ownsReply,
   ownsFile,
+  projectIdForItem,
   createProject,
+  setProjectPhase,
   listProjects,
   getProject,
   touchProject,
@@ -1162,6 +1532,8 @@ module.exports = {
   removeProjectFile,
   addReplyWithFiles,
   updateReply,
+  markReplySent,
+  unlockReply,
   removeReply,
   removeReplies,
   removeReplyFile,
@@ -1188,12 +1560,32 @@ module.exports = {
   listArtistPresets,
   saveArtistPreset,
   removeArtistPreset,
-  getArtistAssignMode,
-  setArtistAssignMode,
+  listStatusPresets,
+  saveStatusPreset,
+  removeStatusPreset,
+  reorderStatusPresets,
+  getItemStatus,
+  setItemStatus,
+  setItemStatusSentShortcode,
+  getArtistAssignModes,
+  setMentionEnabled,
+  setReactEnabled,
   getInstantIntakeEnabled,
   setInstantIntakeEnabled,
+  getKeywordAutomationEnabled,
+  setKeywordAutomationEnabled,
+  listKeywordAutomations,
+  saveKeywordAutomation,
+  removeKeywordAutomation,
+  listItemArtists,
+  addItemArtist,
+  removeItemArtist,
+  getRealtimeAssignEnabled,
+  setRealtimeAssignEnabled,
   listItemReactions,
   addItemReaction,
+  markItemReactionSent,
+  getItemReaction,
   addReactionToAllItems,
   removeItemReaction,
   ownsItemReaction,
@@ -1207,7 +1599,8 @@ for (const name of [
   "addCapturedFile", "addCapturedFileToReply", "restoreItem", "mergeItems", "unmergeItems",
   "removeItem", "deleteProject", "removeReply", "removeReplies", "removeRepliesByCategory",
   "broadcastReply", "saveBatchSections", "applyBatchSections", "importProject", "duplicateProject",
-  "addCustomEmojiPreset", "removeEmojiPreset", "saveArtistPreset", "removeArtistPreset"
+  "addCustomEmojiPreset", "removeEmojiPreset", "saveArtistPreset", "removeArtistPreset",
+  "saveStatusPreset", "removeStatusPreset"
 ]) {
   const mutate = module.exports[name];
   module.exports[name] = (...args) => transaction(() => mutate(...args));

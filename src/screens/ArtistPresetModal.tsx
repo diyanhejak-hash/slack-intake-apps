@@ -7,10 +7,10 @@
 //      assignment di seluruh app.
 import { useEffect, useState } from "react";
 import { X, Trash2, ChevronDown, ChevronRight, AtSign, SmilePlus, CheckSquare, Square, Plus } from "lucide-react";
-import type { ArtistAssignMode, ArtistGroup, ArtistPreset, EmojiPreset, SlackUser } from "../global";
+import type { ArtistAssignModes, ArtistGroup, ArtistPreset, EmojiPreset, SlackUser } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
-import EmojiPicker from "./EmojiPicker";
+import { CombinedEmojiPickerButton } from "./EmojiPicker";
 
 export default function ArtistPresetModal({
   users,
@@ -28,7 +28,7 @@ export default function ArtistPresetModal({
   onClose: () => void;
 }) {
   const [presets, setPresets] = useState<ArtistPreset[]>([]);
-  const [assignMode, setAssignMode] = useState<ArtistAssignMode>("mention");
+  const [assignModes, setAssignModes] = useState<ArtistAssignModes>({ mention: true, react: false });
   const [infoOpen, setInfoOpen] = useState(true);
   const [dropdownOpen, setDropdownOpen] = useState(true);
 
@@ -41,22 +41,22 @@ export default function ArtistPresetModal({
   }
   useEffect(() => {
     refreshPresets();
-    window.api.artistAssignMode.get().then(setAssignMode);
+    window.api.artistAssignMode.get().then(setAssignModes);
   }, []);
 
   const presetByMember = new Map(presets.map((p) => [p.member_id, p]));
 
-  // Poin revisi: Mention ATAU React, gak boleh dua-duanya (dulu bisa "both") — klik salah satu
-  // langsung PINDAH kesitu (matiin yang lain otomatis). Klik yang LAGI aktif = matiin (balik ke
-  // "none", dua-duanya nonaktif).
+  // Poin revisi (balik lagi bisa DUA-duanya aktif bareng, koreksi dari percobaan sebelumnya yang
+  // sempat mutually-exclusive) — toggle independen, klik cuma flip flag yang diklik doang.
   async function toggleAssignMode(which: "mention" | "react") {
-    const next = assignMode === which ? "none" : which;
-    setAssignMode(next);
-    await window.api.artistAssignMode.set(next);
+    const next = { ...assignModes, [which]: !assignModes[which] };
+    setAssignModes(next);
+    if (which === "mention") await window.api.artistAssignMode.setMention(next.mention);
+    else await window.api.artistAssignMode.setReact(next.react);
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+    <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
       <div
         className="card"
         style={{ padding: 16, width: 620, maxHeight: "82vh", display: "flex", flexDirection: "column", background: "var(--surface)" }}
@@ -64,7 +64,7 @@ export default function ArtistPresetModal({
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexShrink: 0 }}>
           <h3>Preset Artis</h3>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" onClick={onClose} aria-label="Tutup" title="Tutup">
             <X size={14} />
           </button>
         </div>
@@ -89,22 +89,22 @@ export default function ArtistPresetModal({
             <>
               <div className="label" style={{ marginBottom: 4 }}>Artis assign mode</div>
               <p className="caption" style={{ margin: "0 0 8px" }}>
-                Kirim sebagai pesan "@user" atau "React Emoji".
+                Kirim sebagai pesan "@user" dan/atau "React Emoji" — bisa dua-duanya aktif bareng.
               </p>
               <div style={{ display: "flex", gap: 6, marginBottom: 14 }}>
                 <button
                   className="icon-btn"
-                  title={`Mention (@artis di-post pas kirim) — ${assignMode === "mention" ? "aktif" : "nonaktif"}`}
+                  title={`Mention (@artis di-post pas kirim) — ${assignModes.mention ? "aktif" : "nonaktif"}`}
                   onClick={() => toggleAssignMode("mention")}
-                  style={assignMode === "mention" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
+                  style={assignModes.mention ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
                 >
                   <AtSign size={14} />
                 </button>
                 <button
                   className="icon-btn"
-                  title={`Reaction (antre code name artis, gak ada mention) — ${assignMode === "react" ? "aktif" : "nonaktif"}`}
+                  title={`Reaction (antre code name artis, gak ada mention) — ${assignModes.react ? "aktif" : "nonaktif"}`}
                   onClick={() => toggleAssignMode("react")}
-                  style={assignMode === "react" ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
+                  style={assignModes.react ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}}
                 >
                   <SmilePlus size={14} />
                 </button>
@@ -149,7 +149,7 @@ function ArtistInfoRow({ user, preset, onSaved }: { user: SlackUser; preset: Art
   return <ArtistInfoDisplayRow user={user} preset={preset} onEdit={() => setEditing(true)} onRemoved={onSaved} />;
 }
 
-function ArtistAvatar({ user, imagePath }: { user: SlackUser; imagePath: string | null | undefined }) {
+function ArtistAvatar({ user, imagePath, unicode }: { user: SlackUser; imagePath: string | null | undefined; unicode?: string | null }) {
   const url = useFileBlobUrl(imagePath || null);
   return (
     <div
@@ -158,7 +158,7 @@ function ArtistAvatar({ user, imagePath }: { user: SlackUser; imagePath: string 
         alignItems: "center", justifyContent: "center", background: "var(--surface-hover)", border: "1px solid var(--border)", fontSize: 11,
       }}
     >
-      {url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : user.name.slice(0, 1).toUpperCase()}
+      {url ? <img src={url} alt="" style={{ width: "100%", height: "100%", objectFit: "cover" }} /> : unicode ? <span style={{ fontSize: 14 }}>{unicode}</span> : user.name.slice(0, 1).toUpperCase()}
     </div>
   );
 }
@@ -172,7 +172,7 @@ function ArtistInfoDisplayRow({ user, preset, onEdit, onRemoved }: { user: Slack
   }
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
-      <ArtistAvatar user={user} imagePath={preset?.image_path} />
+      <ArtistAvatar user={user} imagePath={preset?.image_path} unicode={preset?.unicode_value} />
       <div className="caption" style={{ width: 100, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.name}>
         {user.name}
       </div>
@@ -202,7 +202,10 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
   // beneran, bukan hasil ketik salah) dan PNG-nya otomatis ikut kalau preset-nya custom. Butuh
   // PNG yang belum ada di preset? Tambah dulu lewat "Kelola preset..." di dalam picker yang sama.
   const [pickedPath, setPickedPath] = useState<string | null>(null);
-  const [pickedUnicode, setPickedUnicode] = useState<string | null>(null);
+  // Poin revisi (bug dilaporkan: "abis Simpan, emoji standar balik jadi kode nama lagi") —
+  // di-prefill dari preset.unicode_value (BUKAN mulai kosong) biar edit yang gak nyentuh emoji
+  // sama sekali (cuma ganti nickname) tetep ngirim ulang nilai unicode yang bener pas Simpan.
+  const [pickedUnicode, setPickedUnicode] = useState<string | null>(preset?.unicode_value || null);
   const [busy, setBusy] = useState(false);
 
   function pickEmojiPreset(emojiPreset: EmojiPreset) {
@@ -217,6 +220,33 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
     }
   }
 
+  // Poin revisi: "ambil custom emoji dari workspace Slack" — code_name-nya PASTI valid (nama
+  // emoji ASLI, bukan ketik/nebak manual) karena datang langsung dari emoji.list. Gambarnya
+  // di-download ke temp file lokal dulu (lihat slack:downloadEmojiImage, main.cjs), baru dipakai
+  // sebagai sourcePath persis kayak upload manual — reuse jalur staging yang sama.
+  async function pickFromSlack(name: string, url: string) {
+    setBusy(true);
+    try {
+      const tempPath = await window.api.slack.downloadEmojiImage(url);
+      setCodeName(name);
+      setPickedPath(tempPath);
+      setPickedUnicode(null);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : "Gagal ambil gambar emoji dari Slack.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // Poin revisi (tombol "+" — Semua Emoji) — pilih langsung dari picker unicode lengkap, gak
+  // perlu bikin preset dulu. `colons` dari emoji-mart bentuknya ":nama:" (ada titik dua), code_name
+  // kita simpen TANPA titik dua (sama pola kayak semua shortcode lain di app ini).
+  function pickUnicode(native: string, colons: string) {
+    setCodeName(colons.replace(/^:|:$/g, ""));
+    setPickedPath(null);
+    setPickedUnicode(native);
+  }
+
   async function save() {
     setBusy(true);
     try {
@@ -226,6 +256,8 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
         nickname: nickname.trim() || undefined,
         codeName: codeName.trim() || undefined,
         sourcePath: pickedPath || undefined,
+        // Backend ngasih prioritas sourcePath kalau dua-duanya keisi (lihat saveArtistPreset).
+        unicodeValue: pickedUnicode || undefined,
       });
       onDone();
     } catch (err) {
@@ -238,18 +270,12 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4, padding: "8px 0", borderBottom: "1px solid var(--border)" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <ArtistAvatar user={user} imagePath={pickedPath || preset?.image_path} />
+        <ArtistAvatar user={user} imagePath={pickedPath || preset?.image_path} unicode={pickedUnicode} />
         <div className="caption" style={{ width: 100, flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }} title={user.name}>
           {user.name}
         </div>
         <input autoFocus placeholder="Nickname" value={nickname} onChange={(e) => setNickname(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-        <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "center", gap: 4 }}>
-          <span className="caption" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-            {pickedUnicode && `${pickedUnicode} `}
-            {codeName ? `:${codeName}:` : <span className="muted">— pilih emoji —</span>}
-          </span>
-          <EmojiPicker onPick={(_text, emojiPreset) => pickEmojiPreset(emojiPreset)} />
-        </div>
+        <CombinedEmojiPickerButton onPickPreset={pickEmojiPreset} onPickSlack={pickFromSlack} onPickUnicode={pickUnicode} disabled={busy} />
         <button className="btn btn-primary" disabled={busy} onClick={save} style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}>
           Simpan
         </button>

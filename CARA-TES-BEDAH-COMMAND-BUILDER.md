@@ -1577,3 +1577,898 @@ Checklist manual:
 - [ ] **(Opsional, butuh nunggu lama)** biarin app kebuka ~12+ jam tanpa logout → coba buka
   project/listUsers lagi → HARUSNYA tetap jalan normal (auto-refresh diam-diam di belakang
   layar), BUKAN muncul error token_expired lagi.
+
+## 47. Batch 10 poin penyempurnaan Tab Reply (2026-09-17) ✅ (siap dites)
+
+**1. Popover emoji susah diklik ("harus gerakan mouse cepat, kalau di luar langsung ilang")**
+Root cause: fitur `closeSignal` (ditambah sesi sebelumnya buat nutup popover Add
+React/Instant Reaction pas overlay hover-nya ilang) nutup popover LEWAT REACT STATE begitu
+`<td>`/pill-nya kehilangan hover — termasuk pas mouse LAGI TRANSIT dari tombol trigger turun ke
+popovernya sendiri (popover render `top: calc(100% + 4px)`, keluar dari kotak elemen trigger).
+Gerakan mouse yang kurang presisi gampang ke-detect "leave" duluan sebelum sempat masuk popover.
+Dicabut total (`closeSignal` prop, state `reactionCloseTick`/`pillCloseTick`, param `onLeave` di
+`hoverDelayHandlers`) — closing popovernya CUKUP diserahkan ke mekanisme klik-di-luar yang udah
+ada (`document mousedown` + `containerRef.contains`), gak eager kayak hover-leave.
+File: `ItemReactions.tsx`, `MainTable.tsx`, `Drawer.tsx`, `hoverDelay.ts`.
+
+**2-4. File/teks identik gak usah dobel, lingkup 1 field yang sama (pas Merge item)**
+Konsolidasi reply kategori-sama pas Merge sekarang dedup SEBELUM digabung: file (match nama
+persis) dan teks (100% identik after-trim) yang muncul di lebih dari 1 reply sumber cuma
+disimpen SEKALI di reply hasil gabungan. Dedup file per TARGET reply (field) — konsisten sama
+batas 10 file/reply yang udah ada, bukan dedup global lintas semua hasil split.
+File: `electron/projects.cjs` (`mergeItems`). Test: `merge dedup file (nama sama) dan teks
+(100% identik) dalam 1 field...` di `test/regression.cjs`.
+
+**5. Copy-paste ala Excel, murni hover mouse (kolom Item & Artis, Tab Table)**
+Ctrl+C pas mouse hover cell Item/Artis nyalin nilainya ke "clipboard" in-memory (bukan OS
+clipboard); Ctrl+V pas hover cell (boleh beda baris) nempel nilai itu — GAK butuh klik/fokus
+dulu. Kolom Artis di-paste dicocokin ke nickname/nama Slack (fallback silent kalau gak ketemu,
+sama pola kayak Bulk Paste). *ponytail: ini override paksa apapun yang lagi diseleksi user di
+input yang sama — sesuai konfirmasi eksplisit user ("murni hover mouse"), bukan bug.*
+File: `MainTable.tsx` (`hoveredCellRef`, `cellClipboardRef`, `cellHoverHandlers`).
+
+**6. Assign mode = react TIDAK auto-react item yang UDAH di-assign, harus re-assign**
+Dicek ke kode: sudah begini dari sananya (`queueArtistReaction` cuma kepanggil dari
+`handleArtistChange`/assign eksplisit, bukan dari path ganti mode global) — gak ada perubahan
+kode, cuma konfirmasi behavior yang diminta.
+
+**7. Sidebar: assign artis sekaligus ke item yang dicentang**
+Icon baru (`UserCheck`) di Sidebar, PERSIS di bawah Merge — aktif kalau ada checkbox tercentang.
+Klik = buka popover daftar artis (mirip ArtistPicker), pilih 1 = assign ke SEMUA item
+tercentang sekaligus (1 undo batch, bukan per-item).
+File: `Chrome.tsx` (`BulkAssignArtistButton`), `MainTable.tsx` (`handleBulkAssignArtist`).
+
+**8. Instant Intake pindah ke bawah-kanan field + icon "selesai edit" di dalam text area**
+Instant Intake per-field gak lagi sejajar checkbox/broadcast/trash di header field (rawan
+kesenggol) — pindah ke baris sendiri di bawah field, rata kanan, DISABLED (abu-abu, gak bisa
+diklik) kalau field-nya kosong (gak ada teks maupun file). Icon centang bulat baru muncul di
+pojok kanan-bawah AREA TEKS pas lagi fokus (gating `:focus-within` sama kayak toolbar) — klik =
+commit teks + blur, alternatif dari klik area luar.
+File: `Drawer.tsx` (`ReplyRow`), `RichTextEditor.tsx` (method baru `commitAndBlur`),
+`QuickSendButton.tsx` (prop baru `disabled`), `styles.css` (`.field-done-btn`,
+`.quicksend-btn:disabled`).
+
+**9-10. Icon Assign Mode + toggle switch Instant Intake di header section Artis (Tab Reply)**
+Baris "Artis" di form-pane kanan sekarang: label "Artis" + toggle switch Instant Intake (state
+SAMA kayak toggle di menu Settings, cuma shortcut) di kiri, icon gear "Assign Mode" (buka modal
+Kelola Preset Artis, section Mention/React) di kanan-atas.
+File: `Drawer.tsx`, `styles.css` (`.toggle-switch`, checkbox distyle jadi pil — native, gak ada
+dependency baru).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 47 test regresi lulus (1 baru: dedup
+merge), `vite build` bersih.
+**BELUM**: smoke-test manual visual (interaksi mouse/hover/popover di 1-5-8-9-10 gak bisa
+disimulasikan lewat test Node/Electron headless di sandbox ini — lihat keterbatasan yang sama
+di §0/pembuka dokumen ini).
+
+Checklist manual:
+
+- [ ] **Popover emoji (Add React di Tab Table, Instant Reaction di Tab Reply)**: buka popover,
+  gerakin mouse PELAN turun ke salah satu emoji, klik — HARUS tetap bisa, gak ilang duluan.
+- [ ] **Merge 2 item yang punya file/teks sama persis di kategori sama** — hasil gabungan cuma
+  1 file/1 baris teks, bukan dobel.
+- [ ] **Hover cell Item, Ctrl+C, hover cell Artis di baris lain, Ctrl+V** — HARUS gak ke-paste
+  (beda kolom, harus manual cocokin tipe data — tes ini buat mastiin gak salah tempel silang).
+  Hover cell Item lain, Ctrl+V — nama ke-paste.
+- [ ] **Sidebar: centang 2+ item, klik icon assign artis baru, pilih artis** — semua item
+  tercentang ke-assign ke artis yang sama, Ctrl+Z undo semuanya sekaligus.
+- [ ] **Field kosong**: tombol Instant Intake di bawah-kanan field HARUS abu-abu/gak bisa
+  diklik. Isi teks/file — tombol aktif.
+- [ ] **Klik di text area, ketik, klik icon centang bulat** — teks ke-commit (sama kayak klik
+  di luar area).
+- [ ] **Toggle switch Instant Intake di header Artis** — nyala/mati konsisten sama toggle di
+  menu Settings (dua-duanya nunjuk state yang sama).
+
+## 48. Multi-artist per item + toggle "sesi assign artis realtime" (2026-09-17) ✅ (siap dites)
+
+**Perubahan besar**: `items.artist_id`/`artist_name` (1 artis per item) diganti tabel many-to-many
+`item_artists` — 1 item bisa punya BANYAK artis sekaligus. Dropdown Artis (Tab Table & Tab Reply,
+satu komponen `ArtistPicker.tsx`) sekarang multi-select — klik nama = toggle add/remove (dropdown
+TETAP kebuka abis klik), artis terpilih tampil sebagai chip + tombol X di trigger-nya.
+
+**Bidirectional artis<->react** (mode assign = react): assign artis otomatis nge-antre 1 pending
+reaction (code_name preset artis itu) — chip react ini muncul di ItemReactionBar (kolom Item).
+Hapus SALAH SATU chip (artis ATAU react-nya) ikut hapus yang satunya (`projects.cjs`
+`removeItemArtist`/`removeItemReaction` saling panggil). **Kecuali** kalau reaction itu dihapus
+karena BARU AJA SUKSES kekirim ke Slack (flush normal pas "Kirim ke Slack"/Instant Intake) — itu
+BUKAN "user batal assign", pakai `removeItemReaction(id, {unassignArtist:false})` biar artis-nya
+TETAP nempel.
+
+**Toggle "sesi assign artis realtime"** (GLOBAL, 1 state dipakai bareng di header kolom Artis Tab
+Table DAN section Artis Tab Reply — poin revisi eksplisit, BUKAN 2 toggle beda) — pas ON:
+- Mode **mention**: assign/lepas artis LANGSUNG sinkron ke **1 pesan assignment** per item
+  (`item_assign_messages`, thread reply) — post pertama kali, `chat.update` abis itu (BUKAN
+  delete+repost). Semua artis di-assign kosong -> teks-nya diedit jadi **"Belum di tugaskan"**
+  (bukan pesan dihapus — permintaan eksplisit user). Butuh item yang UDAH PERNAH dikirim (ada
+  thread) — kalau belum, error jelas ("belum pernah dikirim ke Slack"), sama persis precondition
+  InstantReactionOverlay, BUKAN auto-bikin pesan root.
+- Mode **react**: assign -> `reactions.add` langsung (bukan nunggu di pending); lepas -> kalau
+  masih pending (belum sempat kekirim) cukup batal antre, kalau udah live -> `reactions.remove`
+  beneran ke Slack.
+- Toggle OFF (default): assign/lepas cuma LOKAL (antre pending reaction / gak nyentuh Slack sama
+  sekali buat mention) — persis kayak sebelumnya, disinkron nanti pas "Kirim ke Slack" biasa.
+
+**Keputusan yang gak eksplisit diminta, saya putuskan sendiri (ponytail — dibilangin di sini biar
+gampang dikoreksi)**:
+- Multi-select berlaku di KEDUA mode assign (mention & react), sesuai jawaban user.
+- Mention mode + multi-artist: SATU pesan assignment isinya SEMUA @mention digabung (`<@U1> <@U2>`),
+  bukan 1 pesan per artis — biar konsisten sama konsep "1 pesan yang di-edit terus" punya realtime.
+- Assign SEKALIGUS via sidebar (poin batch kemarin, "assign item yang dicentang") sekarang ADDITIF
+  — nambah artis ke daftar item yang dicentang, BUKAN nge-replace daftar yang udah ada (skip item
+  yang UDAH punya artis itu).
+- Format Bulk Paste & hover copy-paste (Ctrl+C/V) kolom Artis: nama dipisah **koma** buat lebih
+  dari 1 artis per baris/cell (`"Diyan, Budi"`), cocokin ke nickname/username per-nama, diff ke
+  daftar sekarang (assign yang baru, lepas yang gak ada lagi di hasil parse).
+- Race 2 klik cepat (assign 2 artis beruntun sebelum panggilan pertama ke Slack kelar): di-lock
+  per item_id (`withItemArtistLock`, `main.cjs`) — panggilan ke-2 nunggu ke-1 kelar, biar
+  `syncAssignMessage` gak double-post pesan assignment.
+- Kolom lama `items.artist_id`/`artist_name` DIBIARIN nganggur di skema (pola sama kayak migrasi
+  assign-mode sebelumnya) — data lama otomatis kemigrasi SEKALI ke `item_artists` pas app
+  di-restart (lihat `db.cjs`), kode baru gak baca kolom lama itu lagi sama sekali.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 56 test regresi lulus (7 baru: multi-artist
+CRUD + bidirectional + union-merge/restore-unmerge, syncAssignMessage post-vs-update-vs-error x3,
+removeReaction, withItemArtistLock serialize-per-item), `vite build` bersih.
+**BELUM**: smoke-test manual visual (dropdown multi-select, chip, toggle realtime beneran kirim ke
+Slack) — sama keterbatasan Electron headless di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Assign 2+ artis ke 1 item** (Tab Table & Tab Reply) — chip dua-duanya muncul, dropdown
+  TETAP kebuka abis klik pertama (bisa langsung pilih lagi).
+- [ ] **Klik X di salah satu chip** — cuma artis itu yang lepas, sisanya tetap.
+- [ ] **Mode react**: assign artis -> chip react (code_name-nya) ikut muncul di kolom Item. Hapus
+  chip react itu -> chip artis ikut lepas (dan sebaliknya).
+- [ ] **Toggle realtime ON** (cek toggle-nya SAMA nyala di Tab Table & Tab Reply) + item yang UDAH
+  pernah dikirim -> assign artis (mode mention) -> cek pesan baru muncul di thread Slack isinya
+  @mention. Assign artis ke-2 -> pesan yang SAMA keedit (bukan pesan baru). Lepas semua -> pesan
+  keedit jadi "Belum di tugaskan".
+- [ ] **Toggle realtime ON, item BELUM pernah dikirim** -> assign artis -> harus muncul alert
+  error jelas ("belum pernah dikirim ke Slack"), BUKAN nge-crash/diam-diam gagal.
+- [ ] **Bulk Paste kolom Artis** dengan 1 baris isi "NamaA, NamaB" — 2 artis ke-assign ke item itu.
+- [ ] **Hover cell Artis (Tab Table), Ctrl+C, hover item lain, Ctrl+V** — semua artis ke-copy
+  (dipisah koma), ke-assign persis ke item tujuan.
+- [ ] **Sidebar assign-artis-ke-item-tercentang** — item yang UDAH punya artis lain tetap simpan
+  artis lamanya, artis baru nambah (bukan nge-replace).
+
+## 49. Placeholder mention, urutan field abis merge, lebar kolom Artis, chip react persisten (2026-09-17) ✅ (siap dites)
+
+**1. Placeholder mention pas artis kosong (mode Mention)** — `syncAssignMessage` (slack.cjs)
+sekarang SELALU post/update pesan assignment, bahkan pas belum ada artis di-assign sama sekali —
+teksnya mention ke member id sengaja-invalid `U8BNTTT88VA` (bukan teks polos "Belum di
+tugaskan" lagi). Tujuannya: pesan assignment ADA dari awal, assign pertama/re-assign nanti
+tinggal `chat.update` pesan yang UDAH ADA ini.
+
+**1b. (revisi lanjutan) Diperluas ke SEMUA scope Instant Intake** — awalnya scope "item"/"replies"
+di-skip total (takut nimpa data assignment yang bener). Ternyata "Instant Intake per kolom"
+(header Tab Table) JUGA lewat `send:start` (bukan `send:quick`!) dengan scope "item"/"artist"/
+"replies" — skip itu bikin Instant Intake per kolom gak ikut sinkron. Fix: skip DIHAPUS, semua
+scope (termasuk `send:start` scope item/replies DAN semua scope `send:quick` — item/artist/
+replies/field) sekarang SELALU sync pakai daftar artis TERKINI item (`item.artists`, bukan
+dikosongin paksa per-scope lagi) — aman dari "nimpa" karena datanya emang selalu akurat, bukan
+di-derive dari scope. `send:quick` juga gak lewat `sendItem`'s built-in mention lagi (selalu
+`artistIds: []` ke situ) — SEMUA mention sekarang SATU jalur (`syncAssignMessage`), baik dari
+batch maupun Instant Intake.
+
+**2. Bug urutan field abis merge diperbaiki** — root cause: reply hasil split (>10 file) dulu
+dapat `sort_order` dari counter GLOBAL (`MAX(sort_order)+1`, dihitung SEKALI di luar loop
+kategori), jadi numpuk di ujung urutan SEMUA field, bukan nempel di bawah field kategori asalnya
+sendiri (mis. "Animatic, General Note, Animatic" — Animatic ke-2 kepisah). Fix: overflow reply
+dikasih sort_order sementara, lalu SEMUA reply di-renumber ulang di akhir proses merge —
+urutan asli antar-kategori tetap kejaga, overflow disisipkan PERSIS di bawah primary-nya
+("Animatic, Animatic, General Note").
+
+**3. Lebar kolom Artis gak lagi auto-width-by-text-length** — khusus kolom ini (kolom Item
+TETAP auto-width seperti biasa). Alasan teknis: sejak multi-artist, isinya sekarang chip yang
+wrap sendiri kalau kepanjangan, gak perlu diukur teksnya lagi buat nentuin lebar kolom. Lebar
+tetap 200px.
+
+**4. Chip react gak hilang lagi abis kekirim (bug: "ambigu, artis kira gak ada react")** —
+root cause: baris `item_reactions` DULU langsung DIHAPUS begitu `reactions.add` sukses, jadi
+ItemReactionBar (yang cuma nampilin baris PENDING) otomatis kosong walau reaction-nya BENERAN
+ada di Slack. Fix: kolom baru `sent` (0/1) — baris TETAP disimpan abis kekirim, cuma ditandain
+`sent=1` (chip tetap tampil, dikasih tint hijau lembut biar beda dari yang masih pending). Klik
+chip yang UDAH sent sekarang beneran `reactions.remove` ke Slack DULU (baru baris lokal ikut
+kehapus KALAU itu sukses — gagal = baris lokal tetap ada, gak kepisah sinkron dari Slack). Klik
+chip yang masih pending TETAP cuma batal antre lokal (gak ada panggilan Slack, sama kayak
+sebelumnya).
+**Soal biaya API yang ditanya**: ya, hapus react (`reactions.remove`) manggil Slack API, lewat
+pacer yang SAMA kayak `reactions.add` (`paceReactions`, ~1.2 detik/panggilan) — TAPI ini cuma
+kejadian kalau user EKSPLISIT KLIK chip yang sent buat dihapus (bukan otomatis tiap sinkron),
+jadi gak nambah waktu proses kirim batch sama sekali (beda dari opsi "clear dulu baru add" yang
+sempat didiskusikan, yang bakal dobel biaya TIAP reaction).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 60 test regresi lulus (6 baru:
+syncAssignMessage placeholder x2 update, merge urutan field, itemReaction:remove sent-vs-pending
+x3 skenario, send:quick sync per-scope x2 mode, send:start scope item/replies gak di-skip),
+`vite build` bersih.
+**BELUM**: smoke-test manual visual (chip react beneran nempel/ilang di Slack, pesan placeholder
+di-edit jadi mention asli) — sama keterbatasan Electron headless di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Assign mode Mention, item belum ada artis, toggle realtime ON, assign item** — pesan
+  assignment placeholder (mention ke ID gak valid, tampil kayak teks aneh/gak resolve ke user)
+  HARUS udah ada SEBELUM artis pertama di-assign (cek lewat "Kirim ke Slack" biasa ke item yang
+  belum ada artis-nya sama sekali).
+- [ ] **Merge 2 item yang salah satunya field-nya kepecah (>10 file 1 kategori) DAN ada kategori
+  lain di antaranya** — cek urutan field hasil merge: kedua field hasil split HARUS nempel,
+  bukan kepisah field lain.
+- [ ] **Resize window / lihat kolom Artis Tab Table** — lebar TETAP walau nama artis pendek/panjang
+  (gak lagi ngikutin panjang teks), kolom Item tetap nyesuaiin.
+- [ ] **Add React manual ke item, "Kirim ke Slack"** — chip react TETAP tampil abis kekirim
+  (kasih tint hijau), BUKAN ilang. Klik chip itu — reaction beneran ilang dari pesan Slack.
+- [ ] **Add React manual, JANGAN kirim dulu (masih pending)** — klik chip — cuma ilang dari app,
+  cek Slack TIDAK ada panggilan API (gak ada reaction buat dihapus soalnya emang belum kekirim).
+
+## 50. Fix react/mention nyangkut pas ganti mode + tombol "Update" manual + panel Ringkasan Hasil (2026-09-17) ✅ (siap dites)
+
+**Bug 1 (dilaporkan)**: scope "artist" (Instant Intake mention artis) di item yang BELUM ada
+artis-nya nge-throw "Item ini belum ada artis yang ditugaskan" — obsolete sejak placeholder
+mention ada (§49): validasi itu justru NGEBLOK aksi yang seharusnya bikin placeholder-nya
+kejadian. Dihapus dari `send:quick` DAN `send:start` — sekarang jalan terus, placeholder ke-post
+kalau mode mention, no-op aman kalau mode react.
+
+**Bug 2 (dilaporkan)**: assign artis pas mode react (reaction live), lalu ganti mode ke mention
+dan assign artis LAIN — reaction lama NYANGKUT (gak pernah kehapus), mention message cuma
+nunjukin artis yang BARU. Root cause: `item:addArtist`/`item:removeArtist` versi lama cuma
+nanganin sisi yang cocok mode SAAT ITU — kalau mode udah ganti sebelum artis lama dilepas,
+reaction-nya gak pernah dicek ulang, orphan selamanya.
+**Fix**: `reconcileItemAssignState` (main.cjs) — dipanggil tiap item_artists berubah (add/remove,
+mode apa pun), baca ULANG dari nol "gimana seharusnya state Slack item ini" berdasarkan daftar
+artis TERKINI + mode SAAT INI:
+- mode **react**: reaction HARUS live cuma buat artis yang MASIH assigned; apa pun yang sent
+  tapi gak seharusnya (mode ganti, ATAU artis-nya udah dilepas) di-`reactions.remove`. Mention
+  message SELALU placeholder, gak peduli siapa assigned (permintaan eksplisit: "kalau mode
+  react, placeholder selalu kosong").
+- mode **mention**: SEMUA reaction yang masih sent (nyisa dari kapan pun, mode apa pun) di-
+  `reactions.remove`. Mention message diisi daftar artis TERKINI (chat.update pesan yang sama).
+- Hapus SALAH SATU chip (react ATAU artis) sekarang beneran ngefek ke DUA-duanya — bukan cuma
+  lokal doang.
+
+**Mode assign GLOBAL di-switch (Mention<->React) SENGAJA TIDAK auto-nembak Slack** — permintaan
+eksplisit user: ganti mode cukup LOKAL/instan (gak nunggu API sama sekali). Sinkron ke Slack-nya
+lewat **tombol "Update" manual baru** (icon refresh, di sebelah toggle realtime — Tab Table
+header kolom Artis DAN Tab Reply section Artis) — nyisir semua item PROJECT YANG LAGI KEBUKA
+yang punya artis assigned, reconcile 1-1 ke mode saat ini. Jalan walau toggle realtime OFF
+(`force: true` di reconcileItemAssignState) — justru itu gunanya, biar user bisa nunda sinkron
+ke Slack sampai siap, bukan kejadian otomatis begitu klik toggle mode.
+
+**Panel "Ringkasan Hasil" (poin lain)** — tombol X buat nutup panel ini dulu ikut ke-scroll
+bareng list hasil kirim kalau daftarnya panjang (card-nya `overflow:auto` di SELURUH elemen,
+termasuk header). Fix: scroll dipindah ke div list-nya doang, header (judul+X) di luar area
+scroll — TETAP kelihatan/bisa diklik kapan pun.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 63 test regresi lulus (3 baru:
+artistAssign:syncProject force+skip-item-kosong+error-gak-abort, reconcileItemAssignState
+skenario bug asli persis, quick-send scope artist gak throw lagi), `vite build` bersih.
+**BELUM**: smoke-test manual visual (tombol Update beneran push ke Slack, panel Ringkasan Hasil
+X-nya gak ke-scroll) — sama keterbatasan Electron headless di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Mode react, assign artis A ke item (realtime ON)** — reaction A muncul di Slack, mention
+  message (kalau ada) TETAP placeholder.
+- [ ] **Ganti mode ke mention (JANGAN klik Update dulu)** — cek Slack: reaction A MASIH ada (mode
+  switch sendiri gak nyentuh Slack sama sekali, sesuai desain).
+- [ ] **Assign artis B ke item yang sama (masih di mode mention)** — reaction A HARUS ilang dari
+  Slack, mention message keisi "@A @B" (dua-duanya, soalnya artis A emang belum pernah dilepas).
+- [ ] **Klik tombol "Update" (icon refresh) tanpa assign apa pun dulu, toggle realtime OFF** —
+  tetap jalan (gak perlu realtime ON), item yang punya artis assigned ke-reconcile sesuai mode
+  saat ini, alert ringkasan "Sinkron N item berhasil".
+- [ ] **Item TANPA artis assigned sama sekali** — klik "Update" — item itu di-skip (gak usah
+  disinkron, gak ada apa pun buat direconcile).
+- [ ] **"Kirim ke Slack" banyak item sekaligus, tunggu sampai hasilnya panjang** — scroll ke bawah
+  panel "Ringkasan Hasil" — tombol X di header TETAP kelihatan/bisa diklik, gak ikut ke-scroll.
+
+## 51. Mention & React bisa aktif BARENG (2026-09-18) ✅ (siap dites)
+
+**Perubahan**: "Artis assign mode" (modal Kelola Preset Artis) balik jadi 2 toggle INDEPENDEN
+(icon @ dan icon emoji, klik masing-masing = flip sendiri) — bukan mutually-exclusive lagi
+(koreksi dari keputusan sebelumnya di sesi ini yang sempat maksa harus salah satu doang).
+Sekarang keduanya bisa nyala BARENG: assign 1 artis -> react-nya kekirim (reactions.add) DAN
+mention-nya kekirim (masuk pesan assignment) SEKALIGUS, independen satu sama lain.
+
+**Yang berubah di bawah permukaan**:
+- Skema: `artist_assign_mode.mode` (TEXT tunggal) diganti 2 kolom `mention_enabled`/
+  `react_enabled` (INTEGER, independen). Data lama dimigrasi otomatis pas app di-restart.
+- `projects.cjs`: `getArtistAssignMode()`/`setArtistAssignMode(mode)` diganti
+  `getArtistAssignModes()` (balikin `{mention, react}`) + `setMentionEnabled()`/`setReactEnabled()`.
+- `reconcileItemAssignState` (main.cjs) — react HARUS live cuma kalau flag react ON (independen
+  dari mention); mention message nampilin nama BENERAN cuma kalau flag mention ON (independen
+  dari react) — kalau OFF, placeholder. Kedua cek sekarang gak saling gate lagi.
+- `hbStatus.estimateSendMinutes` — biaya mention dihitung independen dari react juga (dua-duanya
+  bisa nambah waktu proses bareng kalau dua-duanya ON).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, 65 test regresi lulus (2 baru: flag
+independen di projects.cjs, reconcileItemAssignState dua-duanya aktif bareng), `vite build` bersih.
+**BELUM**: smoke-test manual visual (klik dua toggle-nya bareng, assign artis, cek Slack beneran
+dapet react DAN mention sekaligus) — sama keterbatasan Electron headless di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Nyalain toggle Mention DAN React bareng** (modal Kelola Preset Artis) — dua-duanya
+  kelihatan aktif (border/background accent), gak ada yang otomatis mati pas yang lain dinyalain.
+- [ ] **Assign artis ke item yang UDAH ada thread-nya, realtime ON** — reaction-nya muncul di
+  Slack DAN pesan assignment (mention) keisi nama artis itu, dua-duanya kejadian dari 1 aksi assign.
+- [ ] **Matiin salah satu (misal React aja)** — assign artis baru — cuma mention yang keupdate,
+  gak ada reaction baru ditambah ke Slack.
+- [ ] **Restart app abis update dari versi lama** — preferensi mode assign yang sebelumnya
+  ke-set (mention ATAU react doang) harus TETAP kebawa persis (gak balik ke default).
+
+## 52. "Ambil dari Slack" — custom emoji picker buat Preset Artis (2026-09-19) ✅ (siap dites)
+
+**Fitur baru**: di modal Kelola Preset Artis, tiap baris artis sekarang punya tombol icon Cloud
+(di sebelah tombol emoji lokal yang udah ada) buat ambil custom emoji LANGSUNG dari workspace
+Slack — cari nama, klik, gambar-nya ke-download dan kode name-nya (field code_name) otomatis
+keisi nama emoji itu.
+
+**Yang berubah di bawah permukaan**:
+- Scope OAuth baru `emoji:read` ditambahin ke `USER_SCOPES` (slack.cjs) — **login lama TIDAK
+  otomatis dapet scope ini**, harus logout+login ulang biar `emoji.list` gak kena `missing_scope`.
+- `slack.listCustomEmojis(token)` — panggil `emoji.list`, resolve alias 1 level (misal
+  `diyan-alias` -> nunjuk emoji `diyan`), skip alias yang nunjuk ke nama yang gak ada/alias
+  berantai, balikin `{name, url}[]` urut alfabetis.
+- IPC baru: `slack:listCustomEmojis` (baca daftar), `slack:downloadEmojiImage` (validasi hostname
+  URL-nya emang domain Slack — `slack-edge.com`/`slack.com` — baru fetch & simpen ke temp file,
+  path-nya di-whitelist lewat `allowFiles` biar lolos `validateFile` pas dipake sebagai
+  `sourcePath` di `artistPreset:save`).
+- UI: komponen `SlackEmojiPickerButton` (di dalam ArtistPresetModal.tsx, khusus sesi ini, bukan
+  komponen shared) — popover cari-nama + list ter-filter. Milih 1 nama manggil `pickFromSlack`
+  yang download gambarnya lalu isi state `codeName`/`pickedPath` yang sama persis dipakai alur
+  emoji picker lokal yang udah ada (`save()` gak berubah sama sekali).
+- **Thumbnail gambar di list picker** (poin revisi ini juga, user minta preview gambar bukan cuma
+  nama): CSP `img-src` (index.html) ditambah `https://*.slack-edge.com https://*.slack.com` biar
+  `<img>` boleh load langsung dari CDN Slack tanpa proxy/download per-baris — daftar emoji tetep
+  1x fetch (`emoji.list`), thumbnail-nya pake URL yang udah kebawa di situ juga, gak ada request
+  tambahan pas scroll/cari. Download beneran (lewat `slack:downloadEmojiImage`) cuma kejadian pas
+  emoji-nya BENERAN dipilih.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 69 test regresi lulus
+(termasuk `listCustomEmojis` — resolve alias 1 level, skip alias ke nama gak ada, urut alfabetis).
+**BELUM**: smoke-test manual visual (klik tombol Cloud, cari emoji, thumbnail-nya beneran muncul,
+pilih emoji beneran ke-download & code_name keisi) — sama keterbatasan Electron headless di
+sandbox ini.
+
+Checklist manual:
+
+- [ ] **User yang login SEBELUM fitur ini ada** — klik tombol Cloud di baris artis — kalau kena
+  error scope (`missing_scope`), logout+login ulang, coba lagi — harus lancar setelah re-login.
+- [ ] **Buka picker, ketik sebagian nama emoji** — daftar ke-filter live, tiap baris kelihatan
+  thumbnail gambar KECIL di sebelah kiri nama-nya (bukan cuma teks doang).
+- [ ] **Pilih 1 emoji dari daftar** — field code_name di baris itu keisi otomatis nama emoji yang
+  dipilih, gambar preview lokal (yang biasanya muncul abis pilih emoji) juga ke-update.
+- [ ] **Simpan preset abis pilih dari Slack** — cek Slack, reaction yang kekirim pake emoji itu
+  bener-bener muncul (bukan emoji rusak/gak ketemu).
+- [ ] **Cari nama yang gak ada di workspace** — daftar kosong, muncul "Gak ketemu." (gak error).
+
+## 53. Gabung picker emoji (preset + workspace Slack jadi 1 tombol) + fix bug "File tidak terdaftar di project" (2026-09-19) ✅ (siap dites)
+
+**Perubahan UI (poin revisi)**: baris edit "Info Artis" sekarang cuma punya SATU tombol emoji
+(bukan 2 tombol Smile+Cloud terpisah kayak §52) — 1 popover nampilin preset lokal (grid, sama
+kayak dulu) DAN custom emoji workspace Slack (list nama+thumbnail) SEKALIGUS, 1 kotak cari buat
+dua-duanya. "Kode nama" (teks ":shortcode:") yang dulu tampil di sebelah tombol emoji DIHAPUS —
+cukup Nickname + avatar (avatar sekarang juga nunjukin karakter unicode kalau presetnya bukan PNG,
+biar tetep ada feedback visual walau teks kode name-nya udah gak ditampilin).
+
+Emoji workspace Slack DI SINI **gak disalin permanen** ke tabel preset lokal (`emoji_presets`) —
+"gabung" artinya gabung TAMPILAN/pilihan doang, di-`emoji.list` ulang tiap popover dibuka. Milih
+salah satu (baik preset lokal maupun dari Slack) langsung isi Nickname-row itu juga, gak ubah
+daftar preset global.
+
+**Bug (dilaporkan)**: pas milih emoji dari workspace Slack, muncul error
+`Error invoking remote method 'file:readBytes': Error: File tidak terdaftar di project` — tapi
+abis diklik OK dan preset-nya disimpan, emoji-nya kepasang normal. **Root cause**: ada 2 gerbang
+"file ini boleh dibaca?" yang gak konsisten di main.cjs — `validateFile()` (dipanggil pas SIMPAN)
+udah bener ngecek `fileGrants` (file yang baru di-`allowFiles`, misal hasil download temp) ATAU
+`isManagedFile()` (file yang UDAH tersimpan permanen di project). Tapi `file:readBytes` (dipanggil
+buat PREVIEW gambar, lewat `useFileBlobUrl`) cuma ngecek `isManagedFile()` doang — file emoji yang
+BARU di-download (`slack:downloadEmojiImage`) belum sempat jadi managed file (baru kejadian pas
+"Simpan" preset), jadi preview-nya ketolak walau file itu udah sah di-`allowFiles`. Begitu preset
+disimpan, file-nya jadi managed, preview render ulang → berhasil, makanya kesannya "abis di-OK
+malah muncul".
+
+**Fix**: satu fungsi gerbang `isFileAccessible(real)` (=`fileGrants.has(real) || isManagedFile(real)`)
+dipakai BARENG oleh `validateFile()` DAN `file:readBytes` — bukan 2 aturan beda lagi (poin
+"lazy": benerin di gerbang bersama, bukan tambal di caller mana pun yang kena).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 62 test regresi lulus
+(1 baru: `file:readBytes` — file fresh-grant langsung kebaca TANPA perlu jadi managed file dulu,
+sekaligus jalur lama managed-file-tanpa-grant tetap jalan, dan file yang bener-bener asing tetap
+ditolak).
+**BELUM**: smoke-test manual visual (klik tombol emoji gabungan, cari nama, preview gak lagi error
+pas milih dari workspace) — sama keterbatasan Electron headless di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Buka baris edit artis, klik tombol emoji (cuma 1 tombol sekarang)** — popover nampilin
+  grid preset lokal DI ATAS, list nama+thumbnail emoji workspace Slack DI BAWAHNYA, dalam 1 kotak
+  scroll yang sama.
+- [ ] **Ketik di kotak cari** — nge-filter DUA-duanya sekaligus (preset lokal by value/shortcode,
+  emoji Slack by nama).
+- [ ] **Pilih emoji dari workspace Slack** — TIDAK ADA lagi pop-up error "File tidak terdaftar di
+  project"; avatar di baris itu langsung keupdate ke gambar emoji-nya (sebelum diklik Simpan).
+- [ ] **Pilih preset lokal yang unicode (bukan PNG)** — avatar nampilin karakter emoji-nya
+  langsung (bukan huruf inisial nama artis).
+- [ ] **Baris edit artis sekarang gak ada lagi teks ":kode_name:"** di sebelah tombol emoji — cuma
+  Nickname + avatar + 1 tombol emoji.
+
+## 54. Auto-buka Slack realtime, progress bar 1-pesan HB Apps, fix pill/slider, fitur Status per item (2026-09-19) ✅ (siap dites)
+
+Satu batch "general note" — 5 poin, dirangkum jadi 1 section.
+
+### 54a. Realtime assign per-item langsung buka Slack
+
+`item:addArtist`/`item:removeArtist`/`item:setStatus` (lewat `reconcileItemAssignState`/
+`reconcileItemStatusState`) sekarang langsung `openSlack` ke thread item begitu sinkron sukses —
+**cuma buat realtime PER-ITEM** (assign/lepas artis, ganti status), **BUKAN** buat tombol bulk
+"Update" (`artistAssign:syncProject`, `force: true`) — itu bisa nyentuh puluhan item sekaligus,
+buka setumpuk tab jelas kacau (dikonfirmasi user, opsi ini yang dipilih).
+
+### 54b. Progress bar HB Apps — 1 pesan yang di-edit berkala
+
+Dulu papan status "HB Apps" post 2 pesan terpisah per batch kirim ("Eksekusi N job, estimasi X
+menit" di awal, "Job selesai" di akhir) — TANPA progress apa pun di antaranya. Sekarang SATU
+pesan yang di-`chat.update` berkala:
+- Post awal: `:arrow_forward: Eksekusi 0/N job, estimasi X menit`.
+- Tiap progress nyentuh threshold **10%, lalu kelipatan 20% (30/50/70/90), lalu 95%** — pesan
+  di-edit jadi header + `Progress.. █████░░░░░ 60%` (bar 10 karakter). SENGAJA gak ngedit tiap
+  step (bisa puluhan/ratusan kali) — cukup ~6x edit total per job, biar gak flood `chat.update`
+  channel status yang dipakai bareng SEMUA user app ini.
+- Selesai: `:white_check_mark: Eksekusi Selesai N job, X berhasil terkirim.` + baris
+  `Gagal (n): nama item...` kalau ada yang gagal.
+- Implementasi: `hbStatus.postJobStatus`/`updateJobStatus`/`formatJobHeader`/`formatJobProgress`/
+  `formatJobDone`/`createProgressEditor` (baru) + `slack.updateSimpleMessage` (baru, `chat.update`).
+  `send:start` ngitung `totalSteps = targets.length * numPhases` (3 fase buat scope item/artist,
+  4 kalau ada fase reply) dan manggil `stepDone()` abis TIAP slot kerja (sukses/gagal/skip/batal
+  — biar persentase selalu presisi nyampe 100% pas job kelar apa pun hasilnya).
+
+### 54c. Fix CSS toggle switch (pill) & slider volume/durasi
+
+- `.toggle-switch` (checkbox pill Realtime Sync) ke-leakan `border: 1px solid` + `padding: 7px
+  10px` dari rule global `input,select,textarea` (styles.css) — gak pernah di-reset di rule
+  `.toggle-switch` sendiri. Border tipis ini bikin posisi lingkaran (`::before`) keitung dari
+  kotak yang udah kegeser dikit sama border, kelihatan gak presisi. Fix: `border: none; padding:
+  0;` ditambah ke `.toggle-switch`.
+- `<input type="range">` (slider volume & durasi, VideoPlayer.tsx) kena `padding: 7px 10px` yang
+  SAMA — geser track slider-nya ke DALAM, jadi value 0 gak nempel di paling kiri, value max gak
+  nempel di paling kanan. Fix: rule baru `input[type="range"] { padding: 0; border: none;
+  background: transparent; }`.
+
+### 54d. Fitur baru: Status per item
+
+Kolom "Status" baru — Tab Table (sebelah kanan kolom Artis), Tab Reply (di bawah Dropdown Artis).
+Dropdown **single-select** (cuma 1 status aktif per item, beda dari Artis yang multi-select) —
+ganti status otomatis lepas react status lama, pasang react status baru. Preset Status (nama +
+emoji) dikelola di modal baru **"Kelola Status"** (terpisah dari Preset Artis, sesuai pilihan
+user), bisa pilih emoji dari preset lokal ATAU langsung dari custom emoji workspace Slack (reuse
+`CombinedEmojiPickerButton`, dipindah jadi shared component di `EmojiPicker.tsx`).
+
+Skema baru: `status_presets` (id, name, code_name, image_path, sort_order) + `item_status`
+(item_id PK, status_id, sent_shortcode, updated_at) — **SENGAJA tabel terpisah dari
+item_reactions/item_artists**, bukan nebeng ke situ, biar gak ketaut/kehapus gak sengaja sama
+cleanup reaction mode artis-react (`reconcileItemAssignState` bersihin SEMUA reaction 'sent' yang
+gak cocok artis manapun — status bakal ketimpa kalau digabung).
+
+Backend: `reconcileItemStatusState` (main.cjs, mirip `reconcileItemAssignState` tapi buat 1 value
+doang, gak ada mention) — baca `item_status.sent_shortcode` (shortcode yang LAGI live di Slack)
+vs `status_presets.code_name` (yang SEHARUSNYA live), lepas yang lama kalau beda, pasang yang
+baru. Dipanggil dari: `item:setStatus` (IPC baru, realtime per-item, precondition thread sama
+kayak addArtist), `send:start` Fase 2 (`force: true`, bareng artis), `send:quick` (`force: true`,
+Instant Intake), dan `artistAssign:syncProject` (tombol "Update" — sekarang nyisir item yang
+PUNYA ARTIS **ATAU** PUNYA STATUS/nyisa `sent_shortcode`, bukan cuma yang punya artis lagi).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 69 test regresi lulus
+(6 baru: status preset CRUD, item status get/set upsert, `reconcileItemStatusState`/`item:setStatus`
+ganti-status lepas-pasang react, `artistAssign:syncProject` ikut sinkron status, 2 test
+`hbStatus.createProgressEditor`/`formatJobDone` buat progress bar).
+**BELUM**: smoke-test manual visual (semua poin di bawah) — sama keterbatasan Electron headless
+di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Realtime ON, assign/lepas artis 1 item, atau ganti status 1 item** — Slack langsung
+  kebuka ke thread item itu.
+- [ ] **Klik tombol bulk "Update"** — Slack TIDAK kebuka sama sekali (gak spam tab), cuma alert
+  ringkasan biasa.
+- [ ] **Kirim project ~20+ item ke Slack ("Mulai Sesi")** — pesan status di channel `hb-apps`
+  MUNCUL SEKALI, lalu TERUS DIEDIT (bukan pesan baru) nunjukin progress bar naik, berakhir jadi
+  ringkasan "Eksekusi Selesai".
+- [ ] **Toggle Realtime Sync (pill)** — lingkaran di dalamnya kelihatan presisi nempel kiri/kanan
+  pas OFF/ON, gak ada garis tipis aneh di pinggir pill.
+- [ ] **Buka video di Display, geser slider volume dan durasi ke ujung kiri/kanan** — titik geser
+  (thumb) beneran nempel PAS di ujung pill, bukan nyisa jarak.
+- [ ] **Buka "Kelola Status", tambah status baru pilih emoji dari workspace Slack** — status
+  muncul di dropdown Tab Table DAN Tab Reply (dua-duanya sinkron, 1 sumber data).
+- [ ] **Pilih status di 1 item (realtime ON, item udah ada thread)** — react-nya muncul di Slack.
+  Ganti ke status lain — react lama HILANG, react baru MUNCUL (bukan numpuk dua-duanya).
+- [ ] **Hapus preset status yang lagi dipakai beberapa item, lalu klik "Update"** — reaction lama
+  di Slack ikut kebersihin (dropdown di app otomatis balik ke "— Status —").
+
+## 55. Fix picker emoji ke-clip di modal Kelola Status + tombol "+" Semua Emoji (2026-09-19) ✅ (siap dites)
+
+**Bug (dilaporkan)**: di modal "Kelola Status", buka picker emoji (`CombinedEmojiPickerButton`)
+bikin isinya ke-CLIP/ketutup, harus discroll buat liat. **Root cause**: picker-nya dulu
+`position:absolute` nempel ke tombol trigger — tombol itu ada DI DALAM list yang
+`overflow:auto` (StatusPresetModal DAN ArtistPresetModal sama-sama begini), jadi popover yang
+harusnya muncul di luar area situ ke-clip sama batas scroll container-nya, bukan soal z-index.
+**Fix**: `CombinedEmojiPickerButton` diganti dari popover nempel jadi **dialog tersendiri**
+(`position:fixed`, di tengah layar, backdrop sendiri) — sama pola kayak modal lain di app ini,
+gak mungkin ke-clip lagi apa pun posisi tombol trigger-nya.
+
+**Bug 2 (dilaporkan)**: milih emoji unicode (bukan custom/PNG) di picker gabungan, satu-satunya
+feedback visual cuma teks ":kode_name:" (alias-nya) — bukan emoji beneran. Fix: kotak preview
+kecil (di ArtistPresetModal via avatar, di StatusPresetModal kotak sendiri) sekarang nampilin
+KARAKTER emoji-nya langsung kalau bukan custom/PNG, teks alias cuma tampil kalau BELUM ada
+emoji dipilih sama sekali.
+
+**Fitur baru (diminta)**: tombol "+" di sebelah kotak cari — buka picker emoji STANDAR LENGKAP
+(mr-emoji, ribuan emoji unicode, komponen yang SAMA dipakai `EmojiPresetModal`) langsung dari
+dalam picker gabungan, gak perlu bikin preset lokal dulu buat pakai emoji standar. Milih dari
+sini langsung isi code_name (shortcode-nya) + tampilin karakternya di preview — sama alurnya
+kayak pilih dari preset/workspace Slack.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 69 test regresi lulus
+(gak ada perubahan backend di poin ini, murni frontend — jumlah test gak nambah).
+**BELUM**: smoke-test manual visual — sama keterbatasan Electron headless di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Buka "Kelola Status", tambah/edit status, klik tombol emoji** — dialog emoji muncul DI
+  TENGAH layar, gak ketutup/gak perlu scroll buat liat isinya, di mana pun posisi barisnya
+  (termasuk baris paling bawah list).
+- [ ] **Klik tombol "+" di picker itu** — muncul picker emoji lengkap (ribuan emoji standar),
+  ada tombol panah kembali ke tampilan preset+workspace.
+- [ ] **Pilih emoji standar dari situ** — code_name keisi otomatis, karakter emoji-nya kelihatan
+  di preview (bukan teks ":nama:").
+- [ ] **Sama juga di modal Preset Artis** (bug/fix yang sama, komponennya shared) — picker emoji
+  gak ke-clip, tombol "+" ada dan jalan.
+
+## 56. Fix bug "File tidak terdaftar di project" pas Simpan preset Status + input kekunci abis error (2026-09-19) ✅ (siap dites)
+
+**Bug (dilaporkan)**: pilih emoji dari workspace Slack di "Kelola Status", klik Simpan — muncul
+lagi dialog error `Error invoking remote method 'file:readBytes': Error: File tidak terdaftar di
+project`, DAN abis itu input Nama Status di baris itu jadi gak bisa diklik.
+
+**Root cause 1 (ketemu persis pola bug lama)**: `isManagedFile()` (projects.cjs) — gerbang yang
+nentuin "file ini boleh dibaca lewat file:readBytes?" — cuma ngecek tabel `emoji_presets` dan
+`artist_presets`, TIDAK ngecek `status_presets` yang baru ditambah minggu ini. Alurnya: pilih
+emoji Slack -> download ke temp (`allowFiles`, boleh dibaca) -> klik Simpan -> `stageFile` COPY
+ke path PERMANEN baru + simpan ke `status_presets.image_path` -> list di-refresh -> preview PNG
+preset yang BARU disimpan itu coba dibaca lewat path permanen barunya -> `isManagedFile()` gak
+kenal tabel `status_presets` -> ditolak, padahal file itu SAH tersimpan. Persis histori bug yang
+sama pernah kejadian buat `artist_presets` (ada catatan komentarnya di kode). Fix: `status_presets`
+ditambah ke `isManagedFile()` DAN `referencedFile()` (dipakai buat proteksi hapus file yang masih
+dipakai preset lain). Juga nambahin `validateFile(sourcePath)` buat `statusPreset:save` (kelewat
+pas bikin fitur ini, `artistPreset:save` udah punya validasi yang sama).
+
+**Root cause 2 (kenapa sampai "input gak bisa diklik")**: `useFileBlobUrl` (src/lib/fileUrl.ts) —
+hook shared dipakai di HAMPIR SEMUA preview gambar app ini — manggil `file:readBytes` TANPA
+`.catch()` sama sekali. Kalau reject (kejadian di atas, atau kasus lain kapan pun ke depannya),
+jadi UNHANDLED PROMISE REJECTION — itu yang munculin dialog error "Error invoking remote
+method..." yang keliatan "nge-freeze" app (dialog itu ngambil fokus, abis di-OK kadang fokus gak
+balik bener ke input yang lagi aktif). Fix: tambah `.catch()` — gagal baca file preview cukup
+dianggap "gak ada gambar" (log ke console doang), BUKAN unhandled rejection yang bisa muncul jadi
+dialog kapan pun ke depannya buat kasus serupa manapun (bukan cuma poin ini).
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 69 test regresi lulus
+(1 assert baru: `isManagedFile()` kenal PNG status preset yang baru disimpan).
+**BELUM**: smoke-test manual visual — sama keterbatasan Electron headless di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Tambah status baru, pilih emoji dari workspace Slack (PNG), klik Simpan** — TIDAK ADA
+  lagi dialog error. Preview PNG-nya kelihatan normal di baris display abis tersimpan.
+- [ ] **Abis Simpan (baik sukses maupun kalau ada error lain)** — input Nama Status/baris lain di
+  modal yang sama TETAP bisa diklik/diketik normal, gak kekunci.
+- [ ] **Hapus status yang PNG-nya custom dari Slack** — file PNG-nya ikut kehapus dari disk (`removeStatusPreset`).
+
+## 57. Fix emoji standar balik jadi teks kode nama abis Simpan (2026-09-19) ✅ (siap dites)
+
+**Bug (dilaporkan)**: pilih emoji STANDAR (bukan custom/PNG dari Slack) di picker gabungan —
+preview-nya kelihatan bener (karakter emoji-nya) SELAMA masih di form edit, tapi abis klik
+Simpan, baris display balik nampilin teks `:kode_name:` doang (alias-nya), bukan emoji beneran.
+
+**Root cause**: `artist_presets`/`status_presets` cuma punya kolom `code_name` (shortcode teks)
+dan `image_path` (PNG). Buat emoji CUSTOM/PNG, gambarnya sendiri jadi bukti visual — gak masalah.
+Tapi buat emoji STANDAR (dipilih dari preset lokal ATAU tombol "+" Semua Emoji baru di §55),
+KARAKTER emoji-nya sendiri gak pernah kesimpen ke mana pun — cuma ada di state React SEMENTARA
+(`pickedUnicode`) yang ilang begitu form edit ditutup/di-refresh. Gak ada cara nampilin ulang
+emoji beneran abis reload, jatohnya fallback ke teks alias.
+
+**Fix**: kolom baru `unicode_value` di `artist_presets` DAN `status_presets` (migrasi ALTER TABLE,
+bukan cuma edit CREATE TABLE — `status_presets` udah kepake user pas testing sesi ini, jadi tetep
+butuh migrasi biar kolom barunya nambah ke DB yang UDAH ADA). Aturannya **mutually exclusive**
+sama `image_path` — pilih gambar baru = `unicode_value` dikosongin, pilih emoji standar baru =
+`image_path` LAMA (kalau ada) dihapus dari disk + dikosongin. Edit yang GAK nyentuh emoji sama
+sekali (cuma ganti nickname/nama status) — dua-duanya dipertahankan apa adanya (state
+`pickedUnicode` di-prefill dari `preset.unicode_value` pas form edit dibuka, biar Simpan ngirim
+ulang nilai yang bener, bukan kosongin gara-gara gak "disentuh").
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 70 test regresi lulus
+(1 baru: `unicode_value` persist abis save/edit-tanpa-nyentuh-emoji/ganti-ke-gambar/balik-ke-unicode,
+buat status_presets DAN artist_presets).
+**BELUM**: smoke-test manual visual — sama keterbatasan Electron headless di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Tambah status/artis baru, pilih emoji STANDAR (bukan custom/dari Slack), Simpan** — baris
+  display nampilin KARAKTER emoji-nya (bukan teks ":kode_name:").
+- [ ] **Edit preset itu, cuma ganti nama/nickname (JANGAN sentuh tombol emoji), Simpan** — emoji-nya
+  TETAP sama persis (gak ilang/balik jadi teks).
+- [ ] **Edit lagi, kali ini GANTI ke emoji custom/PNG, Simpan** — sekarang gambar yang tampil, bukan
+  karakter unicode lama lagi.
+- [ ] **Restart app abis save preset unicode dari versi lama (sebelum kolom ini ada)** — DB gak
+  crash pas start (migrasi ALTER TABLE jalan aman), preset lama yang belum punya unicode_value
+  cuma tampil teks alias apa adanya (fallback lama, bukan error).
+
+## 58. Sync 2 arah reaction Slack -> App (Socket Mode) (2026-09-19) ✅ (siap dites, BUTUH SETUP MANUAL)
+
+**Fitur baru (diminta user)**: sebelumnya assign artis/status CUMA searah (app -> Slack, lewat
+`reactions.add`/`remove`). Sekarang kalau user nambah/lepas react MANUAL LANGSUNG di Slack pakai
+emoji yang cocok `code_name` preset Artis atau Status, app ini otomatis assign artis / set status
+yang sesuai — arah kebalikannya.
+
+**Kenapa Socket Mode (bukan webhook HTTP biasa)**: app ini desktop, gak punya server publik buat
+nerima event dari Slack. Socket Mode bikin koneksi WebSocket KELUAR (app -> Slack), jadi gak perlu
+endpoint publik sama sekali — cocok buat app lokal kayak ini. Pakai `@slack/socket-mode` (dependency
+baru, resmi dari Slack, terpisah dari `@slack/web-api` yang udah ada).
+
+**Keputusan keamanan penting (dikonfirmasi user)**: App-Level Token (`xapp-...`) yang dibutuhin
+Socket Mode itu rahasia level WORKSPACE APP (beda dari access token OAuth per-user yang udah ada)
+— SENGAJA **TIDAK** lewat `build-config.cjs`/GitHub secret/installer (itu bakal ngulang masalah
+yang bikin `SLACK_CLIENT_SECRET` sengaja dihapus dari installer dulu — lihat komentar di file itu).
+Token ini di-paste MANUAL sama admin lewat modal Settings baru, disimpen terenkripsi LOKAL per
+device (`safeStorage`, pola sama persis kayak `token.enc` OAuth) — gak pernah kebawa ke instalasi
+lain.
+
+**Cakupan sync (dipilih user)**: CUMA reaction yang cocok `code_name` preset Artis atau Status.
+Reaction lain (gak dikenal preset apa pun) diabaikan diem-diem — gak disinkron sebagai chip
+"Add React" generik.
+
+**Desain penting — gak numpang reconcileItemAssignState/reconcileItemStatusState buat nerapin
+hasilnya ke Slack**: reaction yang jadi sumber event ini UDAH ADA di Slack (itu kenapa event-nya
+nyampe). Kalau dipanggil lewat reconcile biasa, ada resiko reconcile nyoba "mastiin state Slack
+sesuai config app" (misal mode React lagi OFF -> reconcile bakal nyoba NGEHAPUS BALIK reaction
+yang baru aja user tambahin manual — ngagetin/nyebelin). Jalur masuk (`handleIncomingReaction`)
+cukup catet "reaction ini SEKARANG ada/gak ada" ke DB lokal (tandain `sent` langsung, TANPA
+manggil `reactions.add`/`remove` lagi buat shortcode sumber event itu sendiri) — idempoten kalau
+event yang sama nyampe berkali-kali (Socket Mode bisa redeliver). Pesan assignment (mode mention)
+TETAP di-`chat.update` kalau perlu — itu API call yang beda, aman dipanggil.
+
+**Teknis**:
+- `electron/slackSocket.cjs` (baru) — wrapper tipis `SocketModeClient`, gak nyimpen logika bisnis.
+- `electron/auth-store.cjs` — `saveAppToken`/`loadAppToken`/`clearAppToken` (pola sama `token.enc`).
+- `electron/slack.cjs` — scope `reactions:read` ditambah ke `USER_SCOPES` (user lama wajib login
+  ulang), `findItemByThread(channelId, threadTs)` reverse lookup (parse balik `item_name` di tabel
+  `threads`, yang nyimpen `JSON.stringify([teamId, userId, projectId, itemId])`).
+- `electron/main.cjs` — `handleIncomingReaction`, `onIncomingArtistReaction`,
+  `onIncomingStatusReaction`, auto-connect pas app start kalau token udah tersimpan, IPC
+  `slackSocket:hasToken`/`isRunning`/`setToken`/`setToken`/`clearToken` + push event
+  `slackSocket:status` ke renderer.
+- Modal baru `SlackSyncSettingsModal.tsx` — instruksi setup + input token + indikator status
+  koneksi. **Diakses dari Start Menu** (icon gear di header, sebelah tombol Logout), BUKAN dari
+  menu bar dalam 1 project (poin revisi lokasi) — ini pengaturan GLOBAL (App-Level Token, sekali
+  buat semua project), lebih pas ketemu sebelum/di luar buka project manapun.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 72 test regresi lulus
+(2 baru: `findItemByThread` reverse lookup + skip baris legacy, `handleIncomingReaction` cocok
+artis/status auto-assign/lepas idempoten TANPA reactions.add/remove redundan, abaikan
+reaction/thread yang gak dikenal).
+**BELUM, DAN GAK BISA DIUJI DI SINI**: koneksi Socket Mode BENERAN ke Slack — sandbox ini gak
+punya akses workspace Slack asli. **WAJIB smoke-test manual sama admin App** ikutin checklist
+di bawah.
+
+**Setup manual WAJIB sebelum fitur ini bisa jalan** (instruksinya juga ada di dalam modal):
+1. api.slack.com/apps → pilih App ini → **Socket Mode** → aktifkan.
+2. **Basic Information** → **App-Level Tokens** → Generate Token, scope `connections:write` →
+   salin token (`xapp-...`).
+3. **OAuth & Permissions** → User Token Scopes → pastikan `reactions:read` ada (otomatis diminta
+   pas login lewat app, tapi App-nya sendiri juga harus ngizinin scope ini ada di daftar).
+4. **Event Subscriptions** → aktifkan → "Subscribe to events on behalf of users" → tambah
+   `reaction_added` dan `reaction_removed`.
+5. Semua user app ini logout + login ulang (buat dapet scope `reactions:read` baru).
+6. Buka Menu → Settings → "Sync 2 Arah Reaction Slack..." → paste App-Level Token → Simpan & Konek.
+
+Checklist manual:
+
+- [ ] **Paste App-Level Token valid** — status koneksi berubah jadi "Terhubung" dalam beberapa detik.
+- [ ] **Paste token FORMAT SALAH (gak diawali xapp-)** — ditolak dengan pesan jelas, gak nyoba konek.
+- [ ] **Restart app abis token tersimpan** — otomatis konek lagi TANPA perlu paste ulang.
+- [ ] **React manual di Slack pakai emoji yang cocok code_name Artis** (di pesan root item yang
+  UDAH pernah dikirim app ini) — artis itu OTOMATIS muncul ke-assign di app (kolom Artis/Tab Reply).
+- [ ] **Lepas react itu di Slack** — artis-nya otomatis KE-LEPAS lagi di app.
+- [ ] **React manual pakai emoji yang cocok code_name Status** — status item itu otomatis ke-set di
+  app. Ganti ke reaction Status LAIN — status lama otomatis lepas, status baru ke-set (cuma 1 aktif).
+- [ ] **React pakai emoji SEMBARANGAN (gak cocok preset apa pun)** — gak ada apa pun yang berubah
+  di app (diabaikan, sesuai cakupan yang dipilih).
+- [ ] **Assign artis DARI APP (bukan dari Slack)** — reaction-nya kekirim ke Slack SEPERTI BIASA
+  (arah app->Slack gak kesenggol/rusak sama fitur baru ini).
+- [ ] **Hapus App-Level Token lewat modal Settings** — koneksi Socket Mode berhenti, react manual
+  di Slack SETELAH itu gak lagi kesinkron ke app (sampai token dipasang lagi).
+
+## 59. Fix bug "Data tidak ditemukan" pas klik chip react + live auto-refresh abis sync 2 arah (2026-09-19) ✅ (siap dites)
+
+**Bug (dilaporkan)**: klik chip react di app (buat hapus manual) — muncul
+`Error invoking remote method 'itemReaction:remove': Error: Data tidak ditemukan untuk akun/
+workspace ini.`
+
+**Root cause**: fitur sync 2 arah (§58) ngubah data (`item_artists`/`item_reactions`/
+`item_status`) di BACKEND kapan pun ada event dari Slack — tapi jendela app yang lagi kebuka
+GAK PERNAH dikasih tau ada perubahan itu. Semua state di renderer (chip react, dropdown Artis/
+Status) cuma di-fetch pas mount/refresh manual (aksi user), jadi bisa "stale" — user liat chip
+yang KESANNYA masih ada padahal baru aja kehapus di backend gara-gara ada yang react/unreact di
+Slack. Klik chip yang udah gak ada -> `ownsItemReaction` gagal -> error.
+
+**Fix (jawab juga pertanyaan user: "apakah sync bisa langsung ke-trigger + reflect ke item yang
+dituju")**: `handleIncomingReaction` (main.cjs) sekarang push event `item:changed` ke renderer
+TIAP KALI beneran ngubah sesuatu (match artis ATAU status, add maupun remove) — jendela yang lagi
+kebuka auto-refresh (`refresh()` + `reactionTick` bump) begitu dapet push ini, TANPA nunggu aksi
+user apa pun. Jadi sekarang: react di Slack -> event nyampe lewat Socket Mode -> backend proses
+langsung (udah dari §58) -> **push ke UI -> item yang dituju auto-update di layar** dalam hitungan
+detik, gak perlu pindah tab/refresh manual.
+
+Sebagai jaring pengaman tambahan (bukan cuma pencegahan) — `removePending` (ItemReactionBar) juga
+dikasih try/catch: kalau tetep kena race (klik pas SAAT itu juga lagi disinkron), errornya
+"tidak ditemukan" di-diemin (refresh diem-diem) BUKAN nge-alert user, sedang error laen (mis.
+Slack API gagal) tetep tampil kayak biasa.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 72 test regresi lulus
+(diperluas test `handleIncomingReaction`: assert push `item:changed` PERSIS di 5 langkah yang
+beneran ngubah data, TIDAK di 3 langkah yang diabaikan).
+**BELUM**: smoke-test manual visual (UI beneran auto-update) — sama keterbatasan Electron headless
+di sandbox ini.
+
+Checklist manual:
+
+- [ ] **Buka 1 project di app, react manual di Slack pakai emoji Artis/Status** (app tetep kebuka,
+  JANGAN pindah tab/refresh manual) — kolom Artis/Status di baris item itu OTOMATIS keupdate dalam
+  beberapa detik, gak perlu ngapa-ngapain.
+- [ ] **Sambil react-react-lepas cepat di Slack, coba klik-klik chip react di app** — gak ada lagi
+  dialog error "Data tidak ditemukan", paling banter chip-nya kelihatan buru-buru ilang/refresh.
+- [ ] **Project LAIN yang lagi gak kebuka** — gak ke-refresh (push di-filter by projectId), gak ada
+  efek samping ke project yang gak relevan.
+
+## 60. Dropdown Status tampil emoji (bukan cuma teks) + Otomasi "WIP" (2026-09-19) ⚠️ 60b DIGANTIKAN §61
+
+**60b (Otomasi "WIP") SUDAH DIGANTIKAN oleh §61 "Otomasi Kata Kunci"** — versi hardcode "@WIP"
+doang di bawah ini gak dipakai lagi, tabel `wip_auto_react_setting` nganggur, ganti
+`keyword_automation_setting` + `keyword_automations`. Dibiarin di sini buat sejarah/konteks
+kenapa desainnya begini. **60a (dropdown emoji) TETAP BERLAKU, gak berubah.**
+
+### 60a. Dropdown Status tampil emoji
+
+**Diminta user**: "show emoji di tiap dropdown status pada input dropdown Tab table". Native
+`<select>`/`<option>` HTML **gak bisa** nampilin `<img>` sama sekali (batasan browser, bukan CSS)
+— jadi `StatusDropdown.tsx` diganti total dari `<select>` polos jadi popover custom (pola sama
+kayak `ArtistPicker`): tombol trigger nampilin thumbnail/karakter emoji + nama status TERPILIH,
+klik buka list yang tiap barisnya juga nampilin thumbnail/karakter + nama. Dipakai di Tab Table
+DAN Tab Reply (komponen shared, otomatis kebawa dua-duanya).
+
+### 60b. Otomasi "WIP"
+
+**Diminta user**: kata "WIP" yang diketik SIAPA PUN sebagai reply di thread item, otomatis dikasih
+react `:wip:` ke pesan ROOT item itu. User konfirmasi pola pesan biasanya `"WIP @Koor @Checker"` —
+jadi aturan cocoknya **kata utuh "WIP"** (word boundary, case-insensitive: "WIP"/"wip" cocok,
+"WIPER" TIDAK), bukan exact-match seluruh pesan atau substring bebas.
+
+Reuse SATU koneksi Socket Mode yang sama kayak §58 (sync 2 arah reaction) — cuma nambah subscribe
+event `message` (butuh scope baru `channels:history`/`groups:history` + Event Subscriptions
+`message.channels`/`message.groups`). **OFF by default** (toggle checkbox baru di modal "Sync &
+Otomasi Slack", GLOBAL — tabel `wip_auto_react_setting`, pola sama `instant_intake_setting`) — opt-in
+eksplisit, gak otomatis aktif abis update.
+
+Aturan proses (`handleIncomingMessage`, main.cjs):
+- Diabaikan kalau: toggle OFF, pesan punya `subtype` (edit/delete/bot_message dst — bukan pesan
+  baru "polos"), BUKAN reply di dalam thread (`thread_ts` kosong ATAU `thread_ts === ts`, yang
+  terakhir itu pesan ROOT-nya sendiri — gak masuk akal react ke diri sendiri), teks gak match
+  `/\bWIP\b/i`, atau thread-nya gak dikenal `findItemByThread` (bukan pesan utama item manapun).
+- Kalau semua lolos: `reactions.add` nama `wip` (hardcode, bukan preset/config — persis yang
+  diminta, YAGNI kalau belum ada kebutuhan keyword/emoji lain) ke `(channel, thread_ts)` — thread_ts
+  di sini PERSIS ts pesan ROOT (bukan reply-nya), sama mekanisme reverse-lookup kayak §58.
+- `reactions.add` udah otomatis nganggep `already_reacted` sebagai sukses (fungsi lama, dipakai
+  ulang) — aman dipanggil berkali-kali kalau beberapa orang balas "WIP" di thread yang sama.
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 73 test regresi lulus
+(1 baru: `handleIncomingMessage` — cocok kata utuh "WIP"/case-insensitive, react ke ROOT bukan
+reply-nya sendiri, abaikan toggle OFF/subtype/di-luar-thread/pesan-root-sendiri/kata mirip/thread
+gak dikenal).
+**BELUM, DAN GAK BISA DIUJI DI SINI**: koneksi/event Socket Mode BENERAN — sandbox ini gak punya
+akses workspace Slack asli.
+
+**Setup TAMBAHAN yang dibutuhin otomasi WIP** (di atas setup §58 yang udah ada):
+1. **OAuth & Permissions** → User Token Scopes → tambah `channels:history` dan `groups:history`.
+2. **Event Subscriptions** → "Subscribe to events on behalf of users" → tambah `message.channels`
+   dan `message.groups`.
+3. Semua user logout + login ulang (dapet scope baru).
+4. Buka modal "Sync & Otomasi Slack" (Start Menu) → centang "Otomasi WIP".
+
+Checklist manual:
+
+- [ ] **Buka dropdown Status di Tab Table/Tab Reply** — tiap opsi nampilin gambar/karakter emoji-nya,
+  bukan cuma teks nama doang. Opsi yang lagi kepilih juga kelihatan emoji-nya di tombol trigger.
+- [ ] **Centang "Otomasi WIP" di Settings, reply "WIP @seseorang" di thread item** — pesan ROOT item
+  itu otomatis kena react `:wip:` dalam beberapa detik.
+- [ ] **Reply teks "WIPER rusak" (bukan kata WIP utuh)** — TIDAK ada react baru.
+- [ ] **Matiin toggle "Otomasi WIP"** — reply "WIP" abis itu TIDAK memicu react lagi.
+- [ ] **Reply "WIP" di pesan yang BUKAN thread item app ini** (channel/thread lain) — diabaikan,
+  gak ada efek apa pun.
+
+## 61. Otomasi Kata Kunci — digeneralisasi jadi preset bebas (bukan hardcode "@WIP" lagi) (2026-09-19) ✅ (siap dites)
+
+**Kronologi (sama sesi, gantiin §60b)**: "Otomasi WIP" awalnya hardcode 3 kali berturut-turut —
+(1) kata kunci "WIP" -> `reactions.add` nama emoji `wip` HARDCODE (gagal, `invalid_name`, emoji-nya
+gak eksis di workspace), (2) user minta kata kunci diganti `"@WIP"`, (3) user koreksi maksudnya:
+`"@WIP"` = preset Status **"Working on it"** yang emoji-nya user pilih sendiri lewat Kelola Status
+— bukan nama emoji ditebak app. **Sekarang (final)**: digeneralisasi TOTAL — user bikin sendiri
+SEBANYAK APA PUN mapping "kata kunci bebas" -> "target bebas (Status ATAU Artis)" lewat modal baru,
+gak ada satu pun yang hardcode lagi.
+
+**UI**: Start Menu → gear "Sync & Otomasi Slack" → toggle master "Otomasi Kata Kunci" (GLOBAL,
+OFF default) + tombol **"Kelola Otomasi Kata Kunci..."** (`KeywordAutomationModal.tsx`, modal
+baru) — CRUD daftar: tiap baris = 1 kata kunci + 1 target (pilih "Set Status" lalu preset Status
+dari dropdown, ATAU "Assign Artis" lalu member Slack dari dropdown). **Kata kunci yang SAMA boleh
+dipakai di beberapa baris** (target beda) — gak ada constraint UNIQUE, jadi 1 kata bisa trigger
+Status DAN Artis sekaligus kalau user bikin 2 baris.
+
+**Skema**: `keyword_automation_setting` (toggle master, singleton, gantiin `wip_auto_react_setting`
+yang sekarang nganggur) + `keyword_automations` (id, keyword, target_type `'status'|'artist'`,
+target_id, sort_order).
+
+**Eksekusi** (`handleIncomingMessage`, main.cjs — REUSE PENUH mekanisme yang udah ada, BUKAN nembak
+Slack manual lagi):
+- Toggle OFF, `subtype` ada (edit/delete/bot_message dst), atau teks pesan gak cocok SATU PUN
+  keyword terdaftar -> diabaikan diem-diem (no-op, biar Log Aktivitas gak berisik).
+- Cocok tapi BUKAN reply di dalam thread (`thread_ts` kosong/`=== ts`), atau thread-nya gak
+  dikenal `findItemByThread`, atau item/project-nya bukan punya akun yang login -> diabaikan TAPI
+  ke-log "info" (diagnosa, biar ketauan di tahap mana macetnya).
+- Cocok DAN valid -> loop tiap automation yang match, `target_type: "status"` panggil
+  `reconcileItemStatusState({force:true})` (persis kayak assign status dari app manual, BENERAN
+  `reactions.add` — beda dari sync 2 arah reaction §58 yang skip addReaction karena udah ada di
+  Slack duluan), `target_type: "artist"` panggil `reconcileItemAssignState({force:true})` (assign
+  artis + sync react/mention SESUAI mode Artis assign global yang lagi aktif). Target yang UDAH
+  gak ada (preset Status/artis kehapus) -> ke-log "error" jelas, bukan crash diem-diem. Tiap match
+  sukses push `item:changed` (UI auto-refresh) + log "info".
+
+**Sudah diverifikasi otomatis**: `tsc --noEmit` bersih, `vite build` bersih, 74 test regresi lulus
+(1 baru: CRUD `keyword_automations`; 1 ditulis ulang total: `handleIncomingMessage` — kata kunci
+beda-beda trigger status VS artis independen, idempoten kalau artis udah assigned, target kehapus
+ke-log error, semua kasus abaikan dari §60b tetep berlaku).
+**BELUM, DAN GAK BISA DIUJI DI SINI**: koneksi/event Socket Mode BENERAN — sandbox ini gak punya
+akses workspace Slack asli.
+
+### Alur kerja (dijawab ke user, dicatat biar gak lupa)
+
+Slack kirim event pesan lewat koneksi Socket Mode -> app terima -> cocokkan ke kata kunci
+terdaftar -> kalau cocok, app update lokal (set status/assign artis) DULU -> baru kirim balik ke
+Slack (reaction/update pesan mention) lewat panggilan API biasa. Semua otomatis, gak ada langkah
+manual di tengah, biasanya kejadian dalam hitungan detik.
+
+### ⚠️ Multi-user: atas nama siapa aksinya kejadian?
+
+App ini GAK PUNYA BOT — semua panggilan ke Slack (reactions.add, chat.update) pakai token OAuth
+**siapa pun yang login di INSTANCE app yang nerima event itu**, BUKAN otomatis user tertentu, dan
+BUKAN si penulis kata kuncinya.
+
+Kalau 2 orang (A & B) SAMA-SAMA jalanin app dengan Socket Mode aktif (App-Level Token yang SAMA,
+tapi masing-masing login OAuth sendiri-sendiri) — Slack bagi pengiriman tiap event secara
+**round-robin** ke salah satu koneksi yang lagi aktif (bukan broadcast ke semua). Jadi:
+- Gak bisa dipastikan/dipilih event mana diproses instance A atau B — hasilnya (status/artis
+  ter-update) SAMA, tapi "atas nama siapa" di Slack bisa beda-beda tiap kali.
+- Resiko nyata: kalau B kebetulan gak punya akses ke channel tertentu tapi A punya, dan event
+  jatuh ke koneksi B, aksinya bisa GAGAL walau A sebenarnya bisa.
+
+**Rekomendasi**: kalau mau hasilnya konsisten, cukup SATU orang (mis. koor) yang nyalain Socket
+Mode/Otomasi Kata Kunci terus-menerus — yang lain tetap bisa pakai app seperti biasa tanpa perlu
+ikut mengaktifkan fitur ini di sisi mereka.
+
+Checklist manual:
+
+- [ ] **Bikin 2 mapping kata kunci beda ("@WIP" -> Status, "@DONE" -> Artis), reply masing-masing
+  di thread item** — status ke-set utk "@WIP", artis ke-assign utk "@DONE", independen.
+- [ ] **Bikin 1 kata kunci yang sama dipakai 2 baris (1 Status, 1 Artis)** — reply kata itu SEKALI
+  -> status DAN artis dua-duanya ke-update dari 1 pesan.
+- [ ] **Hapus preset Status/artis yang lagi dipakai mapping, reply kata kuncinya lagi** — ke-log
+  error jelas di Log Aktivitas, app gak crash.
+- [ ] **Restart app abis update dari "Otomasi WIP" versi lama** — toggle balik ke OFF default
+  (preferensi lama gak ke-migrasi, WAJAR — user perlu bikin ulang mapping-nya di modal baru).

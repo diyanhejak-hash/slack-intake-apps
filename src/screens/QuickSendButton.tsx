@@ -28,11 +28,11 @@ import { SendHorizontal, Loader2, Check } from "lucide-react";
 //   - "inline" (Tab Reply, ReplyRow) — flow normal sejajar checkbox/broadcast/trash di
 //     `.reply-actions`, reveal-nya ikut mekanisme hover `.reply-actions` yang udah ada (gak perlu
 //     delay terpisah, biar konsisten sama ikon lain di baris yang sama).
-export default function QuickSendButton({ onClick, title, variant = "overlay" }: { onClick: () => Promise<unknown>; title: string; variant?: "overlay" | "inline" }) {
+export default function QuickSendButton({ onClick, title, variant = "overlay", disabled = false }: { onClick: () => Promise<unknown>; title: string; variant?: "overlay" | "inline"; disabled?: boolean }) {
   const [state, setState] = useState<"idle" | "sending" | "done">("idle");
 
   async function handleClick() {
-    if (state === "sending") return;
+    if (state === "sending" || disabled) return;
     setState("sending");
     try {
       await onClick();
@@ -48,6 +48,7 @@ export default function QuickSendButton({ onClick, title, variant = "overlay" }:
     <button
       className={`quicksend-btn ${variant === "overlay" ? "row-quicksend" : ""}`}
       title={title}
+      disabled={disabled}
       onClick={(e) => {
         e.stopPropagation();
         handleClick();

@@ -23,6 +23,8 @@ const slack = require("./slack.cjs");
 const projects = require("./projects.cjs");
 const { checkForUpdate } = require("./updater.cjs");
 const hbStatus = require("./hbStatus.cjs");
+const adminAccess = require("./adminAccess.cjs");
+const slackSocket = require("./slackSocket.cjs");
 
 const isDev = !!process.env.VITE_DEV;
 const { pathToFileURL } = require("node:url");
@@ -35,9 +37,17 @@ function allowFiles(files) {
   for (const file of files) fileGrants.add(fs.realpathSync(file));
   return files;
 }
+// Satu aturan "file ini boleh diakses?" dipakai bareng validateFile() DAN file:readBytes — dulu
+// file:readBytes cuma cek isManagedFile() doang (gak liat fileGrants sama sekali), jadi file yang
+// BARU di-allowFiles (misal hasil slack:downloadEmojiImage) gagal di-preview sebelum sempat
+// disimpan jadi managed file (bug dilaporkan: "Error file:readBytes ... tidak terdaftar di
+// project" pas milih emoji Slack, padahal abis disimpan langsung muncul normal).
+function isFileAccessible(real) {
+  return fileGrants.has(real) || projects.isManagedFile(real);
+}
 function validateFile(file) {
   const real = fs.realpathSync(file);
-  if (!fileGrants.has(real) && !projects.isManagedFile(real)) throw new Error("Pilih atau drop file terlebih dahulu.");
+  if (!isFileAccessible(real)) throw new Error("Pilih atau drop file terlebih dahulu.");
   // Gak ada batas ukuran sendiri lagi (poin revisi) — ikut aturan Slack, biar Slack yang nolak.
   if (!fs.statSync(real).isFile()) throw new Error("Yang dipilih bukan file.");
 }
@@ -98,10 +108,22 @@ function currentToken() {
 // di-single-flight. Balikin false (bukan throw) kalau gak ada refresh_token tersimpan atau
 // refresh-nya sendiri gagal — caller tetap lempar error asli, user tetap harus login ulang manual.
 let refreshPromise = null;
+// Poin revisi (diagnosa: user masih kena token_expired berulang, gak jelas kenapa auto-refresh
+// gak nolong) — dulu gagal diam-diam (return false doang, gak ada jejak KENAPA). Sekarang tiap
+// jalur gagal di-log (Menu > Log Aktivitas) DAN caller (handle()) nyusun error yang beda buat
+// masing-masing kasus, biar keliatan jelas di dialog: gak ada refresh_token tersimpan (login
+// lama, sebelum fitur ini ada / App gak pakai Token Rotation) VS refresh-nya sendiri yang gagal.
+// `var` (bukan `let`, poin revisi testability) — top-level `let`/`const` gak ke-expose lewat
+// context object pas dijalanin via vm.runInNewContext (test regresi), `var` iya.
+var lastRefreshFailureReason = null;
 async function tryRefreshToken() {
   if (!refreshPromise) {
     const info = authStore.loadToken();
-    if (!info?.refreshToken) return false;
+    if (!info?.refreshToken) {
+      lastRefreshFailureReason = "no_refresh_token";
+      projects.addLog("error", "Auto-refresh token dilewati: gak ada refresh_token tersimpan (login sebelum fitur auto-refresh ada, atau App Slack gak pakai Token Rotation) -- logout lalu login ulang.");
+      return false;
+    }
     refreshPromise = slack
       .refreshAccessToken({ clientId: process.env.SLACK_CLIENT_ID, refreshToken: info.refreshToken })
       .then((refreshed) => authStore.saveToken({ ...info, ...refreshed }))
@@ -110,7 +132,9 @@ async function tryRefreshToken() {
   try {
     await refreshPromise;
     return true;
-  } catch {
+  } catch (err) {
+    lastRefreshFailureReason = "refresh_call_failed";
+    projects.addLog("error", `Auto-refresh token gagal: ${err.message}`);
     return false;
   }
 }
@@ -155,14 +179,24 @@ function handle(channel, fn) {
         // access_token baru SEKALI, retry panggilan yang gagal itu. Kalau App Slack-nya gak
         // pakai Token Rotation (gak ada refresh_token tersimpan) atau refresh-nya sendiri
         // gagal, error ASLI tetap dilempar — user tetap harus login ulang manual kayak sebelumnya.
-        if (err?.data?.error === "token_expired" && (await tryRefreshToken())) {
-          result = await fn(event, ...args);
+        if (err?.data?.error === "token_expired") {
+          if (await tryRefreshToken()) {
+            result = await fn(event, ...args);
+          } else {
+            // Poin revisi (diagnosa) — pesan ke user sekarang BEDA tergantung KENAPA auto-refresh
+            // gak nolong, bukan cuma nampilin "token_expired" mentah yang gak actionable.
+            const hint = lastRefreshFailureReason === "no_refresh_token"
+              ? "Sesi login ini gak punya refresh token tersimpan (login dari sebelum fitur auto-refresh, atau App Slack gak pakai Token Rotation). Logout lalu login ulang."
+              : "Auto-refresh token gagal (cek Log Aktivitas buat detail). Logout lalu login ulang.";
+            throw new Error(`Token Slack expired. ${hint}`);
+          }
         } else {
           throw err;
         }
       }
       if (/:pickFiles$/.test(channel)) allowFiles(result || []);
       if (channel === "emojiPreset:pickImage" && result) allowFiles([result]);
+      if (channel === "slack:downloadEmojiImage" && result) allowFiles([result]);
       return result;
     } catch (err) {
       projects.addLog("error", `${channel}: ${err.message}`);
@@ -179,6 +213,7 @@ function validateAccess(channel, args) {
   if (channel === "reply:addFiles") args[2].forEach(validateFile);
   if (channel === "emojiPreset:addCustom") validateFile(args[0].filePath);
   if (channel === "artistPreset:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
+  if (channel === "statusPreset:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
   if (channel === "batchFile:saveSections") {
     const previous = projects.listBatchSections(args[0]);
     for (const section of args[1]) for (const file of section.files) {
@@ -187,11 +222,12 @@ function validateAccess(channel, args) {
     }
   }
   let valid = true;
-  if (["project:load", "project:rename", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "batchFile:listSections", "batchFile:saveSections", "batchFile:apply"].includes(channel)) valid = projects.ownsProject(args[0]);
+  if (["project:load", "project:rename", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "batchFile:listSections", "batchFile:saveSections", "batchFile:apply", "artistAssign:syncProject", "slackPull:syncProject"].includes(channel)) valid = projects.ownsProject(args[0]);
   else if (channel === "item:addManual") valid = projects.ownsProject(args[0]?.projectId);
   else if (["item:update", "item:remove", "item:attachFiles"].includes(channel)) valid = projects.ownsItem(args[0]);
+  else if (["item:addArtist", "item:removeArtist", "item:setStatus", "artistAssign:syncItem", "slackPull:syncItem"].includes(channel)) valid = projects.ownsProject(args[0]?.projectId) && projects.ownsItem(args[0]?.itemId);
   else if (channel === "item:merge") valid = Array.isArray(args[0]) && args[0].every(projects.ownsItem);
-  else if (["reply:update", "reply:remove", "reply:broadcast", "reply:addFiles", "reply:addCapturedToReply"].includes(channel)) valid = projects.ownsReply(args[0]);
+  else if (["reply:update", "reply:unlock", "reply:remove", "reply:broadcast", "reply:addFiles", "reply:addCapturedToReply"].includes(channel)) valid = projects.ownsReply(args[0]);
   else if (channel === "reply:add") valid = projects.ownsItem(args[0]?.itemId);
   else if (channel === "reply:addCaptured") valid = projects.ownsItem(args[0]);
   else if (["item:removeFile", "project:removeFile", "reply:removeFile"].includes(channel)) valid = projects.ownsFile(args[0]);
@@ -263,7 +299,7 @@ function createWindow() {
     (async () => {
       try {
         await Promise.race([
-          hbStatus.postStatus(slack, currentToken(), ":yawning_face: Offline"),
+          hbStatus.postStatus(slack, currentToken(), ":radio_button: Offline"),
           new Promise((resolve) => setTimeout(resolve, 5000)),
         ]);
       } finally {
@@ -310,6 +346,11 @@ app.whenReady().then(() => {
   if (process.platform === "darwin") app.dock.setIcon(appIcon); // dock Mac = taskbar Windows, butuh di-set eksplisit juga
   createWindow();
   createTray();
+  // Sync 2 arah reaction Slack->App (poin revisi) — auto-connect Socket Mode kalau App-Level
+  // Token udah pernah disimpen sebelumnya (gak perlu paste ulang tiap buka app) DAN salah satu
+  // toggle (Realtime Sync/Otomasi Kata Kunci) lagi ON (poin revisi lanjutan, Level 2) -- kalau
+  // user terakhir nutup app dengan dua-duanya OFF, gak usah auto-connect, ngirit slot round-robin.
+  updateSocketModeConnectionState().catch((err) => slackSocketStatusChanged("error", err.message));
 });
 
 app.on("window-all-closed", () => {
@@ -343,8 +384,35 @@ handle("auth:login", async () => {
   );
   authStore.saveToken(info);
   projects.setScope(info.userId, info.teamId);
+  // Poin revisi (bug ditemukan lewat audit, D18) — akun baru login = cache admin (adminAccess.cjs)
+  // punya akun SEBELUMNYA (kalau ada) harus di-invalidate, biar isAdminMember/isOwner dicek ULANG
+  // buat identitas yang baru, bukan kepake status akun lama.
+  adminAccess.invalidateCache();
+  // Poin revisi (UX login via custom URL scheme) — tab browser abis klik Allow SERING nyangkut
+  // loading (halaman itu punya Slack, kita gak kontrol) walau login-nya di app UDAH beneran
+  // sukses di titik ini. Notifikasi OS + log eksplisit nyebut refresh_token biar user gak
+  // bingung "ini kejadian apa enggak", dan bisa self-verify dari Message Log.
+  projects.addLog("info", `Login berhasil (${info.team || info.userId}). Refresh token ${info.refreshToken ? "TERSIMPAN" : "TIDAK ADA (App Slack mungkin belum/gak pakai Token Rotation)"}.`);
+  if (Notification.isSupported()) {
+    new Notification({
+      title: "Slack Intake Apps",
+      icon: appIcon,
+      body: "Login berhasil. Tab browser yang masih terbuka boleh ditutup.",
+    }).show();
+  }
   return { loggedIn: true, userId: info.userId, team: info.team };
   } finally { authenticating = false; }
+});
+
+// Diagnostik manual (poin revisi — user nanya "gimana tau refresh token udah aktif?", gak mau
+// nunggu ~12 jam sampai token beneran expired) — paksa tukar refresh_token SEKARANG walau access
+// token SAAT INI masih valid (oauth.v2.access grant_type=refresh_token gak digate validitas token
+// lama, jadi ini beneran nguji mekanismenya, bukan cuma nunggu pasif). Hasil (sukses/gagal+alasan)
+// SELALU ke-log ke Message Log juga (tryRefreshToken sendiri yang nge-log), biar user bisa lihat
+// detail di sana kapan pun tanpa harus nunggu error beneran kejadian.
+handle("auth:testRefresh", async () => {
+  const ok = await tryRefreshToken();
+  return { ok, reason: ok ? null : lastRefreshFailureReason };
 });
 
 handle("auth:logout", () => {
@@ -352,12 +420,95 @@ handle("auth:logout", () => {
   fileGrants.clear();
   authStore.clearToken();
   projects.setScope(null, null);
+  // Poin revisi (bug ditemukan lewat audit, D18) — cache admin (adminAccess.cjs) per PROSES app,
+  // bukan per akun. Tanpa ini, ganti akun (logout admin -> login user biasa) di proses yang SAMA
+  // (belum restart app) bisa nyisain status admin punya akun LAMA nempel ke akun BARU.
+  adminAccess.invalidateCache();
   return { loggedIn: false };
+});
+
+// ---------- Sistem Admin/Member (poin revisi, diminta user) ----------
+// isOwner: cocok-cocokan email akun Slack ke satu alamat hardcode (adminAccess.cjs), murni
+// lokal. isAdminMember: keanggotaan channel privat "hb-adm" (lihat adminAccess.cjs kenapa ini
+// cukup jadi sumber kebenaran, gak butuh data custom). Dipanggil sekali abis login (App.tsx).
+handle("admin:getStatus", async () => {
+  const info = authStore.loadToken();
+  const owner = adminAccess.isOwner(info?.email);
+  const adminMember = await adminAccess.isAdminMember(slack, currentToken());
+  return { isOwner: owner, isAdminMember: adminMember };
+});
+
+function requireOwner() {
+  const info = authStore.loadToken();
+  if (!adminAccess.isOwner(info?.email)) throw new Error("Cuma owner app yang boleh ngatur member admin.");
+}
+
+// Poin revisi (bug ditemukan lewat audit, D08) — fitur Sync Realtime/Otomasi Kata Kunci
+// sebelumnya CUMA disembunyiin di UI (isAdminMember && ...), handler IPC-nya sendiri gak pernah
+// nge-cek apa pun -- user biasa yang manggil langsung lewat devtools/console tetap lolos. Guard
+// ini nutup celah itu di lapisan backend, bukan cuma tampilan.
+async function requireAdminMember() {
+  if (!(await adminAccess.isAdminMember(slack, currentToken()))) {
+    throw new Error("Fitur ini cuma buat member channel admin (\"hb-adm\").");
+  }
+}
+
+// Auto-bikin channel "hb-adm" (privat) pas pertama kali owner buka modal Manage Member Admin
+// -- gak perlu langkah "bikin channel" terpisah, langsung ada wadah buat di-invite.
+async function ensureAdminChannel(token) {
+  let channelId = await adminAccess.findAdminChannel(slack, token);
+  if (!channelId) {
+    const created = await slack.createPrivateChannel({ token, name: adminAccess.ADMIN_CHANNEL_NAME, memberIds: [] });
+    channelId = created.channelId;
+    adminAccess.invalidateCache();
+  }
+  return channelId;
+}
+
+handle("admin:listChannelMembers", async () => {
+  requireOwner();
+  const token = currentToken();
+  const channelId = await ensureAdminChannel(token);
+  const memberIds = await slack.getChannelMembers({ token, channelId });
+  const users = await slack.listUsers(token);
+  const byId = new Map(users.map((u) => [u.id, u]));
+  return { channelId, members: memberIds.map((id) => ({ id, name: byId.get(id)?.name || id })) };
+});
+
+handle("admin:addMember", async (_e, userId) => {
+  requireOwner();
+  const token = currentToken();
+  const channelId = await ensureAdminChannel(token);
+  await slack.inviteToChannel({ token, channelId, userId });
+});
+
+handle("admin:removeMember", async (_e, userId) => {
+  requireOwner();
+  const token = currentToken();
+  const channelId = await adminAccess.findAdminChannel(slack, token);
+  if (!channelId) throw new Error("Channel admin belum ada.");
+  await slack.removeFromChannel({ token, channelId, userId });
 });
 
 // ---------- Slack data ----------
 handle("slack:listChannels", () => slack.listChannels(currentToken()));
 handle("slack:listUsers", () => slack.listUsers(currentToken()));
+handle("slack:listCustomEmojis", () => slack.listCustomEmojis(currentToken()));
+// Download 1 gambar emoji custom (poin revisi, Preset Artis "ambil dari Slack") — domain
+// divalidasi HARUS punya Slack (bukan URL sembarang lewat IPC ini), disimpen ke temp file lokal
+// biar bisa lewat jalur staging yang SAMA kayak upload manual (artistPreset:save sourcePath),
+// gak perlu bikin jalur simpan PNG baru.
+handle("slack:downloadEmojiImage", async (_e, url) => {
+  const parsed = new URL(url);
+  if (!/(^|\.)slack-edge\.com$|(^|\.)slack\.com$/.test(parsed.hostname)) throw new Error("URL emoji tidak valid.");
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Gagal ambil gambar emoji (${res.status}).`);
+  const buffer = Buffer.from(await res.arrayBuffer());
+  const ext = path.extname(parsed.pathname) || ".png";
+  const tempPath = path.join(app.getPath("temp"), `slack-emoji-${require("node:crypto").randomUUID()}${ext}`);
+  fs.writeFileSync(tempPath, buffer);
+  return tempPath;
+});
 handle("slack:createChannel", (_e, { name, memberIds }) => slack.createPrivateChannel({ token: currentToken(), name, memberIds }));
 
 // ---------- Projects ----------
@@ -365,6 +516,8 @@ handle("project:create", (_e, payload) => projects.createProject(payload));
 handle("project:list", () => projects.listProjects());
 handle("project:load", (_e, id) => projects.getProject(id));
 handle("project:rename", (_e, id, name) => projects.renameProject(id, name));
+// Tahap alur kerja Setup/Assign (poin revisi, diminta user) -- toggle manual, bukan otomatis.
+handle("project:setPhase", (_e, id, phase) => projects.setProjectPhase(id, phase));
 handle("project:delete", (_e, id) => projects.deleteProject(id));
 handle("project:duplicate", (_e, id, newName) => projects.duplicateProject(id, newName));
 // General Display (Tab Reply, panel kiri) — level PROJECT (poin b1 revisi), sengaja beda dari
@@ -420,6 +573,7 @@ handle("item:removeFile", (_e, fileId) => projects.removeItemFile(fileId));
 
 handle("reply:add", (_e, payload) => projects.addReplyWithFiles(payload.itemId, payload));
 handle("reply:update", (_e, replyId, patch) => projects.updateReply(replyId, patch));
+handle("reply:unlock", (_e, replyId) => projects.unlockReply(replyId));
 handle("reply:remove", (_e, replyId) => projects.removeReply(replyId));
 handle("reply:removeMany", (_e, replyIds) => projects.removeReplies(replyIds));
 handle("reply:removeFile", (_e, fileId) => projects.removeReplyFile(fileId));
@@ -455,17 +609,672 @@ handle("emojiPreset:pickImage", async () => {
 
 // ---------- Artis Preset (poin revisi) — global, bukan per-project ----------
 handle("artistPreset:list", () => projects.listArtistPresets());
-handle("artistPreset:save", (_e, { id, memberId, nickname, codeName, sourcePath }) => projects.saveArtistPreset({ id, memberId, nickname, codeName, sourcePath }));
+handle("artistPreset:save", (_e, { id, memberId, nickname, codeName, sourcePath, unicodeValue }) => projects.saveArtistPreset({ id, memberId, nickname, codeName, sourcePath, unicodeValue }));
 handle("artistPreset:remove", (_e, id) => projects.removeArtistPreset(id));
 // artistPreset:pickImage DIHAPUS (poin revisi) — PNG artis sekarang dipilih lewat EmojiPicker
 // (preset custom emoji, upload-nya lewat "Kelola preset..."), bukan dialog file langsung lagi.
-// Mode assign Mention/React (poin revisi) — GLOBAL buat SEMUA artis, singleton (bukan per-preset).
-handle("artistAssignMode:get", () => projects.getArtistAssignMode());
-handle("artistAssignMode:set", (_e, mode) => projects.setArtistAssignMode(mode));
+
+// ---------- Status Preset (poin revisi, fitur "Status" per item) — global, mirip Artis Preset ----------
+handle("statusPreset:list", () => projects.listStatusPresets());
+handle("statusPreset:save", (_e, { id, name, codeName, sourcePath, unicodeValue }) => projects.saveStatusPreset({ id, name, codeName, sourcePath, unicodeValue }));
+handle("statusPreset:remove", (_e, id) => projects.removeStatusPreset(id));
+handle("statusPreset:reorder", (_e, orderedIds) => projects.reorderStatusPresets(orderedIds));
+// Mode assign Mention/React (poin revisi — bisa DUA-duanya aktif bareng) — GLOBAL buat SEMUA
+// artis, singleton (bukan per-preset), 2 flag independen.
+handle("artistAssignMode:get", () => projects.getArtistAssignModes());
+handle("artistAssignMode:setMention", (_e, enabled) => projects.setMentionEnabled(enabled));
+handle("artistAssignMode:setReact", (_e, enabled) => projects.setReactEnabled(enabled));
 
 // Toggle global Instant Intake + Instant Reaction (poin revisi) — gak sentuh "Add React".
 handle("instantIntake:get", () => projects.getInstantIntakeEnabled());
 handle("instantIntake:set", (_e, enabled) => projects.setInstantIntakeEnabled(enabled));
+
+// Toggle global "sesi assign artis realtime" (poin revisi, multi-artist) — dipakai bareng
+// ArtistPicker Tab Table & Tab Reply, lihat item:addArtist/item:removeArtist buat sinkronnya.
+// Poin revisi (diminta user) — toggle ini SEKARANG juga ngontrol arah Slack->App (lihat guard di
+// handleIncomingReaction) + koneksi Socket Mode (updateSocketModeConnectionState, didefinisiin
+// di bawah tapi function declaration di-hoist, aman dipanggil dari sini).
+handle("artistRealtimeAssign:get", () => projects.getRealtimeAssignEnabled());
+handle("artistRealtimeAssign:set", async (_e, enabled) => {
+  await requireAdminMember(); // poin revisi (audit D08) -- dulu cuma disembunyiin di UI
+  const result = projects.setRealtimeAssignEnabled(enabled);
+  await updateSocketModeConnectionState();
+  return result;
+});
+
+// Serialize item:addArtist/removeArtist PER ITEM (poin revisi) -- tiap panggilan round-trip ke
+// Slack (mode realtime), kalau user toggle 2 artis CEPAT sebelum panggilan pertama kelar,
+// syncAssignMessage bisa race (dua-duanya baca "belum ada pesan" bareng, dua-duanya chat.postMessage
+// -> pesan assignment DOBEL). Queue promise per itemId -- panggilan ke-2 nunggu ke-1 kelar dulu.
+const itemArtistQueues = new Map();
+function withItemArtistLock(itemId, fn) {
+  const prev = itemArtistQueues.get(itemId) || Promise.resolve();
+  const next = prev.then(fn, fn);
+  itemArtistQueues.set(itemId, next.catch(() => {}));
+  return next;
+}
+
+// Poin revisi (bug dilaporkan: "ganti mode, react lama masih tertinggal") — root cause versi
+// lama: add/removeArtist cuma nanganin sisi yang cocok sama mode SAAT INI, jadi kalau artis
+// di-assign pas mode react (reaction live), lalu mode diganti ke mention SEBELUM artis itu
+// dilepas, reaction lama itu orphan selamanya (gak pernah ke-cek lagi). Fix: reconcile PENUH
+// tiap kali item_artists berubah -- baca ULANG state React MAUPUN mention dari nol berdasarkan
+// mode SAAT INI, bukan cuma nge-patch 1 sisi yang "kebetulan" cocok mode waktu itu:
+//   - mode react: reaction HARUS live cuma buat artis yang MASIH assigned + punya code_name;
+//     apa pun yang sent tapi gak seharusnya (mode udah ganti, ATAU artisnya udah dilepas)
+//     di-reactions.remove. Mention message SELALU placeholder (gak peduli siapa assigned).
+//   - mode mention: SEMUA reaction yang masih sent (nyisa dari kapan pun) di-reactions.remove.
+//     Mention message diisi daftar artis TERKINI (atau placeholder kalau kosong).
+// Dipakai addArtist/removeArtist (realtime ON, per-item) DAN "artistAssign:syncProject" (tombol
+// manual "Update" — poin revisi: ganti mode GLOBAL SENGAJA gak auto-nembak Slack buat semua item
+// seketika, itu lokal/instan doang; user yang mutusin KAPAN nge-push perubahan mode itu ke Slack
+// lewat tombol ini, bisa dipakai walau realtime OFF makanya ada `force`) -- SATU fungsi, 1 sumber
+// kebenaran buat "gimana harusnya state Slack item ini" berdasarkan item_artists + mode SAAT INI.
+async function reconcileItemAssignState({ projectId, itemId, force = false }) {
+  if (!force && !projects.getRealtimeAssignEnabled()) return;
+  const info = slack.findThreadInfo(threadKey(projectId, itemId));
+  if (!info) return; // gak ada thread -- gak ada apa pun buat disinkron (caller yang mutusin mau throw atau diem)
+  const token = currentToken();
+  // Poin revisi: mention & react sekarang INDEPENDEN (bisa dua-duanya aktif bareng) -- masing-
+  // masing dicek flag-nya sendiri, bukan 1 mode string mutually-exclusive lagi.
+  const { mention: mentionEnabled, react: reactEnabled } = projects.getArtistAssignModes();
+  const artists = projects.listItemArtists(itemId);
+  const presetByMember = new Map(projects.listArtistPresets().map((p) => [p.member_id, p]));
+  const shouldBeLive = new Set(reactEnabled ? artists.map((a) => presetByMember.get(a.artist_id)?.code_name).filter(Boolean) : []);
+
+  for (const r of projects.listItemReactions(itemId)) {
+    if (r.sent && !shouldBeLive.has(r.slack_shortcode)) {
+      try {
+        await slack.removeReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: r.slack_shortcode });
+      } catch (err) {
+        projects.addLog("error", `Gagal bersihin reaction lama :${r.slack_shortcode}: (ganti mode/lepas artis): ${err.message}`);
+      }
+      projects.removeItemReaction(r.id, { unassignArtist: false }); // ini reconcile sistem, bukan user "batal assign"
+    }
+  }
+  let addedNewArtistReaction = false;
+  for (const codeName of shouldBeLive) {
+    const existing = projects.listItemReactions(itemId).find((r) => r.slack_shortcode === codeName);
+    if (existing?.sent) continue;
+    if (!existing) projects.addItemReaction(itemId, { emojiType: "custom", emojiValue: codeName, slackShortcode: codeName });
+    try {
+      await slack.addReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: codeName });
+      const flushed = projects.listItemReactions(itemId).find((r) => r.slack_shortcode === codeName);
+      if (flushed) projects.markItemReactionSent(flushed.id);
+      addedNewArtistReaction = true;
+    } catch (err) {
+      projects.addLog("error", `Gagal kasih reaction :${codeName}: (reconcile mode react): ${err.message}`);
+    }
+  }
+
+  // Poin revisi (urutan tampilan, diminta user) — Slack nampilin reaction sesuai urutan
+  // ditambahin ke pesan (gak ada API buat "reorder" reaction yang udah ada), jadi biar react
+  // ARTIS selalu di kiri/duluan dibanding react STATUS: tiap kali ada react artis BARU yang
+  // baru aja nempel (atau pas tombol "Update" manual dipencet -- `force`, biar bisa benerin
+  // urutan item LAMA yang kejadiannya kebalik dari sebelum fitur ini ada) SEMENTARA react status
+  // udah nempel duluan, react status itu di-lepas lalu dipasang ulang -- otomatis pindah ke
+  // ujung PALING BELAKANG, alias selalu setelah react artis.
+  if ((addedNewArtistReaction || force) && shouldBeLive.size > 0) {
+    const statusRow = projects.getItemStatus(itemId);
+    if (statusRow?.sent_shortcode) {
+      try {
+        await slack.removeReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: statusRow.sent_shortcode });
+        await slack.addReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: statusRow.sent_shortcode });
+      } catch (err) {
+        projects.addLog("error", `Gagal urutin ulang reaction status :${statusRow.sent_shortcode}: (biar react artis tetap duluan): ${err.message}`);
+      }
+    }
+  }
+
+  // Mention message cuma nampilin nama BENERAN kalau flag mention lagi ON -- kalau OFF (react
+  // doang, atau dua-duanya OFF) SELALU placeholder, gak peduli siapa assigned.
+  const mentionArtistIds = mentionEnabled ? artists.map((a) => a.artist_id) : [];
+  await slack.syncAssignMessage({ token, channelId: info.channelId, itemId, threadTs: info.threadTs, artistIds: mentionArtistIds });
+
+  // Poin revisi: realtime assign PER-ITEM (force=false, satu-satunya jalur addArtist/removeArtist
+  // lewat) langsung buka thread-nya di Slack -- user liat hasilnya seketika tanpa nyari manual.
+  // SENGAJA cuma buat realtime, BUKAN bulk "Update" (force=true, artistAssign:syncProject) -- itu
+  // bisa nyentuh puluhan item sekaligus, buka tab sebanyak itu jelas kacau.
+  if (!force) openSlack({ channelId: info.channelId, ts: info.threadTs });
+}
+
+// Fitur "Status" per item (poin revisi) — CUMA 1 status aktif per item (dropdown, bukan multi
+// kayak artis), dikirim sebagai 1 reaction. Ganti status = lepas reaction lama, pasang yang baru,
+// sama semangatnya kayak reconcileItemAssignState tapi jauh lebih sederhana (gak ada mention,
+// gak ada daftar banyak artis) -- SENGAJA fungsi + tabel TERPISAH (item_status, bukan nebeng ke
+// item_reactions), biar gak ketaut/kehapus gak sengaja sama cleanup reaction mode artis-react.
+async function reconcileItemStatusState({ projectId, itemId, force = false }) {
+  if (!force && !projects.getRealtimeAssignEnabled()) return;
+  const info = slack.findThreadInfo(threadKey(projectId, itemId));
+  if (!info) return;
+  const token = currentToken();
+  const row = projects.getItemStatus(itemId);
+  const preset = row?.status_id ? projects.listStatusPresets().find((p) => p.id === row.status_id) : null;
+  const desiredShortcode = preset?.code_name || null;
+  const liveShortcode = row?.sent_shortcode || null;
+  if (liveShortcode === desiredShortcode) return; // udah sinkron, gak ada yang perlu diubah
+
+  if (liveShortcode) {
+    // Poin revisi (bug ditemukan lewat audit, D14) — sent_shortcode DULU dihapus TANPA PEDULI
+    // removeReaction berhasil apa enggak (di luar try/catch). Kalau removeReaction GAGAL, DB
+    // lokal tetap ngaku "udah bersih" -- panggilan berikutnya liveShortcode===null jadi nganggep
+    // SUDAH sinkron (baris awal fungsi ini return duluan), reaction lama yang GAGAL kehapus di
+    // Slack gak akan pernah dicoba dihapus lagi. Sekarang cuma di-null-in kalau BENERAN sukses,
+    // biar reconcile berikutnya masih nyoba ulang.
+    try {
+      await slack.removeReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: liveShortcode });
+      projects.setItemStatusSentShortcode(itemId, null);
+    } catch (err) {
+      projects.addLog("error", `Gagal bersihin reaction status lama :${liveShortcode}: ${err.message}`);
+    }
+  }
+  if (desiredShortcode) {
+    try {
+      await slack.addReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: desiredShortcode });
+      projects.setItemStatusSentShortcode(itemId, desiredShortcode);
+    } catch (err) {
+      projects.addLog("error", `Gagal kasih reaction status :${desiredShortcode}: ${err.message}`);
+    }
+  }
+  if (!force) openSlack({ channelId: info.channelId, ts: info.threadTs });
+}
+
+// Assign/lepas 1 artis ke/dari item (poin revisi, multi-artist — ArtistPicker sekarang
+// multi-select, tiap toggle klik = 1 panggilan ini). Assignment LOKAL selalu jalan duluan (gak
+// pernah gagal gara-gara Slack) -- BARU kalau toggle realtime ON, reconcileItemAssignState yang
+// sinkron ke Slack (lihat komentar fungsi itu). Butuh item yang UDAH PERNAH dikirim (ada thread)
+// -- sama precondition InstantReactionOverlay, error jelas kalau belum ada (khusus addArtist).
+handle("item:addArtist", (_e, { projectId, itemId, artistId, artistName }) => withItemArtistLock(itemId, async () => {
+  const item = projects.getProject(projectId)?.items.find((i) => i.id === itemId);
+  if (!item) throw new Error("Item tidak ditemukan.");
+  projects.addItemArtist(itemId, artistId, artistName);
+  // Flag react ON (poin revisi, independen dari mention): SELALU antre pending reaction lokal
+  // begitu artis di-assign (gak soal realtime ON/OFF) -- realtime OFF, reaction ini nunggu
+  // di-flush pas "Kirim ke Slack" biasa nanti.
+  if (projects.getArtistAssignModes().react) {
+    const preset = projects.listArtistPresets().find((p) => p.member_id === artistId);
+    if (preset?.code_name) projects.addItemReaction(itemId, { emojiType: "custom", emojiValue: preset.code_name, slackShortcode: preset.code_name });
+  }
+  if (projects.getRealtimeAssignEnabled() && !slack.findThreadInfo(threadKey(projectId, itemId))) {
+    throw new Error(`"${item.name}" belum pernah dikirim ke Slack (belum ada thread) — gak bisa realtime assign.`);
+  }
+  await reconcileItemAssignState({ projectId, itemId });
+}));
+
+handle("item:removeArtist", (_e, { projectId, itemId, artistId }) => withItemArtistLock(itemId, async () => {
+  const item = projects.getProject(projectId)?.items.find((i) => i.id === itemId);
+  if (!item) throw new Error("Item tidak ditemukan.");
+  projects.removeItemArtist(itemId, artistId);
+  // Batal antre reaction PENDING (belum sent) buat artis ini kalau ada -- yang UDAH sent (live di
+  // Slack, mode kapan pun) dibersihin lewat reconcileItemAssignState di bawah.
+  const preset = projects.listArtistPresets().find((p) => p.member_id === artistId);
+  if (preset?.code_name) {
+    const pending = projects.listItemReactions(itemId).find((r) => r.slack_shortcode === preset.code_name && !r.sent);
+    if (pending) projects.removeItemReaction(pending.id, { unassignArtist: false });
+  }
+  await reconcileItemAssignState({ projectId, itemId });
+}));
+
+// Ganti status 1 item (poin revisi, fitur Status) — dropdown single-select, beda dari artis
+// (multi-select add/remove). `statusId` null/"" = lepas status (placeholder "— Status —").
+// Lock per-item yang SAMA kayak addArtist/removeArtist -- kelas race yang sama (klik cepat
+// ganti-ganti status sebelum reconcile pertama kelar).
+handle("item:setStatus", (_e, { projectId, itemId, statusId }) => withItemArtistLock(itemId, async () => {
+  const item = projects.getProject(projectId)?.items.find((i) => i.id === itemId);
+  if (!item) throw new Error("Item tidak ditemukan.");
+  projects.setItemStatus(itemId, statusId || null);
+  if (projects.getRealtimeAssignEnabled() && !slack.findThreadInfo(threadKey(projectId, itemId))) {
+    throw new Error(`"${item.name}" belum pernah dikirim ke Slack (belum ada thread) — gak bisa realtime assign.`);
+  }
+  await reconcileItemStatusState({ projectId, itemId });
+}));
+
+// Tombol manual "Update" (poin revisi) — dipicu USER, BUKAN otomatis pas mode assign global
+// di-switch (itu sengaja tetap murni lokal/instan, gak nembak Slack sama sekali sendirian).
+// Nyisir SEMUA item project yang lagi kebuka yang punya artis assigned DAN/ATAU status (poin
+// revisi lanjutan, fitur Status ikut dibawa tombol yang sama), reconcile 1-1 ke state SAAT INI —
+// jalan meski toggle realtime OFF (`force: true`, justru itu gunanya tombol ini).
+// Push 1 item (poin revisi, dipisah biar bisa dipakai scope PROJECT (loop di bawah) MAUPUN
+// scope ITEM tunggal — tombol Push sekarang beda perilaku tergantung tab aktif, lihat diskusi).
+async function pushItemToSlack(projectId, item) {
+  // Poin revisi (diminta user) — item yang UDAH py thread lalu di-rename di app: pesan root di
+  // Slack ikut ke-update tiap kali Push jalan (overlay/tombol Update). Best-effort, gak boleh
+  // ngeblok reconcile assign/status di bawah gara-gara ini doang.
+  const info = slack.findThreadInfo(threadKey(projectId, item.id));
+  if (info) {
+    try {
+      await slack.syncRootMessageName({ token: currentToken(), channelId: info.channelId, threadTs: info.threadTs, itemName: item.name });
+    } catch (err) {
+      projects.addLog("error", `Gagal update nama item di pesan Slack "${item.name}": ${err.message}`);
+    }
+  }
+  // Poin revisi (bug ditemukan lewat audit, D13) — reconcile assign SEBELUMNYA cuma dipanggil
+  // kalau item.artists.length > 0. Kalau user LEPAS artis TERAKHIR pas realtime OFF lalu Push,
+  // reconcile ini gak pernah kepanggil -- mention/reaction LAMA yang masih live di Slack gak
+  // pernah dibersihin. reconcileItemAssignState sendiri udah aman dipanggil unconditional (no-op
+  // kalau emang gak ada apa-apa buat diubah, findThreadInfo internal juga udah nge-guard).
+  await reconcileItemAssignState({ projectId, itemId: item.id, force: true });
+  if (item.status_id || item.status_sent_shortcode) await reconcileItemStatusState({ projectId, itemId: item.id, force: true });
+}
+
+handle("artistAssign:syncProject", async (_e, projectId) => {
+  const project = projects.getProject(projectId);
+  if (!project) throw new Error("Project tidak ditemukan untuk akun/workspace ini.");
+  // Poin revisi (bug ditemukan lewat audit, D13) — filter LAMA (artists.length>0 || status)
+  // ngelewatin item yang PUNYA thread tapi gak py artis/status SAAT INI -- termasuk item yang
+  // baru aja DILEPAS artis terakhirnya (assignment lama harusnya ikut dibersihin) dan item
+  // rename-only (nama barunya gak akan pernah ke-sync ke pesan root lewat tombol Update bulk).
+  // Target sekarang: SEMUA item yang UDAH py thread (has_thread), bukan cuma yang py artis/status.
+  const targets = project.items.filter((i) => i.has_thread);
+  let synced = 0;
+  const errors = [];
+  for (const item of targets) {
+    try {
+      await pushItemToSlack(projectId, item);
+      synced++;
+    } catch (err) {
+      errors.push(`"${item.name}": ${err.message}`);
+      projects.addLog("error", `Update sinkron assign gagal buat "${item.name}": ${err.message}`);
+    }
+  }
+  return { total: targets.length, synced, errors };
+});
+
+// Push SATU item (poin revisi, tombol Push scope per-item di Tab Input) — logic SAMA kayak di
+// atas, target-nya cuma item yang lagi aktif.
+handle("artistAssign:syncItem", async (_e, { projectId, itemId, openAfter = true }) => {
+  const item = projects.getProject(projectId)?.items.find((i) => i.id === itemId);
+  if (!item) throw new Error("Item tidak ditemukan.");
+  await pushItemToSlack(projectId, item);
+  // Poin revisi (diminta user) — samain UX kayak Instant Intake (send:quick, SELALU buka link
+  // pesan abis kirim). openAfter=false dipakai overlay KOLOM (bisa nge-Push BANYAK item
+  // sekaligus) biar gak spam buka tab, sama alasannya kayak artistAssign:syncProject (bulk)
+  // sengaja diem juga.
+  if (openAfter) {
+    const info = slack.findThreadInfo(threadKey(projectId, itemId));
+    if (info) openSlack({ channelId: info.channelId, ts: info.threadTs });
+  }
+  return { itemName: item.name };
+});
+
+// "Pull" manual (poin revisi) — kebalikan arah dari tombol di atas (Push/"Sinkron ulang", App ->
+// Slack): ini Slack -> App, dipicu TOMBOL (bukan otomatis/background) — nutup celah "react/kata
+// kunci kejadian pas SEMUA instalasi offline", event Socket Mode-nya ilang gak ketangkep siapa
+// pun, gak ada cara nyusul lewat jalur realtime (lihat diskusi round-robin App-Level Token).
+// 2 hal dicek per item yang PUNYA thread:
+//   1. React TERKINI di pesan root (state-diff, BUKAN replay history -- lebih simpel/akurat,
+//      reuse onIncomingArtistReaction/onIncomingStatusReaction yang SAMA kayak jalur Socket Mode
+//      biasa, cuma dipicu manual di sini bukan event push).
+//   2. Kata kunci di SEMUA reply thread (replay teks pesan, SATU-satunya cara -- kata kunci ada
+//      di teks, bukan di reaction).
+// Dipisah jadi fungsi 1-item (dipakai loop scope PROJECT di bawah MAUPUN handler scope ITEM
+// tunggal) — THROW kalau fetch gagal, caller yang mutusin mau di-catch per-item (loop project)
+// atau dibiarin nyampe ke renderer apa adanya (single item, gak ada "item lain" buat lanjut).
+// Nama item ikut Pull (poin revisi, diminta user — "buat pull dan push bisa merubah nama item",
+// Push arahnya udah jalan lewat syncRootMessageName, ini pelengkap arah sebaliknya) — pesan root
+// SELALU di-post app ini sebagai `*nama item*` (lihat sendItem/ensureRoot), jadi kalau user edit
+// LANGSUNG di Slack, lucutin tanda bintang pembungkusnya buat balikin nama mentahnya. Kalau
+// user ngetik ulang teksnya TANPA bintang (edit total), tetap dipakai apa adanya.
+function extractItemNameFromRootText(text) {
+  if (!text) return null;
+  const trimmed = text.trim();
+  const match = trimmed.match(/^\*([\s\S]+)\*$/);
+  return (match ? match[1] : trimmed).trim() || null;
+}
+
+async function pullItemFromSlack(projectId, item, { token, artistPresets, statusPresets, keywordAutomations }) {
+  const info = slack.findThreadInfo(threadKey(projectId, item.id));
+  if (!info) return { reactionChanges: 0, keywordChanges: 0, nameChanged: false };
+  const messages = await slack.fetchThreadReplies({ token, channelId: info.channelId, threadTs: info.threadTs });
+  const root = messages.find((m) => m.ts === info.threadTs);
+  const liveNames = new Set((root?.reactions || []).map((r) => r.name));
+  let reactionChanges = 0, keywordChanges = 0;
+  // Nama item ikut Pull -- di luar withItemArtistLock (itu buat serialize assign artis/status,
+  // rename gak beririsan sama itu), best-effort (proses lain di bawah TETAP jalan walau ini gagal).
+  let nameChanged = false;
+  const pulledName = extractItemNameFromRootText(root?.text);
+  if (pulledName && pulledName !== item.name) {
+    projects.updateItem(item.id, { name: pulledName });
+    item.name = pulledName; // biar log/return di bawah pake nama TERBARU, bukan nama lama yang udah basi
+    nameChanged = true;
+  }
+  await withItemArtistLock(item.id, async () => {
+    for (const preset of artistPresets) {
+      const isLive = liveNames.has(preset.code_name);
+      // Poin revisi (bug ditemukan: Pull berulang tanpa perubahan apa pun tetap ngelaporin
+      // reactionChanges > 0) -- idempoten: cuma panggil+hitung kalau state lokal BENERAN beda
+      // dari live Slack, sama gaya kayak loop statusPresets di bawah.
+      const sentRow = projects.listItemReactions(item.id).find((r) => r.slack_shortcode === preset.code_name && r.sent);
+      if (isLive) {
+        const alreadyAssigned = projects.listItemArtists(item.id).some((a) => a.artist_id === preset.member_id);
+        if (!alreadyAssigned || !sentRow) {
+          await onIncomingArtistReaction(true, projectId, item.id, preset.member_id, preset.code_name, preset.nickname);
+          reactionChanges++;
+        }
+      } else if (sentRow) {
+        // Cuma lepas kalau app SEBELUMNYA yakin reaction ini live (ada baris item_reactions
+        // sent) -- biar gak nge-unassign artis yang di-assign manual TANPA react sama sekali
+        // (mis. mode mention doang), yang emang dari awal gak pernah punya reaction di Slack.
+        await onIncomingArtistReaction(false, projectId, item.id, preset.member_id, preset.code_name, preset.nickname);
+        reactionChanges++;
+      }
+    }
+    const statusRow = projects.getItemStatus(item.id);
+    for (const preset of statusPresets) {
+      const isLive = liveNames.has(preset.code_name);
+      if (isLive) {
+        if (statusRow?.status_id !== preset.id || statusRow?.sent_shortcode !== preset.code_name) {
+          await onIncomingStatusReaction(true, item.id, preset.id, preset.code_name);
+          reactionChanges++;
+        }
+      } else if (statusRow?.sent_shortcode === preset.code_name) {
+        await onIncomingStatusReaction(false, item.id, preset.id, preset.code_name);
+        reactionChanges++;
+      }
+    }
+  });
+
+  if (keywordAutomations.length) {
+    const replies = messages.filter((m) => m.ts !== info.threadTs && !m.subtype && m.text);
+    for (const msg of replies) {
+      const matched = keywordAutomations.filter((a) => keywordAutomationRegex(a.keyword).test(msg.text));
+      for (const automation of matched) {
+        await withItemArtistLock(item.id, async () => {
+          if (automation.target_type === "status") {
+            const preset = projects.listStatusPresets().find((p) => p.id === automation.target_id);
+            if (!preset) return;
+            projects.setItemStatus(item.id, preset.id);
+            await reconcileItemStatusState({ projectId, itemId: item.id, force: true });
+          } else {
+            const current = projects.getProject(projectId)?.items.find((i) => i.id === item.id);
+            if (!current) return;
+            if (!current.artists.some((a) => a.artist_id === automation.target_id)) {
+              const artistPreset = projects.listArtistPresets().find((p) => p.member_id === automation.target_id);
+              projects.addItemArtist(item.id, automation.target_id, artistPreset?.nickname || null);
+            }
+            await reconcileItemAssignState({ projectId, itemId: item.id, force: true });
+          }
+        });
+        keywordChanges++;
+      }
+    }
+  }
+  if (reactionChanges || keywordChanges || nameChanged) notifyItemChanged(projectId, item.id);
+  return { reactionChanges, keywordChanges, nameChanged };
+}
+
+function pullPresetsAndAutomations() {
+  return {
+    token: currentToken(),
+    artistPresets: projects.listArtistPresets().filter((p) => p.code_name),
+    statusPresets: projects.listStatusPresets().filter((p) => p.code_name),
+    keywordAutomations: projects.getKeywordAutomationEnabled() ? projects.listKeywordAutomations() : [],
+  };
+}
+
+handle("slackPull:syncProject", async (_e, projectId) => {
+  const project = projects.getProject(projectId);
+  if (!project) throw new Error("Project tidak ditemukan untuk akun/workspace ini.");
+  const ctx = pullPresetsAndAutomations();
+  let reactionChanges = 0, keywordChanges = 0, namesChanged = 0;
+  const errors = [];
+  for (const item of project.items) {
+    try {
+      const result = await pullItemFromSlack(projectId, item, ctx);
+      reactionChanges += result.reactionChanges;
+      keywordChanges += result.keywordChanges;
+      if (result.nameChanged) namesChanged++;
+    } catch (err) {
+      errors.push(`"${item.name}": ${err.message}`);
+      projects.addLog("error", `Pull gagal buat "${item.name}": ${err.message}`);
+    }
+  }
+  return { reactionChanges, keywordChanges, namesChanged, errors };
+});
+
+// Pull SATU item (poin revisi, tombol Pull scope per-item di Tab Input) — logic SAMA kayak di
+// atas, target-nya cuma item yang lagi aktif.
+handle("slackPull:syncItem", async (_e, { projectId, itemId }) => {
+  const item = projects.getProject(projectId)?.items.find((i) => i.id === itemId);
+  if (!item) throw new Error("Item tidak ditemukan.");
+  const result = await pullItemFromSlack(projectId, item, pullPresetsAndAutomations());
+  return { itemName: item.name, ...result };
+});
+
+// ---------- Sync 2 arah reaction Slack -> App (poin revisi, Socket Mode) ----------
+// User nambah/lepas reaction MANUAL di Slack (bukan lewat app ini) -- kalau shortcode-nya cocok
+// code_name Artis/Status yang udah ada presetnya, otomatis assign/lepas artis atau set/lepas
+// status di app, SEARAH KEBALIKAN dari reconcileItemAssignState/reconcileItemStatusState (yang
+// nyalurin app -> Slack).
+//
+// SENGAJA gak numpang reconcileItemAssignState/reconcileItemStatusState buat nge-APPLY hasilnya
+// ke Slack -- reaction ini KAN UDAH ADA di Slack (itu kenapa event ini nyampe), manggil
+// reconcile bakal nyoba mastiin "state Slack sesuai config app" (termasuk mode react OFF =
+// HARUS gak ada reaction sama sekali) dan BISA nghapus balik reaction yang baru aja user
+// tambahin manual kalau kebetulan mode react lagi OFF -- ngagetin/nyebelin. Di sini cukup catet
+// "reaction ini SEKARANG udah/gak ada di Slack" ke DB lokal (idempoten, gak nembak reactions.add/
+// remove lagi buat shortcode yang jadi sumber event ini), reconcile TETAP jalan normal buat sisi
+// LAIN yang emang butuh API call beneran (pesan assignment mode mention).
+async function onIncomingArtistReaction(added, projectId, itemId, artistId, codeName, artistName) {
+  const item = projects.getProject(projectId)?.items.find((i) => i.id === itemId);
+  if (!item) return;
+  const alreadyAssigned = item.artists.some((a) => a.artist_id === artistId);
+  if (added) {
+    if (!alreadyAssigned) projects.addItemArtist(itemId, artistId, artistName);
+    const existing = projects.listItemReactions(itemId).find((r) => r.slack_shortcode === codeName);
+    if (!existing) projects.markItemReactionSent(projects.addItemReaction(itemId, { emojiType: "custom", emojiValue: codeName, slackShortcode: codeName }));
+    else if (!existing.sent) projects.markItemReactionSent(existing.id);
+  } else {
+    if (alreadyAssigned) projects.removeItemArtist(itemId, artistId);
+    const existing = projects.listItemReactions(itemId).find((r) => r.slack_shortcode === codeName);
+    if (existing) projects.removeItemReaction(existing.id, { unassignArtist: false });
+  }
+  if (projects.getArtistAssignModes().mention) {
+    const info = slack.findThreadInfo(threadKey(projectId, itemId));
+    if (info) {
+      const freshArtistIds = projects.listItemArtists(itemId).map((a) => a.artist_id);
+      await slack.syncAssignMessage({ token: currentToken(), channelId: info.channelId, itemId, threadTs: info.threadTs, artistIds: freshArtistIds });
+    }
+  }
+}
+
+async function onIncomingStatusReaction(added, itemId, statusId, codeName) {
+  const current = projects.getItemStatus(itemId);
+  if (added) {
+    if (current?.status_id !== statusId) projects.setItemStatus(itemId, statusId);
+    projects.setItemStatusSentShortcode(itemId, codeName);
+  } else {
+    if (current?.status_id === statusId) projects.setItemStatus(itemId, null);
+    if (current?.sent_shortcode === codeName) projects.setItemStatusSentShortcode(itemId, null);
+  }
+}
+
+// Poin revisi (bug dilaporkan: klik chip react di app abis reaction ke-ubah dari Slack, dapet
+// "Data tidak ditemukan untuk akun/workspace ini") — root cause: sync 2 arah ngubah data di
+// backend, tapi renderer yang lagi kebuka gak tau sama sekali (state item_reactions/artis/status
+// di sana cuma fetch pas mount/refreshToken, gak ada dorongan "ada perubahan" dari sync ini) —
+// jadi user bisa klik chip yang KESANNYA masih ada tapi sebenernya udah kehapus di backend. Fix:
+// push event ke renderer TIAP kali sync ini beneran ngubah sesuatu, biar UI auto-refresh sendiri.
+function notifyItemChanged(projectId, itemId) {
+  if (win && !win.isDestroyed()) win.webContents.send("item:changed", { projectId, itemId });
+}
+
+async function handleIncomingReaction(type, event) {
+  try {
+    // Poin revisi (diminta user) — toggle Realtime Sync sekarang beneran matiin DUA arah, bukan
+    // App->Slack doang (reconcileItemAssignState/StatusState). Toggle OFF = react yang kejadian
+    // di Slack DI-SKIP lokal (event tetap diterima instalasi ini kalau Socket Mode masih nyala,
+    // cuma gak diproses) -- satu-satunya jalan sinkron balik ke Pull manual.
+    if (!projects.getRealtimeAssignEnabled()) return;
+    if (!event?.item || event.item.type !== "message" || !event.reaction) return;
+    const found = slack.findItemByThread(event.item.channel, event.item.ts);
+    if (!found) return; // bukan pesan root item manapun yang app ini kenal -- abaikan
+    const { projectId, itemId } = found;
+    if (!projects.ownsProject(projectId) || !projects.ownsItem(itemId)) return;
+    const added = type === "reaction_added";
+
+    const artistPreset = projects.listArtistPresets().find((p) => p.code_name === event.reaction);
+    if (artistPreset) {
+      await withItemArtistLock(itemId, () => onIncomingArtistReaction(added, projectId, itemId, artistPreset.member_id, event.reaction, artistPreset.nickname));
+      notifyItemChanged(projectId, itemId);
+      return;
+    }
+    const statusPreset = projects.listStatusPresets().find((p) => p.code_name === event.reaction);
+    if (statusPreset) {
+      await withItemArtistLock(itemId, () => onIncomingStatusReaction(added, itemId, statusPreset.id, event.reaction));
+      notifyItemChanged(projectId, itemId);
+    }
+    // Reaction lain yang gak cocok preset apa pun -- SENGAJA diabaikan (poin revisi, cakupan
+    // sync dipilih user cuma buat Artis/Status, bukan reaction bebas apa pun).
+  } catch (err) {
+    projects.addLog("error", `Gagal proses reaction dari Slack (sync 2 arah): ${err.message}`);
+  }
+}
+
+function slackSocketStatusChanged(status, detail) {
+  projects.addLog(status === "error" ? "error" : "info", `Sync 2 arah Slack: ${status}${detail ? ` (${detail})` : ""}`);
+  if (win && !win.isDestroyed()) win.webContents.send("slackSocket:status", { status, detail: detail || null });
+}
+
+// Otomasi Kata Kunci (poin revisi — digeneralisasi dari "Otomasi WIP" yang awalnya hardcode
+// "@WIP" -> status "Working on it" doang). Sekarang user bikin sendiri daftar mapping-nya lewat
+// modal "Kelola Otomasi Kata Kunci": kata kunci bebas + target bebas (preset Status ATAU artis
+// tertentu). Kata kunci diketik SIAPA PUN sebagai reply di thread item -- otomatis set status/
+// assign artis yang di-mapping ke item itu. REUSE PENUH mekanisme yang udah ada — reconcile*State
+// (force:true) yang beneran reactions.add/chat.update ke Slack + push item:changed, bukan jalur
+// terpisah/nembak Slack manual.
+// Poin revisi (bug ditemukan lewat audit, D07) — versi LAMA cuma nambah \b di BELAKANG kata,
+// TANPA cek batas DEPAN sama sekali -- keyword "WIP" jadi ikut cocok di dalam "NEWIP" (P diikuti
+// akhir kata = \b valid, padahal itu bukan kata "WIP" berdiri sendiri). \b juga gak reliable buat
+// keyword yang DIAWALI/DIAKHIRI simbol (mis. "@WIP" atau "DONE!") — "!" itu karakter NON-WORD,
+// jadi \b gak akan pernah nempel PERSIS setelah "!" (butuh transisi ke word-char, sementara abis
+// "!" biasanya cuma spasi/akhir pesan) -- keyword "DONE!" jadi GAK PERNAH cocok sama sekali walau
+// user ketik PERSIS "...DONE!" di reply. Ganti total ke lookbehind/lookahead NEGATIF: "gak boleh
+// diapit huruf/angka/underscore" di KEDUA sisi -- ini kerja BENER buat keyword polos ("WIP")
+// MAUPUN yang diawali/diakhiri simbol ("@WIP", "DONE!"), gak kayak \b yang cuma pas buat kata
+// murni alfanumerik.
+function keywordAutomationRegex(keyword) {
+  const escaped = keyword.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?<![A-Za-z0-9_])${escaped}(?![A-Za-z0-9_])`, "i");
+}
+
+// Poin revisi (diagnosa: "udah setup semua, ketik kata kunci gak ada apa pun kejadian") — dulu
+// semua jalur "diabaikan" DIEM-DIEM (gak ke-log), jadi kalau gagal user gak punya cara tau di
+// TAHAP MANA gagalnya (event gak nyampe sama sekali? bukan reply thread? thread gak dikenal?
+// target-nya udah kehapus?). Sekarang tiap pesan yang cocok SALAH SATU kata kunci (lolos cek kata
+// dulu, BUKAN tiap pesan biasa -- biar Log Aktivitas gak kebanjiran noise) di-log jelas per tahap.
+async function handleIncomingMessage(event) {
+  try {
+    if (!projects.getKeywordAutomationEnabled()) return;
+    // subtype ada = bukan pesan "polos" baru (message_changed/deleted, bot_message, dst) -- abaikan.
+    if (event?.subtype) return;
+    if (!event.text) return;
+    const automations = projects.listKeywordAutomations();
+    const matched = automations.filter((a) => keywordAutomationRegex(a.keyword).test(event.text));
+    if (matched.length === 0) return;
+    const matchedKeywords = matched.map((a) => a.keyword).join(", ");
+    // Reply-doang (thread_ts ada TAPI beda dari ts pesan ini sendiri) -- root message thread ini
+    // sendiri gak diproses (gak masuk akal "react ke diri sendiri"), dan pesan di luar thread sama
+    // sekali (gak ada thread_ts) diabaikan -- gak ada "pesan utama" yang relevan buat di-react.
+    if (!event?.thread_ts || event.thread_ts === event.ts) {
+      projects.addLog("info", `Otomasi kata kunci: "${matchedKeywords}" kedeteksi tapi BUKAN reply di dalam thread (harus dibales DI DALAM thread item, bukan pesan baru) — channel ${event.channel}`);
+      return;
+    }
+    const found = slack.findItemByThread(event.channel, event.thread_ts);
+    if (!found) {
+      projects.addLog("info", `Otomasi kata kunci: "${matchedKeywords}" kedeteksi tapi thread ini bukan thread item manapun yang dikenal app — channel ${event.channel}, thread ${event.thread_ts}`);
+      return;
+    }
+    const { projectId, itemId } = found;
+    if (!projects.ownsProject(projectId) || !projects.ownsItem(itemId)) {
+      projects.addLog("info", `Otomasi kata kunci: "${matchedKeywords}" kedeteksi tapi item/project-nya bukan punya akun yang lagi login ini — diabaikan`);
+      return;
+    }
+    for (const automation of matched) {
+      await withItemArtistLock(itemId, async () => {
+        if (automation.target_type === "status") {
+          const preset = projects.listStatusPresets().find((p) => p.id === automation.target_id);
+          if (!preset) {
+            projects.addLog("error", `Otomasi kata kunci "${automation.keyword}": preset Status target-nya udah gak ada (mungkin kehapus) — cek lagi di Kelola Otomasi Kata Kunci.`);
+            return;
+          }
+          projects.setItemStatus(itemId, preset.id);
+          await reconcileItemStatusState({ projectId, itemId, force: true });
+          projects.addLog("info", `Otomasi kata kunci "${automation.keyword}": status "${preset.name}" di-set otomatis (item ${itemId})`);
+        } else {
+          const item = projects.getProject(projectId)?.items.find((i) => i.id === itemId);
+          if (!item) return;
+          if (!item.artists.some((a) => a.artist_id === automation.target_id)) {
+            const preset = projects.listArtistPresets().find((p) => p.member_id === automation.target_id);
+            projects.addItemArtist(itemId, automation.target_id, preset?.nickname || null);
+          }
+          await reconcileItemAssignState({ projectId, itemId, force: true });
+          projects.addLog("info", `Otomasi kata kunci "${automation.keyword}": artis di-assign otomatis (item ${itemId})`);
+        }
+      });
+      notifyItemChanged(projectId, itemId);
+    }
+  } catch (err) {
+    projects.addLog("error", `Gagal proses otomasi kata kunci: ${err.message}`);
+  }
+}
+
+async function startSlackSocket(appToken) {
+  await slackSocket.start(appToken, { onReaction: handleIncomingReaction, onMessage: handleIncomingMessage, onStatus: slackSocketStatusChanged });
+}
+
+// Poin revisi (diminta user, "Level 2") — koneksi Socket Mode CUMA perlu nyala kalau ADA salah
+// satu fitur yang butuh dia (Realtime Sync ATAU Otomasi Kata Kunci) lagi ON. Disconnect kalau
+// DUA-duanya OFF — bukan cuma nge-skip proses lokal (lihat guard di handleIncomingReaction),
+// tapi beneran keluar dari "kolam" round-robin App-Level Token, ngirit slot buat instalasi LAIN
+// yang masih pakai realtime (lihat diskusi round-robin sebelumnya). Token TETAP TERSIMPAN
+// (authStore.loadAppToken, beda dari slackSocket:clearToken yang HAPUS token) — begitu salah satu
+// toggle di-ON-in lagi, reconnect otomatis pakai token yang sama, gak minta user paste ulang.
+async function updateSocketModeConnectionState() {
+  const token = authStore.loadAppToken();
+  if (!token) return; // gak ada token tersimpan -- gak ada apa pun yang bisa dikerjain di sini
+  const shouldRun = projects.getRealtimeAssignEnabled() || projects.getKeywordAutomationEnabled();
+  if (shouldRun && !slackSocket.isRunning()) {
+    await startSlackSocket(token).catch((err) => slackSocketStatusChanged("error", err.message));
+  } else if (!shouldRun && slackSocket.isRunning()) {
+    await slackSocket.stop();
+    projects.addLog("info", "Sync 2 arah Slack: koneksi Socket Mode diputus (Realtime Sync & Otomasi Kata Kunci dua-duanya OFF).");
+    slackSocketStatusChanged("disconnected");
+  }
+}
+
+handle("slackSocket:hasToken", () => !!authStore.loadAppToken());
+handle("slackSocket:isRunning", () => slackSocket.isRunning());
+handle("slackSocket:setToken", async (_e, token) => {
+  await requireAdminMember(); // poin revisi (audit D08) -- dulu cuma disembunyiin di UI
+  const clean = String(token || "").trim();
+  if (!clean.startsWith("xapp-")) throw new Error("App-Level Token Slack harus diawali \"xapp-\".");
+  authStore.saveAppToken(clean);
+  await startSlackSocket(clean);
+  return true;
+});
+handle("slackSocket:clearToken", async () => {
+  await requireAdminMember(); // poin revisi (audit D08)
+  await slackSocket.stop();
+  authStore.clearAppToken();
+  return true;
+});
+handle("keywordAutomation:getEnabled", () => projects.getKeywordAutomationEnabled());
+handle("keywordAutomation:setEnabled", async (_e, enabled) => {
+  await requireAdminMember(); // poin revisi (audit D08) -- dulu cuma disembunyiin di UI
+  const result = projects.setKeywordAutomationEnabled(enabled);
+  await updateSocketModeConnectionState();
+  return result;
+});
+handle("keywordAutomation:list", () => projects.listKeywordAutomations());
+handle("keywordAutomation:save", async (_e, { id, keyword, targetType, targetId }) => {
+  await requireAdminMember(); // poin revisi (audit D08)
+  return projects.saveKeywordAutomation({ id, keyword, targetType, targetId });
+});
+handle("keywordAutomation:remove", async (_e, id) => {
+  await requireAdminMember(); // poin revisi (audit D08)
+  return projects.removeKeywordAutomation(id);
+});
 
 // ---------- Reaction (poin revisi) ----------
 // PENDING per item — dikirim bareng lewat send:start (lihat loop-nya di atas), bukan langsung.
@@ -473,7 +1282,19 @@ handle("itemReaction:list", (_e, itemId) => projects.listItemReactions(itemId));
 handle("itemReaction:add", (_e, itemId, payload) => projects.addItemReaction(itemId, payload));
 // Poin revisi: "React semua Item" — antre reaction yang sama ke SEMUA item di project ini.
 handle("itemReaction:addToProject", (_e, projectId, payload) => projects.addReactionToAllItems(projectId, payload));
-handle("itemReaction:remove", (_e, id) => projects.removeItemReaction(id));
+// Poin revisi (chip react persisten) — chip yang UDAH sent, klik = reactions.remove BENERAN ke
+// Slack duluan (baris lokal BARU ikut kehapus kalau itu sukses -- gagal = baris lokal TETAP ada,
+// biar lokal & Slack gak kepisah/gak sinkron). Chip yang masih pending (belum sent) tetap cuma
+// batal antre lokal doang, gak ada panggilan Slack (sama kayak sebelumnya).
+handle("itemReaction:remove", async (_e, id) => {
+  const reaction = projects.getItemReaction(id);
+  if (reaction?.sent) {
+    const projectId = projects.projectIdForItem(reaction.item_id);
+    const info = projectId && slack.findThreadInfo(threadKey(projectId, reaction.item_id));
+    if (info) await slack.removeReaction({ token: currentToken(), channelId: info.channelId, timestamp: info.threadTs, name: reaction.slack_shortcode });
+  }
+  projects.removeItemReaction(id);
+});
 
 // INSTAN — overlay hover pil item, fire-and-forget, gak pernah nyentuh item_reactions. Butuh
 // thread yang UDAH ADA (item pernah dikirim) — gak auto-bikin thread baru cuma buat reaction.
@@ -507,10 +1328,11 @@ handle("batchFile:apply", (_e, projectId) => projects.applyBatchSections(project
 // Breakdown (pdfViewer.js), pola yang sama sudah terbukti diandalkan buat pdf.js: fetch/XHR
 // untuk skema file:// perilakunya gak konsisten di Electron dengan contextIsolation.
 handle("file:readBytes", async (_e, filePath) => {
-  if (!projects.isManagedFile(filePath)) throw new Error("File tidak terdaftar di project.");
-  const stat = fs.statSync(filePath);
+  const real = fs.realpathSync(filePath);
+  if (!isFileAccessible(real)) throw new Error("File tidak terdaftar di project.");
+  const stat = fs.statSync(real);
   if (stat.size > 500 * 1024 * 1024) throw new Error("File terlalu besar untuk dibaca sekaligus (maks. 500 MB).");
-  return fs.promises.readFile(filePath);
+  return fs.promises.readFile(real);
 });
 
 // ---------- Kirim ke Slack ----------
@@ -561,7 +1383,10 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
   try {
     const project = projects.getProject(projectId);
     if (!project) throw new Error("Project tidak ditemukan untuk akun/workspace ini.");
-    const token = currentToken();
+    // let (poin revisi, bug ditemukan lewat audit D15) -- di-reassign runPass() abis auto-refresh
+    // token sukses di tengah batch, closure fase (root/artist/react/post) baca ULANG binding ini
+    // tiap kepanggil, bukan snapshot nilai lama.
+    let token = currentToken();
     const targets = project.items.filter((i) => itemIds.includes(i.id));
   // Override dari Slack View Preview (poin baru: user bisa ganti channel tujuan cuma buat
   // kiriman ini) — kalau gak dikasih, pakai channel default project seperti biasa.
@@ -573,24 +1398,55 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     // Papan status HB Apps (poin revisi, himbauan MUTLAK — jalan terlepas dari user klik
     // "Mulai Sesi"/skip pas Start Menu) — kasih tau user lain kalau lagi ada job jalan, biar
     // gak rebutan rate-limit workspace bareng (reactions.add dkk berbagi kuota per-workspace).
-    const estimateMinutes = hbStatus.estimateSendMinutes({ targets, scope, assignMode: projects.getArtistAssignMode(), presetByMember, projects });
-    await hbStatus.postStatus(slack, token, `Eksekusi ${targets.length} job, estimasi ${estimateMinutes} menit`);
+    // Poin revisi: SATU pesan yang di-edit berkala (mulai -> progress -> selesai), bukan post
+    // pesan baru tiap tahap lagi — lihat hbStatus.createProgressEditor.
+    const estimateMinutes = hbStatus.estimateSendMinutes({ targets, scope, assignModes: projects.getArtistAssignModes(), presetByMember, projects });
+    const statusHandle = await hbStatus.postJobStatus(slack, token, hbStatus.formatJobStart({ totalJobs: targets.length, estimateMinutes }));
+    // Fase 4 (post/reply) di-skip buat scope "item"/"artist" (lihat di bawah) — totalSteps ikutan
+    // ngurang biar persentase progress-nya tetap presisi nyampe 100% pas job kelar.
+    const numPhases = scope === "item" || scope === "artist" ? 3 : 4;
+    const stepDone = hbStatus.createProgressEditor({
+      slack, token, handle: statusHandle, totalJobs: targets.length, totalSteps: targets.length * numPhases, estimateMinutes,
+    });
 
     const itemState = new Map(targets.map((item) => [item.id, {}]));
     async function runPass(phase, label, fn) {
       for (let i = 0; i < targets.length; i++) {
         const item = targets[i];
         const state = itemState.get(item.id);
-        if (state.failed) continue;
-        if (cancelRequested) { state.cancelled = true; continue; }
+        if (state.failed) { await stepDone(); continue; }
+        if (cancelRequested) { state.cancelled = true; await stepDone(); continue; }
         if (!event.sender.isDestroyed()) event.sender.send("send:progress", { projectId, jobId, index: i, total: targets.length, itemName: item.name, phase });
         try {
           await fn(item, state);
         } catch (err) {
+          // Poin revisi (bug ditemukan lewat audit, D15) — token_expired PER-ITEM ditangkep DI
+          // SINI, gak pernah nyampe wrapper handle() (yang punya logic auto-refresh) -- tanpa
+          // ini, batch bakal ngegagalin SEMUA item sisanya satu-satu dengan alasan yang PERSIS
+          // SAMA (token yang sama, masih expired), gak pernah nyoba refresh. Auto-refresh SEKALI
+          // di sini, retry item yang lagi diproses kalau berhasil; kalau refresh GAGAL, hentikan
+          // batch (reuse cancelRequested yang udah ada, item sisanya ke-skip cepat kayak alur
+          // "dibatalkan" biasa) -- gak ada gunanya nyoba token yang udah pasti mati berkali-kali.
+          if (err?.data?.error === "token_expired" && !cancelRequested) {
+            if (await tryRefreshToken()) {
+              token = currentToken();
+              try {
+                await fn(item, state);
+                await stepDone();
+                continue;
+              } catch (retryErr) {
+                err = retryErr;
+              }
+            } else {
+              cancelRequested = true;
+              projects.addLog("error", `Batch dihentikan: token Slack expired dan auto-refresh gagal (mulai dari "${item.name}"). Logout lalu login ulang.`);
+            }
+          }
           state.failed = true;
           state.reason = err.message;
           projects.addLog("error", `Gagal (${label}) "${item.name}": ${err.message}`);
         }
+        await stepDone();
       }
     }
 
@@ -608,34 +1464,50 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     // pakai code_name artis (data-driven, gak digate scope/mode — sama kayak reaction flush
     // versi lama yang unconditional, cuma soal row MANA yang "milik artis" vs "lainnya").
     await runPass("artist", "assign artis", async (item, state) => {
-      let artistId = item.artist_id;
-      if (scope === "item" || scope === "replies") artistId = null;
-      else if (scope === "artist" && !artistId) throw new Error("Item ini belum ada artis yang ditugaskan.");
-      if (artistId && ["mention", "both"].includes(projects.getArtistAssignMode())) {
-        await slack.sendArtistMention({
-          token, channelId: targetChannelId, threadKey: threadKey(projectId, item.id), threadTs: state.threadTs, artistId,
+      // Poin revisi: syncAssignMessage SELALU dipanggil (semua scope, termasuk "item"/"replies"/
+      // Instant Intake per-kolom) dengan daftar artis TERKINI item ini (bukan di-skip/dikosongin
+      // manual lagi) — placeholder ke-post kalau emang belum ada artis, TETAP akurat kalau
+      // ternyata udah ada (gak ada resiko "nimpa" soalnya ini SELALU baca state asli item.artists,
+      // bukan daftar yang dipalsuin per-scope).
+      // scope "artist" (poin revisi): TIDAK throw lagi kalau item belum ada artis -- sama
+      // alasan kayak send:quick, placeholder assign message (mode mention) justru BUTUH ini
+      // buat kejadian. Mode react: gak ada yang di-react, no-op aman.
+      const mentionArtistIds = item.artists.map((a) => a.artist_id);
+      if (projects.getArtistAssignModes().mention) {
+        await slack.syncAssignMessage({
+          token, channelId: targetChannelId, itemId: item.id, threadTs: state.threadTs, artistIds: mentionArtistIds,
         });
       }
-      const codeName = item.artist_id && presetByMember.get(item.artist_id)?.code_name;
-      const artistReaction = codeName && projects.listItemReactions(item.id).find((r) => r.slack_shortcode === codeName);
-      if (artistReaction) {
-        try {
-          await slack.addReaction({ token, channelId: targetChannelId, timestamp: state.threadTs, name: artistReaction.slack_shortcode });
-          projects.removeItemReaction(artistReaction.id);
-        } catch (err) {
-          projects.addLog("error", `Gagal kasih reaction :${artistReaction.slack_shortcode}: ke "${item.name}": ${err.message}`);
+      // React artis (poin revisi multi-artist) — data-driven, gak digate scope (flush SEMUA
+      // reaction pending yang "milik" salah satu artis di item ini, sama kayak sebelumnya cuma
+      // sekarang loop per-artis bukan 1 doang).
+      for (const artist of item.artists) {
+        const codeName = presetByMember.get(artist.artist_id)?.code_name;
+        // !r.sent (poin revisi, chip react persisten) — listItemReactions sekarang balikin
+        // SEMUA reaction (pending + udah sent), jangan flush ulang yang udah sent.
+        const artistReaction = codeName && projects.listItemReactions(item.id).find((r) => r.slack_shortcode === codeName && !r.sent);
+        if (artistReaction) {
+          try {
+            await slack.addReaction({ token, channelId: targetChannelId, timestamp: state.threadTs, name: artistReaction.slack_shortcode });
+            projects.markItemReactionSent(artistReaction.id);
+          } catch (err) {
+            projects.addLog("error", `Gagal kasih reaction :${artistReaction.slack_shortcode}: ke "${item.name}": ${err.message}`);
+          }
         }
       }
+      // Status (poin revisi) — data-driven sama kayak artis di atas, force:true biar tetap
+      // kesinkron walau toggle realtime OFF (thread-nya UDAH ADA dari fase 1 di atas).
+      await reconcileItemStatusState({ projectId, itemId: item.id, force: true });
     });
 
     // Fase 3 — react lain (di luar react artis, misal ditambah manual lewat "Add React"). Gagal
     // per-reaction SENGAJA gak nggagalin seluruh item — dicatat log doang, tetap pending (gak
     // dihapus) biar bisa dicoba lagi lain kali.
     await runPass("react", "kirim react", async (item, state) => {
-      for (const reaction of projects.listItemReactions(item.id)) {
+      for (const reaction of projects.listItemReactions(item.id).filter((r) => !r.sent)) {
         try {
           await slack.addReaction({ token, channelId: targetChannelId, timestamp: state.threadTs, name: reaction.slack_shortcode });
-          projects.removeItemReaction(reaction.id);
+          projects.markItemReactionSent(reaction.id);
         } catch (err) {
           projects.addLog("error", `Gagal kasih reaction :${reaction.slack_shortcode}: ke "${item.name}": ${err.message}`);
         }
@@ -646,25 +1518,55 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     // scope "item"/"artist" gak butuh reply, di-skip seluruh fase-nya (posts selalu kosong).
     if (scope !== "item" && scope !== "artist") {
       await runPass("post", "kirim reply", async (item, state) => {
-        let posts = [];
-        if (scope === "replies") {
-          posts = item.replies.map(replyToPost).filter(Boolean);
-        } else {
-          // Default (gak ada scope, dipakai SlackViewPreview/"Preview & Kirim") — kirim SEMUANYA:
-          // attach langsung dulu (kompatibilitas item_files lama), lalu tiap Reply (Batch File/
-          // Drawer/Template) sesuai sort_order — teks jadi 1 pesan, file jadi 1 upload (+ caption
-          // judul reply-nya).
+        // posts (poin revisi, bug dilaporkan: merge >10 file misahin field jadi 2, field HASIL
+        // PECAHAN gak kekirim padahal field pertama sukses) — root cause versi lama: SEMUA field
+        // digabung 1 array, dikirim lewat SATU panggilan slack.sendReplies yang berhenti TOTAL
+        // begitu SATU field di tengah gagal (field-field SETELAHNYA gak sempat dicoba sama
+        // sekali), dan markReplySent cuma jalan abis SELURUH array sukses -- field yang SEBENARNYA
+        // udah kekirim ke Slack pun gak ke-lock, attempt row (send_attempts, key SATU per item)
+        // nyangkut "pending" nge-block field LAIN yang gak ada hubungannya biar bisa dicoba lagi.
+        // Fix: tiap field (attach langsung + tiap reply) dikirim lewat panggilan sendReplies
+        // TERPISAH, `key` DI-NAMESPACE per-field (bukan cuma threadKey polos punya item) biar
+        // attempt/resume state-nya sendiri-sendiri -- gagal di 1 field gak nyangkut ke field lain:
+        // yang sukses TETAP di-lock (markReplySent langsung abis field itu SENDIRI kelar), yang
+        // gagal TETAP dicoba (gak ke-skip diam-diam gara-gara urutan array) dan bisa dicoba lagi
+        // manual (Instant Intake per-field) tanpa keblok status field tetangganya.
+        const baseKey = threadKey(projectId, item.id);
+        const posts = [];
+        // reply.sent (poin revisi, bug ditemukan lewat audit D10) — field yang UDAH kekirim
+        // sebelumnya HARUS di-skip di sini, bukan cuma dikunci dari EDIT (assertReplyEditable).
+        // Tanpa filter ini, batch berikutnya nyusun ULANG SEMUA item.replies (termasuk yang udah
+        // sent) ke `posts`, sendReplies ngirim ulang jadi pesan DOBEL di Slack.
+        if (scope !== "replies") {
+          // Default (gak ada scope, dipakai SlackViewPreview/"Preview & Kirim") — attach langsung
+          // dulu (kompatibilitas item_files lama), lalu tiap Reply (Batch File/Drawer/Template)
+          // sesuai sort_order — teks jadi 1 pesan, file jadi 1 upload (+ caption judul reply-nya).
           if (!item.files.every((f) => projects.isManagedFile(f.stored_path))) throw new Error("Attachment item tidak berada dalam penyimpanan project.");
-          if (item.files.length) posts.push({ files: item.files.map((f) => ({ path: f.stored_path, filename: f.original_name })) });
-          for (const reply of item.replies) {
-            const post = replyToPost(reply);
-            if (post) posts.push(post);
+          if (item.files.length) posts.push({ key: `${baseKey}#attach`, replyId: null, post: { files: item.files.map((f) => ({ path: f.stored_path, filename: f.original_name })) } });
+        }
+        for (const reply of item.replies) {
+          if (reply.sent) continue;
+          const post = replyToPost(reply);
+          if (post) posts.push({ key: `${baseKey}#reply:${reply.id}`, replyId: reply.id, post });
+        }
+        if (!posts.length) {
+          // Gak ada apa-apa buat dikirim -- tetap panggil sendReplies posts kosong (bareKey polos)
+          // biar attempt lama (kalau ada, dari sebelum fix ini) ke-bersihin, sama kayak versi lama.
+          await slack.sendReplies({ token, channelId: targetChannelId, threadKey: baseKey, threadTs: state.threadTs, posts: [] });
+          return;
+        }
+        let firstError = null;
+        for (const { key, replyId, post } of posts) {
+          try {
+            const { permalink } = await slack.sendReplies({ token, channelId: targetChannelId, threadKey: key, threadTs: state.threadTs, posts: [post] });
+            if (permalink) state.permalink = permalink;
+            if (replyId) projects.markReplySent(replyId);
+          } catch (err) {
+            firstError = firstError || err;
+            projects.addLog("error", `Gagal kirim field pada "${item.name}": ${err.message}`);
           }
         }
-        const { permalink } = await slack.sendReplies({
-          token, channelId: targetChannelId, threadKey: threadKey(projectId, item.id), threadTs: state.threadTs, posts,
-        });
-        if (permalink) state.permalink = permalink;
+        if (firstError) throw firstError;
       });
     }
 
@@ -677,7 +1579,8 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
 
     const okCount = results.filter((r) => r.status === "berhasil").length;
   projects.addLog("info", `Kirim selesai (${project.name}): ${okCount}/${results.length} berhasil.`);
-  await hbStatus.postStatus(slack, token, "Job selesai");
+  const failedNames = results.filter((r) => r.status === "gagal").map((r) => r.itemName);
+  await hbStatus.updateJobStatus(slack, token, statusHandle, hbStatus.formatJobDone({ totalJobs: results.length, okCount, failedNames }));
   if (Notification.isSupported()) {
     new Notification({
       title: "Slack Intake Apps",
@@ -716,27 +1619,53 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
   // lain lewat override Slack View Preview, project.channel_id sekarang beda) > default project.
   const targetChannelId = channelId || slack.findThreadChannel(threadKey(projectId, item.id)) || project.channel_id;
 
-  let artistId = null;
   let posts = [];
-  if (scope === "artist") {
-    artistId = item.artist_id;
-    if (!artistId) throw new Error("Item ini belum ada artis yang ditugaskan.");
-  } else if (scope === "replies") {
-    posts = item.replies.map(replyToPost).filter(Boolean);
+  // scope "artist" (poin revisi): TIDAK throw lagi kalau item belum ada artis -- justru itu
+  // yang bikin placeholder assign message perlu di-post (mode mention), biar nanti ada tempat
+  // yang siap di-edit. Mode react: gak ada yang di-react (item_reactions kosong), no-op aman.
+  // reply.sent (poin revisi, bug ditemukan lewat audit D10) — field yang UDAH kekirim di-skip,
+  // bukan cuma dikunci dari EDIT -- tanpa ini, Instant Intake kolom Reply bisa ngirim ulang field
+  // lama jadi pesan DOBEL tiap kali dipencet lagi.
+  if (scope === "replies") {
+    posts = item.replies.filter((r) => !r.sent).map(replyToPost).filter(Boolean);
   } else if (scope === "field") {
     const reply = item.replies.find((r) => r.id === replyId);
     if (!reply) throw new Error("Field tidak ditemukan.");
-    const post = replyToPost(reply);
+    const post = reply.sent ? null : replyToPost(reply); // udah kekirim -- no-op, bukan resend
     posts = post ? [post] : [];
   }
-  // scope === "item" (default): artistId null, posts kosong.
-  // Artis Preset (poin revisi) — mode Mention/React GLOBAL buat SEMUA artis. Mode "react" berarti
-  // JANGAN post @mention, walau scope-nya "artist" (reaction pending-nya sendiri udah di-antre pas
-  // artis di-assign, ke-flush lewat loop reaction di bawah — bukan di sini).
-  if (artistId && !["mention", "both"].includes(projects.getArtistAssignMode())) artistId = null;
+  // scope === "item" (default): posts kosong.
 
   await confirmLegacyThread(projectId, item, targetChannelId);
-  const { threadTs, isNew, permalink } = await slack.sendItem({ token, channelId: targetChannelId, itemName: item.name, threadKey: threadKey(projectId, item.id), artistId, posts });
+  // Poin revisi (diminta user, "Instant Intake jadi sumber kebenaran") — sendItem punya proteksi
+  // "Isi berubah sejak kiriman parsial" buat kiriman BATCH biasa yang beresiko upload dobel/
+  // kesenjangan lama. Buat Instant Intake (aksi SEKALI klik, sengaja gak ada modal recovery),
+  // user maunya app SELALU nurut isi TERKINI, gak nolak/minta "Pulihkan Kiriman" dulu — jadi
+  // bersihin bookkeeping percobaan lama (kalau ada) SEBELUM manggil sendItem, restart bersih.
+  // Ini gak beresiko duplikat PESAN ROOT (threads table, dicek terpisah sama sendItem, tetap
+  // idempoten) -- resiko yang beneran ada cuma kalau fase upload SEBELUMNYA diam-diam sukses di
+  // Slack tapi app gak sempat nyatet: kemungkinan kecil karena Instant Intake single-file per
+  // panggilan (bukan kirim BANYAK reply sekaligus kayak batch), dan user yang minta trade-off ini.
+  slack.resolveAttempt({ threadKey: threadKey(projectId, item.id), channelId: targetChannelId, action: "restart" });
+  // artistIds SELALU kosong ke sendItem (poin revisi) -- mention-nya sekarang lewat
+  // syncAssignMessage di bawah (SATU pesan assignment yang di-edit, konsisten sama batch),
+  // bukan sendItem nge-post mention sendiri lagi.
+  const { threadTs, isNew, permalink } = await slack.sendItem({ token, channelId: targetChannelId, itemName: item.name, threadKey: threadKey(projectId, item.id), artistIds: [], posts });
+  // Poin revisi (diminta user, field terkirim dikunci read-only) — tandain reply yang BENERAN
+  // ke-post (replyToPost non-null, field kosong gak dianggap "terkirim") begitu sendItem sukses.
+  if (scope === "replies") {
+    for (const reply of item.replies) if (replyToPost(reply)) projects.markReplySent(reply.id);
+  } else if (scope === "field" && replyToPost(item.replies.find((r) => r.id === replyId))) {
+    projects.markReplySent(replyId);
+  }
+  // Poin revisi: assign message (mode mention) disinkron di SINI juga, buat SEMUA scope Instant
+  // Intake (item/artist/replies/field) -- bukan cuma pas "Kirim ke Slack" batch. Placeholder
+  // (lihat syncAssignMessage) ke-post walau item ini belum ada artis-nya sama sekali.
+  if (projects.getArtistAssignModes().mention) {
+    await slack.syncAssignMessage({
+      token, channelId: targetChannelId, itemId: item.id, threadTs, artistIds: item.artists.map((a) => a.artist_id),
+    });
+  }
   projects.addLog("info", `Instant Intake (${scope}) "${item.name}": berhasil.`);
 
   // Poin revisi: Instant Intake JUGA nge-flush reaction pending (item_reactions) — sama kayak
@@ -744,14 +1673,17 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
   // ulang), jadi alurnya otomatis: "pesan belum ada" -> sendItem bikin thread baru DULU baru
   // reaction nyusul; "pesan udah ada" -> sendItem gak ngapa-ngapain (threadTs lama dipakai),
   // efeknya cuma reaction pending yang beneran kekirim.
-  for (const reaction of projects.listItemReactions(item.id)) {
+  for (const reaction of projects.listItemReactions(item.id).filter((r) => !r.sent)) {
     try {
       await slack.addReaction({ token, channelId: targetChannelId, timestamp: threadTs, name: reaction.slack_shortcode });
-      projects.removeItemReaction(reaction.id);
+      projects.markItemReactionSent(reaction.id);
     } catch (err) {
       projects.addLog("error", `Gagal kasih reaction :${reaction.slack_shortcode}: ke "${item.name}": ${err.message}`);
     }
   }
+  // Status (poin revisi) — sinkron juga di Instant Intake, sama semangatnya kayak mention/react
+  // di atas (force:true, gak nunggu toggle realtime).
+  await reconcileItemStatusState({ projectId, itemId: item.id, force: true });
 
   // Buka LANGSUNG ke thread pesan yang baru/di-update (bukan cuma channel-nya doang kayak
   // send:start) — instant-send 1 aksi, jadi hasilnya juga langsung ketauan, gak perlu scroll
@@ -786,7 +1718,12 @@ handle("hbStatus:shouldShowModal", () => !sessionModalShown);
 handle("hbStatus:goOnline", async () => {
   sessionModalShown = true;
   hbOnline = true;
-  await hbStatus.postStatus(slack, currentToken(), ":raised_hands: Online");
+  const token = currentToken();
+  await hbStatus.postStatus(slack, token, ":large_green_circle: Online");
+  // Poin revisi (diminta user) — "Mulai Sesi" langsung buka Slack ke channel status (hb-apps),
+  // biar user langsung liat siapa lagi online, gak perlu nyari channel-nya manual sendiri.
+  const channelId = await hbStatus.findStatusChannel(slack, token);
+  if (channelId) openSlack({ channelId });
 });
 handle("hbStatus:skip", () => { sessionModalShown = true; });
 

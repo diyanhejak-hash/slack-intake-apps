@@ -398,7 +398,7 @@ export default function VideoPlayer({
         )}
       </div>
 
-      <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 6, flexShrink: 0 }}>
+      <div style={{ display: "flex", gap: 4, alignItems: "center", marginTop: 6, flexShrink: 0, flexWrap: "wrap" }}>
         <button className="icon-btn" onClick={togglePlay} title="Play/Pause">
           {playing ? <Pause size={13} /> : <Play size={13} />}
         </button>
@@ -422,7 +422,7 @@ export default function VideoPlayer({
           max={Math.max(1, frameFromTime(duration, fps))}
           value={currentFrame}
           onChange={(e) => seekTo(Number(e.target.value))}
-          style={{ flex: 1 }}
+          style={{ flex: "1 1 140px" }}
         />
         <span className="caption" style={{ whiteSpace: "nowrap", fontVariantNumeric: "tabular-nums" }}>
           {formatTimecode(currentFrame, fps)} / {formatTimecode(frameFromTime(duration, fps), fps)}
@@ -560,7 +560,7 @@ function CapturePreviewModal({
   onCancel: () => void;
 }) {
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center" }}>
+    <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.6)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div className="card" style={{ padding: 12, background: "var(--surface)" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 8 }}>
           <div style={{ fontWeight: 600, fontSize: 13 }}>Preview hasil capture</div>

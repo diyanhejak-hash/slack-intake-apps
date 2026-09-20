@@ -1,6 +1,6 @@
 // Modal "Preset Emoji" (poin revisi) — kelola daftar emoji yang muncul di picker toolbar (bukan
 // SEMUA emoji unicode lagi, cuma yang di-preset di sini). 2 sumber: pilih dari daftar emoji
-// lengkap (mr-emoji, lazy) ATAU tambah custom (upload PNG lokal + kasih nama, ala custom emoji
+// lengkap (emoji-mart, lazy) ATAU tambah custom (upload PNG lokal + kasih nama, ala custom emoji
 // Slack — value yang ke-insert ke text nanti "nama_emoji" jadi teks ":nama_emoji:", BUKAN
 // gambarnya, dan SENGAJA gak divalidasi ke Slack beneran — kalau di workspace tujuan gak ada
 // custom emoji nama sama, ya biarin aja tampil apa adanya, jangan ditolak).
@@ -8,7 +8,7 @@ import { Suspense, useEffect, useState } from "react";
 import { X, Upload } from "lucide-react";
 import type { EmojiPreset } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
-import { MrEmojiPicker } from "../lib/mrEmoji";
+import { LazyEmojiPicker, type PickedEmoji } from "../lib/emojiPicker";
 import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
 
 export default function EmojiPresetModal({ onClose }: { onClose: () => void }) {
@@ -28,9 +28,9 @@ export default function EmojiPresetModal({ onClose }: { onClose: () => void }) {
     refresh();
   }, []);
 
-  async function addUnicode(emoji: { native: string; colons: string }) {
-    // colons dari mr-emoji contoh ":grinning:" — dipakai jadi slack_shortcode (poin revisi fitur
-    // Reaction, butuh nama Slack buat reactions.add, bukan cuma karakter unicode-nya).
+  async function addUnicode(emoji: PickedEmoji) {
+    // colons contoh ":grinning:" — dipakai jadi slack_shortcode (poin revisi fitur Reaction,
+    // butuh nama Slack buat reactions.add, bukan cuma karakter unicode-nya).
     await window.api.emojiPreset.addUnicode({ char: emoji.native, shortcode: emoji.colons });
     refresh();
   }
@@ -61,7 +61,7 @@ export default function EmojiPresetModal({ onClose }: { onClose: () => void }) {
   }
 
   return (
-    <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
+    <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 60, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={onClose}>
       <div
         className="card"
         style={{ padding: 16, width: 480, maxHeight: "80vh", display: "flex", flexDirection: "column", background: "var(--surface)" }}
@@ -69,7 +69,7 @@ export default function EmojiPresetModal({ onClose }: { onClose: () => void }) {
       >
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10, flexShrink: 0 }}>
           <h3>Preset Emoji</h3>
-          <button className="icon-btn" onClick={onClose}>
+          <button className="icon-btn" onClick={onClose} aria-label="Tutup" title="Tutup">
             <X size={14} />
           </button>
         </div>
@@ -103,7 +103,7 @@ export default function EmojiPresetModal({ onClose }: { onClose: () => void }) {
         )}
 
         <div className="label" style={{ marginBottom: 6, flexShrink: 0 }}>
-          Pilih dari daftar emoji
+          Pilih dari daftar emoji — buat ditambah ke preset
         </div>
         <div style={{ flex: 1, minHeight: 200, overflow: "auto" }} className="scrollbar-thin">
           <Suspense
@@ -113,7 +113,7 @@ export default function EmojiPresetModal({ onClose }: { onClose: () => void }) {
               </div>
             }
           >
-            <MrEmojiPicker native title="Pilih buat ditambah ke preset" emoji="" perLine={9} onClick={addUnicode} />
+            <LazyEmojiPicker onPick={addUnicode} />
           </Suspense>
         </div>
       </div>

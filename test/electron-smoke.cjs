@@ -15,6 +15,13 @@ electron.BrowserWindow = class extends BrowserWindow {
 };
 electron.Tray = class { setToolTip() {} setContextMenu() {} on() {} destroy() {} };
 electron.shell.openExternal = async () => { throw new Error('External navigation during smoke test'); };
+// Poin revisi (bug ditemukan lewat audit, Q03) -- main.cjs (non-packaged, Windows) register
+// `slackintakeapps://` protocol handler ke process.argv[1], yang pas dijalanin dari smoke test
+// ini NUNJUK KE FILE SMOKE TEST INI SENDIRI (bukan entry point app asli) -- efek sampingnya
+// nyantol PERMANEN ke registry OS developer (HKCU/.../slackintakeapps), ngerusak login OAuth
+// beneran (callback selanjutnya buka smoke test ini, bukan app). Stub total SEBELUM main.cjs
+// di-require di bawah, biar smoke test SAMA SEKALI gak nyentuh registry OS.
+app.setAsDefaultProtocolClient = () => true;
 let completed = false;
 const deadline = setTimeout(() => { console.error('Electron smoke timeout'); app.exit(1); }, 20000);
 app.on('browser-window-created', (_event, win) => {
@@ -36,6 +43,14 @@ app.on('browser-window-created', (_event, win) => {
       require('../electron/auth-store.cjs').loadToken = () => ({ userId: 'SMOKE', teamId: 'SMOKE', team: 'Test', accessToken: 'FAKE' });
       const fixture = path.join(temp, 'fixture.txt');
       fs.writeFileSync(fixture, 'fixture');
+      // Poin revisi (bug ditemukan lewat audit, Q01) -- test LAMA nganggep file yang BARU aja
+      // dipilih lewat picker (picked[0]) harusnya DITOLAK dibaca, padahal kebijakan akses
+      // SEKARANG sengaja ngizinin file yang udah dapet picker grant (allowFiles, main.cjs) --
+      // itu bukan bug, itu kontrak yang emang diinginkan. File TERPISAH yang gak PERNAH lewat
+      // picker/grant apa pun (ungranted) yang seharusnya jadi bukti nyata proteksi akses masih
+      // jalan, bukan pakai file yang justru UDAH dikasih akses.
+      const ungranted = path.join(temp, 'ungranted.txt');
+      fs.writeFileSync(ungranted, 'never granted');
       electron.dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [fixture] });
       const files = await win.webContents.executeJavaScript(`(async () => {
         await window.api.auth.status();
@@ -44,12 +59,14 @@ app.on('browser-window-created', (_event, win) => {
         await window.api.project.attachFiles(p.id, picked);
         const loaded = await window.api.project.load(p.id);
         const bytes = await window.api.file.readBytes(loaded.files[0].stored_path);
-        const denied = await window.api.file.readBytes(picked[0]).then(() => false, () => true);
-        return { count: loaded.files.length, bytes: new TextDecoder().decode(bytes), denied };
+        const pickedReadable = await window.api.file.readBytes(picked[0]).then(() => true, () => false);
+        const denied = await window.api.file.readBytes(${JSON.stringify(ungranted)}).then(() => false, () => true);
+        return { count: loaded.files.length, bytes: new TextDecoder().decode(bytes), pickedReadable, denied };
       })()`);
       assert.equal(files.count, 1);
       assert.equal(files.bytes, 'fixture');
-      assert.equal(files.denied, true);
+      assert.equal(files.pickedReadable, true); // file yang DIPILIH tetap boleh dibaca (kebijakan picker-grant SEKARANG)
+      assert.equal(files.denied, true); // file LAIN yang gak pernah di-grant TETAP ditolak
       completed = true;
       console.log('PASS: real Electron preload, login renderer, IPC auth, picker grants, managed read, and external read rejection');
       clearTimeout(deadline);

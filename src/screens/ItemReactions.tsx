@@ -15,7 +15,7 @@ import { useEffect, useRef, useState } from "react";
 import { SmilePlus, Loader2 } from "lucide-react";
 import type { EmojiPreset, ItemReaction } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
-import { getCustomEmojiImagePath, subscribeEmojiPresets } from "../lib/emojiPresetStore";
+import { getCustomEmojiImagePath, getCustomEmojiUnicode, subscribeEmojiPresets } from "../lib/emojiPresetStore";
 import EmojiPresetModal from "./EmojiPresetModal";
 
 // "Kelola preset..." (poin revisi: wajib ada di TIAP modal emoji, bukan cuma EmojiPicker.tsx) —
@@ -92,21 +92,34 @@ function ReactionPresetButton({ preset, onClick }: { preset: EmojiPreset; onClic
 // preset-nya udah dihapus/cache belum kemuat, fallback teks ":nama:" biar gak keliatan "rusak".
 // Poin revisi: gak ada tombol X lagi — klik CHIP-nya langsung (seluruh badge) = hapus dari
 // antrean. Poin revisi lagi: gak ada border/background lagi — cukup tampilin react-nya doang.
+// Poin revisi terbaru (bug: "chip hilang abis kekirim, ambigu keliatan kayak gak ada react") —
+// chip yang UDAH sent TETAP tampil (baris item_reactions gak dihapus lagi abis reactions.add
+// sukses, cuma ditandain sent=1) — dikasih tint hijau lembut biar beda jelas dari yang masih
+// pending, klik-nya sekarang beneran reactions.remove ke Slack (bukan cuma batal antre lokal).
 function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove: () => void }) {
   const [, forceTick] = useState(0);
   useEffect(() => subscribeEmojiPresets(() => forceTick((v) => v + 1)), []);
   const imagePath = reaction.emoji_type === "custom" ? getCustomEmojiImagePath(reaction.emoji_value) : undefined;
   const url = useFileBlobUrl(imagePath || null);
+  // Poin revisi (bug dilaporkan: "emoji tidak show") — reaction dari artis/status yang preset-nya
+  // pakai emoji STANDAR (bukan PNG custom) gak punya image_path, jatuh ke fallback teks doang.
+  // Cek cache unicode SEBELUM nyerah ke teks ":nama:".
+  const unicodeChar = reaction.emoji_type === "custom" && !imagePath ? getCustomEmojiUnicode(reaction.emoji_value) : undefined;
 
   return (
     <button
       onClick={onRemove}
-      title={`:${reaction.slack_shortcode}: — pending, klik buat batal (hapus dari antrean)`}
+      title={
+        reaction.sent
+          ? `:${reaction.slack_shortcode}: — udah terkirim ke Slack, klik buat hapus beneran`
+          : `:${reaction.slack_shortcode}: — pending, klik buat batal (hapus dari antrean)`
+      }
       style={{
         display: "inline-flex",
         alignItems: "center",
         border: "none",
-        background: "none",
+        background: reaction.sent ? "var(--success-soft, rgba(34, 197, 94, 0.16))" : "none",
+        borderRadius: reaction.sent ? 4 : 0,
         padding: 2,
         fontSize: 15,
         cursor: "pointer",
@@ -116,6 +129,8 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
         reaction.emoji_value
       ) : imagePath ? (
         <img src={url || undefined} alt={`:${reaction.emoji_value}:`} style={{ width: 16, height: 16, objectFit: "contain" }} />
+      ) : unicodeChar ? (
+        unicodeChar
       ) : (
         `:${reaction.emoji_value}:`
       )}
@@ -124,23 +139,38 @@ function ReactionChip({ reaction, onRemove }: { reaction: ItemReaction; onRemove
 }
 
 // `variant`:
-//   - "inline" (default, Tab Reply — sebelah Pil Item) — icon SELALU KELIHATAN + chip pending
-//     sejajar (flow biasa).
+//   - "inline" (default, Tab Input — kanan item Pill) — icon + chip pending sejajar (flow biasa).
 //   - "overlay" (Tab Table, poin revisi) — TOMBOL-nya overlay di SAMPING KANAN Instant Intake
 //     (top:-8/left:16), cuma nongol pas hover cell (`.row-quicksend`). CHIP hasil react (bukan
 //     tombolnya!) itu elemen BEDA — absolute DI BAWAH item rata kanan (top:26/right:0) dan SELALU
 //     tampil (gak hover-gated), soalnya itu status pending yang relevan diliat kapan aja. Ini
 //     TETAP jalur pending (antre), BUKAN instant — beda dari InstantReactionOverlay.
-// `hideButton` (overlay doang) — sembunyiin TOMBOLNYA aja pas cell lagi diedit (poin revisi,
-// sama kayak QuickSendButton), tapi CHIP tetap tampil (gak ganggu proses edit).
-export function ItemReactionBar({ projectId, itemId, variant = "inline", hideButton = false, refreshToken, closeSignal, onBulkAdded }: { projectId: string; itemId: string; variant?: "inline" | "overlay"; hideButton?: boolean; refreshToken?: unknown; closeSignal?: unknown; onBulkAdded?: () => void }) {
+// `hideButton` — sembunyiin TOMBOLNYA doang, CHIP tetap tampil. Overlay: pas cell lagi diedit
+// (poin revisi, sama kayak QuickSendButton). Inline (poin revisi terbaru, diminta user) — Tab
+// Input sekarang murni nampilin chip di kanan item Pill, gak ada tombol "Add React" lagi di situ.
+export function ItemReactionBar({
+  projectId,
+  itemId,
+  variant = "inline",
+  hideButton = false,
+  refreshToken,
+  onBulkAdded,
+  excludeShortcodes,
+}: {
+  projectId: string;
+  itemId: string;
+  variant?: "inline" | "overlay";
+  hideButton?: boolean;
+  refreshToken?: unknown;
+  onBulkAdded?: () => void;
+  /** Poin revisi (diminta user) — react yang dari ASSIGNMENT ARTIS (code_name preset artis yang
+   * lagi ditugaskan ke item ini) gak usah dobel ditampilin di sini lagi — udah kelihatan lewat
+   * icon di ArtistPicker sendiri. Bar ini jadi murni buat reaction MANUAL ("Add React"), bukan
+   * ngubah data/pengiriman-nya sama sekali, cuma nge-filter TAMPILAN doang. */
+  excludeShortcodes?: string[];
+}) {
   const [pending, setPending] = useState<ItemReaction[]>([]);
   const [open, setOpen] = useState(false);
-  // closeSignal (poin revisi) — bump dari parent pas overlay/hover-zone-nya ilang (mouse out),
-  // biar popover ini IKUT ketutup, gak nyangkut kebuka tanpa tombol pemicu yang keliatan lagi.
-  useEffect(() => {
-    setOpen(false);
-  }, [closeSignal]);
   // Klik di luar popover = tutup (poin revisi — sebelumnya cuma bisa ketutup lewat re-klik
   // tombol trigger-nya sendiri, "nyangkut" kalau user klik/gerak di tempat lain). Pola sama kayak
   // MenuBar (Chrome.tsx). containerRef bungkus TRIGGER+popover jadi 1 (display:contents, gak
@@ -192,7 +222,17 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
   }
 
   async function removePending(id: string) {
-    await window.api.itemReaction.remove(id);
+    try {
+      await window.api.itemReaction.remove(id);
+    } catch (err) {
+      // Poin revisi (bug dilaporkan) — chip ini bisa aja UDAH kehapus di backend duluan (sync 2
+      // arah reaction Slack->App), state di sini baru ke-refresh belakangan. Daripada nge-alert
+      // error yang ngagetin buat kasus "emang udah gak ada", cukup refresh diem-diem KECUALI
+      // errornya beneran laen (mis. gagal koneksi Slack pas reactions.remove).
+      if (!(err instanceof Error) || !err.message.includes("tidak ditemukan")) {
+        alert(err instanceof Error ? err.message : "Gagal hapus reaction.");
+      }
+    }
     refresh();
   }
 
@@ -214,7 +254,8 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
       </button>
     </div>
   );
-  const chips = pending.map((r) => <ReactionChip key={r.id} reaction={r} onRemove={() => removePending(r.id)} />);
+  const visiblePending = excludeShortcodes?.length ? pending.filter((r) => !excludeShortcodes.includes(r.slack_shortcode)) : pending;
+  const chips = visiblePending.map((r) => <ReactionChip key={r.id} reaction={r} onRemove={() => removePending(r.id)} />);
 
   if (variant === "overlay") {
     return (
@@ -243,7 +284,7 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
             di BAWAH item rata kiri (top:26/left:0, beda dari tombol yang poking kanan-atas) —
             SELALU tampil (gak dihover-gate kayak tombol), soalnya ini info status pending yang
             relevan buat dilihat kapan aja, bukan aksi sesaat. */}
-        {pending.length > 0 && (
+        {visiblePending.length > 0 && (
           <div style={{ position: "absolute", top: 26, right: 0, display: "flex", gap: 1, zIndex: 1 }}>{chips}</div>
         )}
         {open && (
@@ -258,9 +299,11 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
 
   return (
     <div ref={containerRef} style={{ position: "relative", display: "flex", alignItems: "center", gap: 4 }}>
-      <button className="icon-btn" title="Tambah reaction (antre, dikirim bareng pas Kirim ke Slack)" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((v) => !v)}>
-        <SmilePlus size={14} />
-      </button>
+      {!hideButton && (
+        <button className="icon-btn" title="Tambah reaction (antre, dikirim bareng pas Kirim ke Slack)" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((v) => !v)}>
+          <SmilePlus size={14} />
+        </button>
+      )}
       {chips}
       {open && (
         <div style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 20 }} onMouseDown={(e) => e.preventDefault()}>
@@ -272,13 +315,13 @@ export function ItemReactionBar({ projectId, itemId, variant = "inline", hideBut
   );
 }
 
-export function InstantReactionOverlay({ projectId, itemId, closeSignal }: { projectId: string; itemId: string; closeSignal?: unknown }) {
+export function InstantReactionOverlay({ projectId, itemId }: { projectId: string; itemId: string }) {
   const [open, setOpen] = useState(false);
   const [sending, setSending] = useState(false);
-  // Sama pola kayak ItemReactionBar (poin revisi, audit): closeSignal ikut ketutup pas
-  // pill-hover-zone-nya ilang (mouse out), DAN klik di luar popover ini nutup sendiri —
-  // sebelumnya cuma bisa ketutup lewat re-klik tombol trigger, nyangkut kalau lupa.
-  useEffect(() => { setOpen(false); }, [closeSignal]);
+  // Klik di luar popover = tutup. (Sempat pakai auto-close pas hover-zone mouse-out juga, tapi
+  // itu bikin popover ketutup DULUAN pas mouse baru mau turun ngeklik emoji-nya — sebab popover-nya
+  // render di luar kotak elemen hover-zone [absolute, escape ke bawah], jadi keluar-masuk hit-test-nya
+  // ke-treat mouseleave walau DOM-nya masih descendant. Dicabut, klik-luar aja cukup.)
   const containerRef = useRef<HTMLDivElement | null>(null);
   useEffect(() => {
     if (!open) return;

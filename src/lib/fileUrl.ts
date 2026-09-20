@@ -63,6 +63,13 @@ export function useFileBlobUrl(storedPath: string | null | undefined): string | 
       const blob = new Blob([bytes as BlobPart], { type: mimeTypeFor(storedPath) });
       created = URL.createObjectURL(blob);
       setUrl(created);
+    }).catch((err) => {
+      // Poin revisi (bug dilaporkan) — dulu gak ada .catch() di sini sama sekali: kalau
+      // file:readBytes reject (mis. path belum/gak kebaca kayak isManagedFile ketinggalan
+      // ngecek tabel baru), jadi UNHANDLED PROMISE REJECTION, munculnya sebagai dialog error
+      // "Error invoking remote method..." yang bikin app kerasa nge-freeze (fokus input ke-ambil
+      // dialog). Preview doang, jadi gagal = anggap "gak ada gambar" (null), gak usah crash.
+      if (!cancelled) console.error("useFileBlobUrl gagal baca file:", storedPath, err);
     });
     return () => {
       cancelled = true;
