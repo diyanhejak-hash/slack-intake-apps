@@ -1052,15 +1052,19 @@ async function test(name, fn) {
     await test("paceChannel (poin revisi, stress-test nemu \"pesan gak ditampilkan\") jaga jarak antar post ke channel sama", async () => {
       // Dokumentasi Slack: max ~1 pesan/detik/channel, lewat itu pesan bisa DIAM-DIAM gak
       // ditampilkan (bukan error 429 yang ketangkep try/catch). paceChannel maksa jarak minimal
-      // antar chat.postMessage/files.uploadV2 ke channel yang SAMA. Interval di-set kecil (150ms)
-      // di sini doang (default production 1100ms, dimatiin/0 buat test lain di atas) biar gak
-      // bikin suite lambat.
-      slack.setMinPostIntervalForTests(150);
+      // antar chat.postMessage/files.uploadV2 ke channel yang SAMA. Interval di-set kecil (400ms,
+      // bukan production 1100ms/dimatiin-0 kayak test lain) biar gak bikin suite lambat, TAPI
+      // cukup lebar (poin revisi, bug ditemukan lewat CI: flaky di runner mac/linux GitHub
+      // Actions yang lebih lambat/rame -- ada overhead gak keitung ("pace-a" sendiri masih ngerjain
+      // sisa kerjaannya SETELAH lastPostedAt keisi, SEBELUM `start` di bawah kepasang) yang bikin
+      // buffer 150ms/130ms kadang kemakan, elapsed keukur kurang dari threshold walau pacing-nya
+      // sendiri BENER) buat nampung overhead itu tanpa keliatan flaky lagi.
+      slack.setMinPostIntervalForTests(400);
       try {
         await slack.ensureRoot({ token: "MOCK", channelId: "CA", itemName: "pace-a", threadKey: "pace-a" });
         const start = Date.now();
         await slack.ensureRoot({ token: "MOCK", channelId: "CA", itemName: "pace-b", threadKey: "pace-b" });
-        assert.ok(Date.now() - start >= 130, "panggilan ke-2 ke channel sama harusnya nunggu ~150ms");
+        assert.ok(Date.now() - start >= 300, "panggilan ke-2 ke channel sama harusnya nunggu ~400ms");
         // Channel BEDA gak ikut ke-throttle bareng -- harusnya balik cepat, gak nunggu.
         const start2 = Date.now();
         await slack.ensureRoot({ token: "MOCK", channelId: "CB", itemName: "pace-c", threadKey: "pace-c" });
