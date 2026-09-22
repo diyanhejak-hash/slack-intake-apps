@@ -134,7 +134,8 @@ CREATE TABLE IF NOT EXISTS artist_assign_mode (
   id INTEGER PRIMARY KEY CHECK (id = 1),
   mode TEXT NOT NULL DEFAULT 'mention',
   mention_enabled INTEGER NOT NULL DEFAULT 1,
-  react_enabled INTEGER NOT NULL DEFAULT 0
+  react_enabled INTEGER NOT NULL DEFAULT 0,
+  multi_enabled INTEGER NOT NULL DEFAULT 1
 );
 -- Cuma kolom LAMA (id, mode) di INSERT ini (poin revisi, bug: "table has no column named
 -- mention_enabled") -- di DB yang UDAH ADA dari sebelum kolom baru ini, CREATE TABLE IF NOT
@@ -458,6 +459,9 @@ if (!db.prepare('PRAGMA table_info(artist_assign_mode)').all().some((c) => c.nam
   db.exec('ALTER TABLE artist_assign_mode ADD COLUMN mention_enabled INTEGER NOT NULL DEFAULT 0');
   db.exec('ALTER TABLE artist_assign_mode ADD COLUMN react_enabled INTEGER NOT NULL DEFAULT 0');
   db.exec(`UPDATE artist_assign_mode SET mention_enabled = CASE WHEN mode = 'mention' THEN 1 ELSE 0 END, react_enabled = CASE WHEN mode = 'react' THEN 1 ELSE 0 END WHERE id = 1`);
+}
+if (!db.prepare('PRAGMA table_info(artist_assign_mode)').all().some((c) => c.name === 'multi_enabled')) {
+  db.exec('ALTER TABLE artist_assign_mode ADD COLUMN multi_enabled INTEGER NOT NULL DEFAULT 1');
 }
 
 // Mode assign Mention/React (poin revisi) — udah 2x pindah tempat sepanjang development:

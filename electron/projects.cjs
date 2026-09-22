@@ -1086,8 +1086,8 @@ function setItemStatusSentShortcode(itemId, shortcode) {
 // percobaan sebelumnya yang sempat dipaksa mutually-exclusive) — GLOBAL buat SEMUA artis (bukan
 // per-artis/per-item), 2 flag independen. Singleton 1 baris di artist_assign_mode.
 function getArtistAssignModes() {
-  const row = db.prepare(`SELECT mention_enabled, react_enabled FROM artist_assign_mode WHERE id = 1`).get();
-  return { mention: !!row?.mention_enabled, react: !!row?.react_enabled };
+  const row = db.prepare(`SELECT mention_enabled, react_enabled, multi_enabled FROM artist_assign_mode WHERE id = 1`).get();
+  return { mention: !!row?.mention_enabled, react: !!row?.react_enabled, multi: row?.multi_enabled !== 0 };
 }
 
 function setMentionEnabled(enabled) {
@@ -1097,6 +1097,11 @@ function setMentionEnabled(enabled) {
 
 function setReactEnabled(enabled) {
   db.prepare(`UPDATE artist_assign_mode SET react_enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
+  return !!enabled;
+}
+
+function setMultiAssignEnabled(enabled) {
+  db.prepare(`UPDATE artist_assign_mode SET multi_enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
   return !!enabled;
 }
 
@@ -1565,6 +1570,7 @@ module.exports = {
   getArtistAssignModes,
   setMentionEnabled,
   setReactEnabled,
+  setMultiAssignEnabled,
   getInstantIntakeEnabled,
   setInstantIntakeEnabled,
   getKeywordAutomationEnabled,

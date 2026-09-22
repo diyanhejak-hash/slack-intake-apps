@@ -7,9 +7,8 @@
 // artis (disimpen di artist_presets.mode), diatur SEKALI di modal Kelola Preset Artis — bukan
 // per-item/per-row lagi. Picker ini murni buat pilih SIAPA yang di-assign.
 //
-// Multi-artist (poin revisi terbaru) — sekarang MULTI-SELECT: klik nama di dropdown = toggle
-// add/remove (dropdown TETAP kebuka abis klik, beda dari single-select lama yang auto-tutup),
-// artis terpilih tampil sebagai chip (+ tombol X) di trigger-nya sendiri, bukan teks 1 nama lagi.
+// Artis terpilih tampil sebagai chip (+ tombol X). Dropdown selalu menutup setelah user memilih
+// atau melepas artis; mode Single/Multi dan replace atomiknya ditangani MainTable/backend.
 //
 // Poin revisi (diminta user) — tiap baris/chip sekarang nampilin icon react/emoji preset artis
 // itu (kalau ada), sama pola kayak StatusDropdown — biar keliatan langsung emoji apa yang bakal
@@ -82,7 +81,7 @@ export default function ArtistPicker({
               {name}
               <button
                 title="Lepas artis ini"
-                onClick={(e) => { e.stopPropagation(); onRemoveArtist(item, a.artist_id); }}
+                onClick={(e) => { e.stopPropagation(); setOpen(false); onRemoveArtist(item, a.artist_id); }}
                 style={{ border: "none", background: "none", padding: 0, display: "flex", cursor: "pointer", color: "inherit" }}
               >
                 <X size={10} />
@@ -102,7 +101,11 @@ export default function ArtistPicker({
                   key={u.id}
                   className="btn"
                   style={{ width: "100%", justifyContent: "space-between", border: "none", fontSize: 12, ...(checked ? { color: "var(--accent)" } : {}) }}
-                  onClick={() => (checked ? onRemoveArtist(item, u.id) : onAddArtist(item, u.id, u.name))}
+                  onClick={() => {
+                    setOpen(false);
+                    if (checked) onRemoveArtist(item, u.id);
+                    else onAddArtist(item, u.id, u.name);
+                  }}
                 >
                   <span style={{ display: "flex", alignItems: "center", gap: 5 }}>
                     <ArtistEmoji preset={presetByMember.get(u.id)} />

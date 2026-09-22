@@ -1,7 +1,7 @@
 # Panduan Project — Slack Intake Apps
 
 > Dokumen ini adalah ringkasan menyeluruh: apa aplikasi ini, konsep dasarnya, apa yang sudah
-> dan belum dikerjakan, plus panduan install/build. Diperbarui 2026-09-22, versi app `0.3.7`.
+> dan belum dikerjakan, plus panduan install/build. Diperbarui 2026-09-22, versi app `0.3.8`.
 > Untuk detail teknis mendalam per fitur lihat [rancangan-desain.md](rancangan-desain.md)
 > (log desain) dan [CARA-TES-BEDAH-COMMAND-BUILDER.md](CARA-TES-BEDAH-COMMAND-BUILDER.md)
 > (checklist tes manual per fitur, sangat panjang/detail).

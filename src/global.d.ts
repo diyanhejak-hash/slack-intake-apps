@@ -222,6 +222,7 @@ export interface KeywordAutomation {
 export interface ArtistAssignModes {
   mention: boolean;
   react: boolean;
+  multi: boolean;
 }
 
 declare global {
@@ -293,6 +294,7 @@ declare global {
          * backend, bisa throw kalau item belum pernah dikirim (belum ada thread). */
         addArtist: (payload: { projectId: string; itemId: string; artistId: string; artistName: string | null }) => Promise<void>;
         removeArtist: (payload: { projectId: string; itemId: string; artistId: string }) => Promise<void>;
+        setArtists: (payload: { projectId: string; itemId: string; artists: Array<{ artistId: string; artistName: string | null }> }) => Promise<void>;
         /** Fitur Status (poin revisi) — single-select, beda dari artis (multi). `statusId` null =
          * lepas status. Sinkron realtime & precondition thread sama persis kayak addArtist. */
         setStatus: (payload: { projectId: string; itemId: string; statusId: string | null }) => Promise<void>;
@@ -361,6 +363,7 @@ declare global {
         get: () => Promise<ArtistAssignModes>;
         setMention: (enabled: boolean) => Promise<boolean>;
         setReact: (enabled: boolean) => Promise<boolean>;
+        setMulti: (enabled: boolean) => Promise<boolean>;
       };
       /** Toggle global Instant Intake + Instant Reaction (poin revisi) — gak sentuh "Add React". */
       instantIntake: {

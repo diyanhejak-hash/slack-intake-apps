@@ -852,6 +852,10 @@ async function test(name, fn) {
         assert.equal(modes.mention, mention);
         assert.equal(modes.react, react);
       }
+      assert.equal(projects.getArtistAssignModes().multi, true);
+      assert.equal(projects.setMultiAssignEnabled(false), false);
+      assert.equal(projects.getArtistAssignModes().multi, false);
+      assert.equal(projects.setMultiAssignEnabled(true), true);
       // Set eksplisit ke titik awal yang diketahui (BUKAN andelin default fresh-DB — tabel ini
       // udah di-seed skema LEGACY di atas file, lihat test migrasi artist_assign_mode, jadi
       // starting value-nya udah beda dari default 'mention' murni).
@@ -2126,6 +2130,44 @@ async function test(name, fn) {
       // mention ke-update lagi cuma nyisa adrian, perubahan "aktif di 2 sisi".
       await handlers["item:removeArtist"]({}, { projectId: "P", itemId: "I", artistId: "U-DIYAN" });
       assert.deepEqual(syncCalls[syncCalls.length - 1], ["U-ADRIAN"]);
+    });
+    await test("item:setArtists mengganti assignment secara atomik dan membersihkan reaction pending lama", async () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
+      const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("item:setArtists",[\s\S]*?\n\}\)\);/)[0];
+      const itemArtists = [
+        { artist_id: "U-A", artist_name: "A" },
+        { artist_id: "U-B", artist_name: "B" },
+      ];
+      const reactions = [
+        { id: "R-A", slack_shortcode: "a", sent: 0 },
+        { id: "R-B", slack_shortcode: "b", sent: 0 },
+      ];
+      const handlers = {};
+      const context = {
+        require: nativeRequire,
+        handle: (name, fn) => { handlers[name] = fn; },
+        projects: {
+          getProject: () => ({ items: [{ id: "I", name: "Item" }] }),
+          listItemArtists: () => itemArtists.slice(),
+          addItemArtist: (_itemId, artistId, artistName) => itemArtists.push({ artist_id: artistId, artist_name: artistName }),
+          removeItemArtist: (_itemId, artistId) => { const i = itemArtists.findIndex((a) => a.artist_id === artistId); if (i >= 0) itemArtists.splice(i, 1); },
+          listArtistPresets: () => [
+            { member_id: "U-A", code_name: "a" },
+            { member_id: "U-B", code_name: "b" },
+            { member_id: "U-C", code_name: "c" },
+          ],
+          listItemReactions: () => reactions.slice(),
+          removeItemReaction: (id) => { const i = reactions.findIndex((r) => r.id === id); if (i >= 0) reactions.splice(i, 1); },
+          addItemReaction: (_itemId, { slackShortcode }) => { reactions.push({ id: `R-${slackShortcode}`, slack_shortcode: slackShortcode, sent: 0 }); },
+          getArtistAssignModes: () => ({ mention: false, react: true, multi: false }),
+          getRealtimeAssignEnabled: () => false,
+        },
+        slack: {},
+      };
+      vm.runInNewContext(block, context);
+      await handlers["item:setArtists"]({}, { projectId: "P", itemId: "I", artists: [{ artistId: "U-C", artistName: "C" }] });
+      assert.deepEqual(itemArtists.map((a) => a.artist_id), ["U-C"]);
+      assert.deepEqual(reactions.map((r) => r.slack_shortcode), ["c"]);
     });
     await test("reconcileItemAssignState: mention DAN react bisa aktif BARENG (poin revisi terbaru, bukan mutually-exclusive lagi)", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");

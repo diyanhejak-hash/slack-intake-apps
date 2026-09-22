@@ -669,6 +669,7 @@ handle("statusPreset:reorder", (_e, orderedIds) => projects.reorderStatusPresets
 handle("artistAssignMode:get", () => projects.getArtistAssignModes());
 handle("artistAssignMode:setMention", (_e, enabled) => projects.setMentionEnabled(enabled));
 handle("artistAssignMode:setReact", (_e, enabled) => projects.setReactEnabled(enabled));
+handle("artistAssignMode:setMulti", (_e, enabled) => projects.setMultiAssignEnabled(enabled));
 
 // Toggle global Instant Intake + Instant Reaction (poin revisi) — gak sentuh "Add React".
 handle("instantIntake:get", () => projects.getInstantIntakeEnabled());
@@ -862,6 +863,40 @@ handle("item:removeArtist", (_e, { projectId, itemId, artistId }) => withItemArt
   if (preset?.code_name) {
     const pending = projects.listItemReactions(itemId).find((r) => r.slack_shortcode === preset.code_name && !r.sent);
     if (pending) projects.removeItemReaction(pending.id, { unassignArtist: false });
+  }
+  await reconcileItemAssignState({ projectId, itemId });
+}));
+
+// Replace daftar artis dalam satu lock/reconcile. Dipakai mode Single Assignment supaya ganti
+// artis tidak menembakkan rangkaian remove/add terpisah ke Slack, sekaligus menjaga Undo mampu
+// mengembalikan daftar multi lama tanpa kehilangan data.
+handle("item:setArtists", (_e, { projectId, itemId, artists }) => withItemArtistLock(itemId, async () => {
+  const item = projects.getProject(projectId)?.items.find((i) => i.id === itemId);
+  if (!item) throw new Error("Item tidak ditemukan.");
+  const unique = Array.from(new Map((Array.isArray(artists) ? artists : []).filter((a) => a?.artistId).map((a) => [a.artistId, a])).values());
+  const nextIds = new Set(unique.map((a) => a.artistId));
+  const current = projects.listItemArtists(itemId);
+  const presetByMember = new Map(projects.listArtistPresets().map((p) => [p.member_id, p]));
+
+  for (const artist of current) {
+    if (nextIds.has(artist.artist_id)) continue;
+    projects.removeItemArtist(itemId, artist.artist_id);
+    const codeName = presetByMember.get(artist.artist_id)?.code_name;
+    if (codeName) {
+      const pending = projects.listItemReactions(itemId).find((r) => r.slack_shortcode === codeName && !r.sent);
+      if (pending) projects.removeItemReaction(pending.id, { unassignArtist: false });
+    }
+  }
+  for (const artist of unique) {
+    if (current.some((row) => row.artist_id === artist.artistId)) continue;
+    projects.addItemArtist(itemId, artist.artistId, artist.artistName || null);
+    const codeName = presetByMember.get(artist.artistId)?.code_name;
+    if (projects.getArtistAssignModes().react && codeName) {
+      projects.addItemReaction(itemId, { emojiType: "custom", emojiValue: codeName, slackShortcode: codeName });
+    }
+  }
+  if (projects.getRealtimeAssignEnabled() && !slack.findThreadInfo(threadKey(projectId, itemId))) {
+    throw new Error(`"${item.name}" belum pernah dikirim ke Slack (belum ada thread) — gak bisa realtime assign.`);
   }
   await reconcileItemAssignState({ projectId, itemId });
 }));

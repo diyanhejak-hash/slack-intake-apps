@@ -32,7 +32,7 @@ export default function ArtistPresetModal({
   onClose: () => void;
 }) {
   const [presets, setPresets] = useState<ArtistPreset[]>([]);
-  const [assignModes, setAssignModes] = useState<ArtistAssignModes>({ mention: true, react: false });
+  const [assignModes, setAssignModes] = useState<ArtistAssignModes>({ mention: true, react: false, multi: true });
   const [infoOpen, setInfoOpen] = useState(true);
   const [dropdownOpen, setDropdownOpen] = useState(true);
 
@@ -57,6 +57,12 @@ export default function ArtistPresetModal({
     setAssignModes(next);
     if (which === "mention") await window.api.artistAssignMode.setMention(next.mention);
     else await window.api.artistAssignMode.setReact(next.react);
+  }
+
+  async function toggleMultiAssignment() {
+    const multi = !assignModes.multi;
+    setAssignModes((current) => ({ ...current, multi }));
+    await window.api.artistAssignMode.setMulti(multi);
   }
 
   return (
@@ -113,6 +119,20 @@ export default function ArtistPresetModal({
                   <SmilePlus size={14} />
                 </button>
               </div>
+
+              <div className="label" style={{ marginBottom: 4 }}>Pilihan artis</div>
+              <p className="caption" style={{ margin: "0 0 8px" }}>
+                Multi Assignment mengizinkan beberapa artis per item. Saat nonaktif, pilihan baru mengganti daftar menjadi satu artis.
+              </p>
+              <button
+                className="btn"
+                onClick={toggleMultiAssignment}
+                aria-pressed={assignModes.multi}
+                style={{ marginBottom: 14, gap: 7, ...(assignModes.multi ? { borderColor: "var(--accent)", color: "var(--accent)", background: "var(--accent-soft)" } : {}) }}
+              >
+                {assignModes.multi ? <CheckSquare size={14} /> : <Square size={14} />}
+                Multi Assignment
+              </button>
 
               <div className="label" style={{ marginBottom: 4 }}>Grup — filter dropdown Artis</div>
               <ArtistGroupSection users={users} channelMemberIds={channelMemberIds} channelMembersGroupId={channelMembersGroupId} groups={groups} activeGroupId={activeGroupId} onSelectGroup={onSelectGroup} onGroupsChanged={onGroupsChanged} />

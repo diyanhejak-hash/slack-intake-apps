@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld("api", {
     removeFile: (fileId) => ipcRenderer.invoke("item:removeFile", fileId),
     addArtist: (payload) => ipcRenderer.invoke("item:addArtist", payload),
     removeArtist: (payload) => ipcRenderer.invoke("item:removeArtist", payload),
+    setArtists: (payload) => ipcRenderer.invoke("item:setArtists", payload),
     setStatus: (payload) => ipcRenderer.invoke("item:setStatus", payload),
     // Push dari sync 2 arah reaction Slack->App (poin revisi) — item berubah di BACKGROUND (bukan
     // hasil aksi user di renderer ini), renderer perlu tau biar auto-refresh.
@@ -113,6 +114,7 @@ contextBridge.exposeInMainWorld("api", {
     get: () => ipcRenderer.invoke("artistAssignMode:get"),
     setMention: (enabled) => ipcRenderer.invoke("artistAssignMode:setMention", enabled),
     setReact: (enabled) => ipcRenderer.invoke("artistAssignMode:setReact", enabled),
+    setMulti: (enabled) => ipcRenderer.invoke("artistAssignMode:setMulti", enabled),
   },
   instantIntake: {
     get: () => ipcRenderer.invoke("instantIntake:get"),

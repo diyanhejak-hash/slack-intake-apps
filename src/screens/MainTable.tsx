@@ -58,6 +58,7 @@ export default function MainTable({
   const [channelMemberIds, setChannelMemberIds] = useState<string[]>([]);
   const [groups, setGroups] = useState<ArtistGroup[]>([]);
   const [artistPresets, setArtistPresets] = useState<ArtistPreset[]>([]);
+  const [multiAssignment, setMultiAssignment] = useState(true);
   const [showArtistPresetManager, setShowArtistPresetManager] = useState(false);
   // Fitur Status (poin revisi) — daftar preset GLOBAL, sama pola fetch/refresh kayak artistPresets.
   const [statusPresets, setStatusPresets] = useState<StatusPreset[]>([]);
@@ -224,6 +225,7 @@ export default function MainTable({
     const offUsersUpdated = window.api.slack.onUsersUpdated(setUsers);
     window.api.artistGroup.list().then(setGroups);
     window.api.artistPreset.list().then(setArtistPresets);
+    window.api.artistAssignMode.get().then((modes) => setMultiAssignment(modes.multi));
     window.api.statusPreset.list().then(setStatusPresets);
     window.api.instantIntake.get().then(setInstantIntakeEnabledState);
     window.api.artistRealtimeAssign.get().then(setRealtimeAssignEnabledState);
@@ -399,6 +401,12 @@ export default function MainTable({
       const resolved = names
         .map((line) => users.find((u) => (presetByMember.get(u.id)?.nickname || "").toLowerCase() === line || u.name.toLowerCase() === line))
         .filter((u): u is SlackUser => !!u);
+      if (!multiAssignment) {
+        const artist = resolved[0];
+        if (names.length > 0 && !artist) return;
+        handleSetArtists(item, artist ? [{ artistId: artist.id, artistName: artist.name }] : []);
+        return;
+      }
       const resolvedIds = new Set(resolved.map((u) => u.id));
       const currentIds = new Set(item.artists.map((a) => a.artist_id));
       for (const u of resolved) if (!currentIds.has(u.id)) handleAddArtist(item, u.id, u.name);
@@ -406,7 +414,7 @@ export default function MainTable({
     }
     document.addEventListener("keydown", onKeyDown);
     return () => document.removeEventListener("keydown", onKeyDown);
-  }, [project, users, presetByMember, statusPresets]);
+  }, [project, users, presetByMember, statusPresets, multiAssignment]);
 
   // Dropdown Artis (Tab Table DAN Tab Reply, satu sumber sama-sama pakai ini) — nama yang
   // ditampilkan pakai nickname preset kalau ada, fallback nama Slack asli kalau belum. Cuma
@@ -535,7 +543,32 @@ export default function MainTable({
   // (item:addArtist/removeArtist, main.cjs) — frontend gak perlu tau mode/realtime sama sekali
   // lagi. Undo = panggil kebalikannya (add<->remove), simetris & otomatis ikut undo side-effect
   // yang sama di backend.
+  async function handleSetArtists(item: ProjectItem, artists: Array<{ artistId: string; artistName: string | null }>) {
+    const previous = item.artists.map((a) => ({ artistId: a.artist_id, artistName: a.artist_name }));
+    pushUndo({
+      undo: () => window.api.item.setArtists({ projectId, itemId: item.id, artists: previous }),
+      redo: () => window.api.item.setArtists({ projectId, itemId: item.id, artists }),
+    });
+    updateItemLocally(item.id, (i) => ({
+      ...i,
+      artists: artists.map((a) => ({ id: a.artistId, artist_id: a.artistId, artist_name: a.artistName })),
+    }));
+    markSyncing(item.id, true);
+    try {
+      await window.api.item.setArtists({ projectId, itemId: item.id, artists });
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal assign artis.", "error");
+    } finally {
+      setReactionTick((v) => v + 1);
+      markSyncing(item.id, false);
+      refresh();
+    }
+  }
+
   async function handleAddArtist(item: ProjectItem, artistId: string, artistName: string | null) {
+    if (!multiAssignment) {
+      return handleSetArtists(item, [{ artistId, artistName }]);
+    }
     pushUndo({
       undo: () => window.api.item.removeArtist({ projectId, itemId: item.id, artistId }),
       redo: () => window.api.item.addArtist({ projectId, itemId: item.id, artistId, artistName }),
@@ -598,6 +631,24 @@ export default function MainTable({
   async function handleBulkAssignArtist(artistId: string) {
     if (!project || selected.size === 0) return;
     const u = users.find((u) => u.id === artistId);
+    if (!multiAssignment) {
+      const rows = project.items.filter((i) => selected.has(i.id) && (i.artists.length !== 1 || i.artists[0].artist_id !== artistId));
+      if (!rows.length) return;
+      const previous = rows.map((row) => ({
+        id: row.id,
+        artists: row.artists.map((a) => ({ artistId: a.artist_id, artistName: a.artist_name })),
+      }));
+      const next = [{ artistId, artistName: u?.name || null }];
+      for (const row of rows) await window.api.item.setArtists({ projectId, itemId: row.id, artists: next });
+      pushUndo({
+        undo: async () => { for (const row of previous) await window.api.item.setArtists({ projectId, itemId: row.id, artists: row.artists }); },
+        redo: async () => { for (const row of rows) await window.api.item.setArtists({ projectId, itemId: row.id, artists: next }); },
+      });
+      setReactionTick((v) => v + 1);
+      showToast(`${u?.name || artistId} di-assign ke ${rows.length} item.`, "success");
+      refresh();
+      return;
+    }
     const rows = project.items.filter((i) => selected.has(i.id) && !i.artists.some((a) => a.artist_id === artistId));
     if (!rows.length) return;
     for (const r of rows) await window.api.item.addArtist({ projectId, itemId: r.id, artistId, artistName: u?.name || null });
@@ -1467,6 +1518,33 @@ export default function MainTable({
             // nickname/username, diff ke daftar SEKARANG (add yang baru, remove yang gak ada
             // lagi di hasil parse) — nama yang gak ketemu di roster DIBIARIN (gak nulis data salah).
             const rows = project.items;
+            if (!multiAssignment) {
+              const changes: Array<{
+                id: string;
+                previous: Array<{ artistId: string; artistName: string | null }>;
+                next: Array<{ artistId: string; artistName: string | null }>;
+              }> = [];
+              for (let i = 0; i < Math.min(lines.length, rows.length); i++) {
+                const names = lines[i].split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+                const artist = names
+                  .map((line) => users.find((u) => (presetByMember.get(u.id)?.nickname || "").toLowerCase() === line || u.name.toLowerCase() === line))
+                  .find((u): u is SlackUser => !!u);
+                if (names.length > 0 && !artist) continue;
+                changes.push({
+                  id: rows[i].id,
+                  previous: rows[i].artists.map((a) => ({ artistId: a.artist_id, artistName: a.artist_name })),
+                  next: artist ? [{ artistId: artist.id, artistName: artist.name }] : [],
+                });
+              }
+              for (const change of changes) await window.api.item.setArtists({ projectId, itemId: change.id, artists: change.next });
+              pushUndo({
+                undo: async () => { for (const change of changes) await window.api.item.setArtists({ projectId, itemId: change.id, artists: change.previous }); },
+                redo: async () => { for (const change of changes) await window.api.item.setArtists({ projectId, itemId: change.id, artists: change.next }); },
+              });
+              setBulkPasteCol(null);
+              refresh();
+              return;
+            }
             const adds: Array<{ id: string; artistId: string; artistName: string | null }> = [];
             const removes: Array<{ id: string; artistId: string; artistName: string | null }> = [];
             for (let i = 0; i < Math.min(lines.length, rows.length); i++) {
@@ -1515,6 +1593,7 @@ export default function MainTable({
           onClose={() => {
             setShowArtistPresetManager(false);
             window.api.artistPreset.list().then(setArtistPresets);
+            window.api.artistAssignMode.get().then((modes) => setMultiAssignment(modes.multi));
           }}
         />
       )}
