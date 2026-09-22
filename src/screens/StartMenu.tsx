@@ -66,7 +66,9 @@ export default function StartMenu({
       if (result.available && result.url) setUpdateUrl(result.url);
     }).catch(() => undefined);
     window.api.hbStatus.shouldShowModal().then(setShowHbModal).catch(() => undefined);
-  }, []);
+    const offUsersUpdated = window.api.slack.onUsersUpdated((list) => setUsers(list.filter((u) => u.id !== auth.userId)));
+    return offUsersUpdated;
+  }, [auth.userId]);
 
   function openNewProjectForm() {
     setShowNew(true);

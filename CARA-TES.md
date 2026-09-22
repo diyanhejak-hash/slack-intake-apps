@@ -6,10 +6,11 @@ Build ini fondasi + alur inti (lihat "Status build" di bawah untuk apa yang bene
 
 1. Copy `.env.example` jadi `.env`.
 2. Buka Slack App yang **sama dipakai Phase 0** (https://api.slack.com/apps) → **OAuth & Permissions**:
-   - **Redirect URLs** → tambah `http://localhost:3737/callback` → Save.
-   - **Scopes → User Token Scopes** → tambah dua scope baru: **`channels:read`** dan **`groups:read`** (dipakai buat ambil daftar channel di New Project — fitur ini gak ada di Phase 0). Scope lama (`chat:write`, `files:write`, `users:read`, `groups:write`) tetap dipakai, jangan dihapus.
+   - Aktifkan **PKCE** untuk desktop/public client.
+   - **Redirect URLs** → tambah `slackintakeapps://callback` → Save.
+   - **Scopes → User Token Scopes** → pastikan tersedia: `chat:write`, `files:write`, `users:read`, `users:read.email`, `groups:write`, `channels:read`, `groups:read`, `reactions:write`, `reactions:read`, `emoji:read`, `channels:history`, dan `groups:history`.
    - Scroll ke atas → klik **Reinstall to Workspace** (tombol ini muncul otomatis abis ubah scope) → Allow.
-3. Isi `.env`: `SLACK_CLIENT_ID` & `SLACK_CLIENT_SECRET` dari App yang sama (**Basic Information**), biarkan `SLACK_REDIRECT_URI` & `OAUTH_PORT` default.
+3. Isi `.env`: `SLACK_CLIENT_ID` dari App yang sama dan biarkan `SLACK_REDIRECT_URI=slackintakeapps://callback`. `SLACK_CLIENT_SECRET` dan `OAUTH_PORT` tidak dipakai.
 4. `npm install` (kalau belum, saya sudah jalankan sekali tapi ulangi kalau pull dari fresh clone).
 
 ## 1. Jalankan
@@ -170,6 +171,6 @@ Cek langsung di app & di Slack — bukan cuma percaya log terminal.
 ## 4. Kalau ada yang error
 
 - Error pas Login soal `authed_user.access_token` → scope App-nya kesetel di Bot Token Scopes, bukan User Token Scopes. Cek App di api.slack.com.
-- Redirect URI mismatch → pastikan `http://localhost:3737/callback` terdaftar persis di App (langkah 0.2).
+- Redirect URI mismatch → pastikan `slackintakeapps://callback` terdaftar persis di App dan PKCE sudah aktif (langkah 0.2).
 - Dropdown channel/artis kosong → cek kamu beneran member channel itu & workspace-nya benar.
 - **`missing_scope`** → scope belum ditambah/App belum di-reinstall (langkah 0.2), ATAU kamu **masih pakai token login lama** dari sebelum scope ditambah — token gak otomatis update pas scope App berubah. Klik ikon **Logout** (pojok kanan atas Start Menu) → login ulang, biar tukar token baru yang sudah bawa scope baru.

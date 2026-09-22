@@ -1,31 +1,8 @@
 import { useEffect, useRef, useState } from "react";
-import { Wand2, Combine, UserCheck, Tags, Trash2, FileStack, Link as LinkIcon, HelpCircle, CheckSquare, Square, ArrowDown, ArrowUp, Loader2 } from "lucide-react";
+import { Wand2, Combine, UserCheck, Tags, Trash2, FileStack, Link as LinkIcon, HelpCircle, CheckSquare, Square } from "lucide-react";
 import type { SlackUser, StatusPreset } from "../global";
-import slackBlackImg from "../assets/SlackBlack.png";
-
-// Poin revisi (diminta user, gak puas sama icon RefreshCw/ArrowDownToLine polos) — logo Slack
-// hitam dipadukan arrow kecil di pojok (bawah = Pull/Slack->App, atas = Push/App->Slack), biar
-// jelas kedua tombol ini soal SINKRON SLACK, bukan cuma "refresh" generik. Pas lagi proses
-// (busy), ganti jadi Loader2 muter — muterin logo+badge gabungan kelihatan aneh, spinner polos
-// lebih jelas bacanya sebagai "lagi jalan".
-function SlackSyncIcon({ direction, busy }: { direction: "down" | "up"; busy: boolean }) {
-  if (busy) return <Loader2 size={14} className="spin" />;
-  const Arrow = direction === "down" ? ArrowDown : ArrowUp;
-  return (
-    <span style={{ position: "relative", display: "inline-flex", width: 15, height: 15, flexShrink: 0 }}>
-      <img src={slackBlackImg} alt="" style={{ width: "100%", height: "100%", objectFit: "contain" }} />
-      <span
-        style={{
-          position: "absolute", right: -4, bottom: -4, width: 11, height: 11, borderRadius: "50%",
-          background: "var(--accent)", display: "flex", alignItems: "center", justifyContent: "center",
-          border: "1.5px solid var(--surface)",
-        }}
-      >
-        <Arrow size={7} color="#fff" strokeWidth={3} />
-      </span>
-    </span>
-  );
-}
+import SlackSyncIcon from "./SlackSyncIcon";
+import ThemeToggle from "./ThemeToggle";
 
 export interface SidebarActions {
   onGenerateItem: () => void;
@@ -79,6 +56,7 @@ export function Sidebar(a: SidebarActions) {
         </button>
       ))}
       <div style={{ flex: 1 }} />
+      <ThemeToggle />
       <button className="icon-btn" title="Keyboard Shortcuts" onClick={a.onHelp} style={{ width: 34, height: 34 }}>
         <HelpCircle size={16} />
       </button>
@@ -187,7 +165,6 @@ export interface MenuBarActions {
   onToggleLog: () => void;
   onGroupEditor: () => void;
   onHyperlinkManager: () => void;
-  onEmojiPresetManager: () => void;
   onArtistPresetManager: () => void;
   onHelp: () => void;
   openMenu: MenuName | null;
@@ -220,10 +197,6 @@ export interface SyncControlsProps {
   /** Teks buat tooltip Pull/Push, beda tergantung tab aktif ("semua item project ini" di Tab
    * Table, `item "nama"` di Tab Input). */
   scopeLabel: string;
-  /** Sistem Admin/Member (poin revisi, diminta user) — toggle Realtime Sync (event/Socket Mode)
-   * disembunyiin buat user biasa, default OFF sampai jadi member channel "hb-adm". Pull/Push
-   * (manual, Web API doang) TETAP kepake semua orang, gak ikut digate. */
-  isAdminMember: boolean;
 }
 
 export function SyncControls(a: SyncControlsProps) {
@@ -245,15 +218,18 @@ export function SyncControls(a: SyncControlsProps) {
       >
         <SlackSyncIcon direction="up" busy={a.syncingAssign} />
       </button>
-      {a.isAdminMember && (
-        <input
-          type="checkbox"
-          className="toggle-switch"
-          title="Sesi assign artis realtime — assign/lepas artis & ganti status langsung sinkron ke Slack"
-          checked={a.realtimeAssignEnabled}
-          onChange={a.onToggleRealtimeAssign}
-        />
-      )}
+      {/* Poin revisi (diminta user) — toggle ini SEKARANG kebuka buat SEMUA user, bukan
+          admin-member doang lagi (beda dari "Otomasi Kata Kunci..." di MenuBar yang TETAP
+          admin-only). Kerjanya tetap tergantung device ini UDAH ada App-Level Token (admin yang
+          setup, lihat updateSocketModeConnectionState main.cjs) apa belum -- non-admin yang
+          nyalain ini di device tanpa token cuma nyalain flag doang, gak ada yang beneran konek. */}
+      <input
+        type="checkbox"
+        className="toggle-switch"
+        title="Sesi assign artis realtime — assign/lepas artis & ganti status langsung sinkron ke Slack"
+        checked={a.realtimeAssignEnabled}
+        onChange={a.onToggleRealtimeAssign}
+      />
     </div>
   );
 }
@@ -287,7 +263,6 @@ export function MenuBar(a: MenuBarActions) {
       { label: "Kembali ke Start Menu", onClick: a.onBackToStartMenu },
     ],
     Edit: [
-      { label: "Preset Emoji...", onClick: a.onEmojiPresetManager },
       { label: "Preset Artis...", onClick: a.onArtistPresetManager },
     ],
     View: [

@@ -7,7 +7,7 @@ import { $isLinkNode, $createLinkNode, LinkNode } from "@lexical/link";
 import { ITALIC_UNDERSCORE, ORDERED_LIST, UNORDERED_LIST, type Transformer } from "@lexical/markdown";
 import { $createTextNode, type TextNode } from "lexical";
 import { $createEmojiImageNode, $isEmojiImageNode, EmojiImageNode } from "./EmojiImageNode";
-import { getCustomEmojiImagePath } from "./emojiPresetStore";
+import { getEmojiImageSource } from "./emojiCatalog";
 
 const SLACK_BOLD: Transformer = { format: ["bold"], tag: "*", type: "text-format" };
 
@@ -48,7 +48,7 @@ const EMOJI_IMAGE: Transformer = {
   regExp: /:([a-z0-9_+-]+):$/,
   replace: (textNode: TextNode, match: string[]) => {
     const [, name] = match;
-    if (!getCustomEmojiImagePath(name)) return;
+    if (!getEmojiImageSource(name)) return;
     textNode.replace($createEmojiImageNode(name));
   },
   trigger: ":",

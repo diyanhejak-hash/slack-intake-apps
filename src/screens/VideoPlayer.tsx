@@ -418,6 +418,7 @@ export default function VideoPlayer({
         </button>
         <input
           type="range"
+          aria-label="Posisi video"
           min={0}
           max={Math.max(1, frameFromTime(duration, fps))}
           value={currentFrame}
@@ -432,6 +433,7 @@ export default function VideoPlayer({
         </button>
         <input
           type="range"
+          aria-label="Volume"
           min={0}
           max={1}
           step={0.05}
@@ -498,6 +500,7 @@ export default function VideoPlayer({
           <Film size={13} className={fullscreen ? undefined : "muted"} style={fullscreen ? { color: "#fff" } : {}} />
           <input
             type="number"
+            aria-label="FPS video"
             min={1}
             max={240}
             value={fps}
@@ -512,6 +515,7 @@ export default function VideoPlayer({
         <div style={{ display: "flex", alignItems: "center", gap: 3 }} title="Kecepatan putar">
           <Gauge size={13} className={fullscreen ? undefined : "muted"} style={fullscreen ? { color: "#fff" } : {}} />
           <select
+            aria-label="Kecepatan putar"
             value={speed}
             onChange={(e) => {
               const s = Number(e.target.value);

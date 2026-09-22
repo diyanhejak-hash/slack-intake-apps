@@ -7,13 +7,15 @@
 //      assignment di seluruh app.
 import { useEffect, useState } from "react";
 import { X, Trash2, ChevronDown, ChevronRight, AtSign, SmilePlus, CheckSquare, Square, Plus } from "lucide-react";
-import type { ArtistAssignModes, ArtistGroup, ArtistPreset, EmojiPreset, SlackUser } from "../global";
+import type { ArtistAssignModes, ArtistGroup, ArtistPreset, SlackUser } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
-import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
-import { CombinedEmojiPickerButton } from "./EmojiPicker";
+import { refreshEmojiCatalogCache, type EmojiChoice } from "../lib/emojiCatalog";
+import { UniversalEmojiPicker } from "./EmojiPicker";
 
 export default function ArtistPresetModal({
   users,
+  channelMemberIds,
+  channelMembersGroupId,
   groups,
   activeGroupId,
   onSelectGroup,
@@ -21,6 +23,8 @@ export default function ArtistPresetModal({
   onClose,
 }: {
   users: SlackUser[];
+  channelMemberIds: string[];
+  channelMembersGroupId: string;
   groups: ArtistGroup[];
   activeGroupId: string;
   onSelectGroup: (id: string) => void;
@@ -37,7 +41,7 @@ export default function ArtistPresetModal({
   // code_name artis lewat jalur yang SAMA (lihat emojiPresetStore.ts).
   function refreshPresets() {
     window.api.artistPreset.list().then(setPresets);
-    refreshEmojiPresetCache();
+    refreshEmojiCatalogCache();
   }
   useEffect(() => {
     refreshPresets();
@@ -111,7 +115,7 @@ export default function ArtistPresetModal({
               </div>
 
               <div className="label" style={{ marginBottom: 4 }}>Grup — filter dropdown Artis</div>
-              <ArtistGroupSection users={users} groups={groups} activeGroupId={activeGroupId} onSelectGroup={onSelectGroup} onGroupsChanged={onGroupsChanged} />
+              <ArtistGroupSection users={users} channelMemberIds={channelMemberIds} channelMembersGroupId={channelMembersGroupId} groups={groups} activeGroupId={activeGroupId} onSelectGroup={onSelectGroup} onGroupsChanged={onGroupsChanged} />
             </>
           )}
         </div>
@@ -208,43 +212,22 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
   const [pickedUnicode, setPickedUnicode] = useState<string | null>(preset?.unicode_value || null);
   const [busy, setBusy] = useState(false);
 
-  function pickEmojiPreset(emojiPreset: EmojiPreset) {
-    if (!emojiPreset.slack_shortcode) return;
-    setCodeName(emojiPreset.slack_shortcode);
-    if (emojiPreset.type === "custom" && emojiPreset.image_path) {
-      setPickedPath(emojiPreset.image_path);
-      setPickedUnicode(null);
-    } else {
+  async function pickEmoji(emoji: EmojiChoice) {
+    setCodeName(emoji.shortcode);
+    if (emoji.type === "unicode") {
       setPickedPath(null);
-      setPickedUnicode(emojiPreset.value);
+      setPickedUnicode(emoji.value);
+      return;
     }
-  }
-
-  // Poin revisi: "ambil custom emoji dari workspace Slack" — code_name-nya PASTI valid (nama
-  // emoji ASLI, bukan ketik/nebak manual) karena datang langsung dari emoji.list. Gambarnya
-  // di-download ke temp file lokal dulu (lihat slack:downloadEmojiImage, main.cjs), baru dipakai
-  // sebagai sourcePath persis kayak upload manual — reuse jalur staging yang sama.
-  async function pickFromSlack(name: string, url: string) {
     setBusy(true);
     try {
-      const tempPath = await window.api.slack.downloadEmojiImage(url);
-      setCodeName(name);
-      setPickedPath(tempPath);
+      setPickedPath(await window.api.slack.downloadEmojiImage(emoji.imageUrl || ""));
       setPickedUnicode(null);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Gagal ambil gambar emoji dari Slack.");
+      alert(err instanceof Error ? err.message : "Gagal mengambil gambar emoji dari Slack.");
     } finally {
       setBusy(false);
     }
-  }
-
-  // Poin revisi (tombol "+" — Semua Emoji) — pilih langsung dari picker unicode lengkap, gak
-  // perlu bikin preset dulu. `colons` dari emoji-mart bentuknya ":nama:" (ada titik dua), code_name
-  // kita simpen TANPA titik dua (sama pola kayak semua shortcode lain di app ini).
-  function pickUnicode(native: string, colons: string) {
-    setCodeName(colons.replace(/^:|:$/g, ""));
-    setPickedPath(null);
-    setPickedUnicode(native);
   }
 
   async function save() {
@@ -275,7 +258,7 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
           {user.name}
         </div>
         <input autoFocus placeholder="Nickname" value={nickname} onChange={(e) => setNickname(e.target.value)} style={{ flex: 1, minWidth: 0 }} />
-        <CombinedEmojiPickerButton onPickPreset={pickEmojiPreset} onPickSlack={pickFromSlack} onPickUnicode={pickUnicode} disabled={busy} />
+        <UniversalEmojiPicker onPick={pickEmoji} disabled={busy} title="Pilih emoji artis" />
         <button className="btn btn-primary" disabled={busy} onClick={save} style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}>
           Simpan
         </button>
@@ -292,12 +275,16 @@ function ArtistInfoEditRow({ user, preset, onDone, onCancel }: { user: SlackUser
 // dulu — biar user bisa lanjut kerjain section lain di modal yang sama tanpa buka ulang).
 function ArtistGroupSection({
   users,
+  channelMemberIds,
+  channelMembersGroupId,
   groups,
   activeGroupId,
   onSelectGroup,
   onGroupsChanged,
 }: {
   users: SlackUser[];
+  channelMemberIds: string[];
+  channelMembersGroupId: string;
   groups: ArtistGroup[];
   activeGroupId: string;
   onSelectGroup: (id: string) => void;
@@ -325,8 +312,14 @@ function ArtistGroupSection({
   return (
     <div>
       <button className="btn" style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }} onClick={() => onSelectGroup("")}>
-        {activeGroupId === "" ? <CheckSquare size={14} /> : <Square size={14} />} Semua Artis ({users.length})
+        {activeGroupId === "" ? <CheckSquare size={14} /> : <Square size={14} />} Semua Member ({users.length})
       </button>
+      <button className="btn" style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }} onClick={() => onSelectGroup(channelMembersGroupId)}>
+        {activeGroupId === channelMembersGroupId ? <CheckSquare size={14} /> : <Square size={14} />} Channel Member ({users.filter((u) => channelMemberIds.includes(u.id)).length})
+      </button>
+      {activeGroupId === channelMembersGroupId && channelMemberIds.length === 0 && (
+        <p className="caption" style={{ margin: "2px 4px 6px" }}>Cache member channel belum tersedia. Semua Member tetap bisa digunakan.</p>
+      )}
       {groups.map((g) => (
         <button key={g.id} className="btn" style={{ width: "100%", justifyContent: "flex-start", marginBottom: 4 }} onClick={() => onSelectGroup(g.id)}>
           {activeGroupId === g.id ? <CheckSquare size={14} /> : <Square size={14} />} {g.name} ({g.memberIds.length})

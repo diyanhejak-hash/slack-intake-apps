@@ -2,6 +2,7 @@
 :root {
   --bg: #f7f7f5;
   --surface: #ffffff;
+  --surface-2: #f1f2ef;
   --surface-hover: #fafaf8;
   --border: #e5e5e1;
   --border-strong: #d4d4cf;
@@ -17,9 +18,39 @@
   --danger-soft: #fdecec;
   --warning: #d97706;
   --warning-soft: #fdf3e3;
+  --sent-border: #86d7a3;
+  --on-accent: #ffffff;
   --radius: 6px;
   --radius-lg: 10px;
   --font: -apple-system, "Segoe UI", "Inter", system-ui, sans-serif;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #0f1115;
+  --surface: #171a20;
+  --surface-2: #1d2129;
+  --surface-hover: #20242c;
+  --border: #2b313b;
+  --border-strong: #3b4452;
+  --text: #f1f3f5;
+  --text-secondary: #b7bec8;
+  --text-muted: #7f8997;
+  --accent: #74a2ff;
+  --accent-hover: #91b5ff;
+  --accent-soft: rgba(83, 137, 255, 0.17);
+  --success: #4ade80;
+  --success-soft: rgba(34, 197, 94, 0.14);
+  --danger: #fb7185;
+  --danger-soft: rgba(244, 63, 94, 0.15);
+  --warning: #fbbf24;
+  --warning-soft: rgba(245, 158, 11, 0.15);
+  --sent-border: #28784b;
+  --on-accent: #0b1220;
+}
+
+:root:not([data-theme="dark"]) {
+  color-scheme: light;
 }
 
 * {
@@ -40,6 +71,7 @@ body {
   font-size: 13px;
   line-height: 1.5;
   -webkit-font-smoothing: antialiased;
+  transition: background-color 160ms ease, color 160ms ease;
 }
 
 h1 {
@@ -77,6 +109,13 @@ button {
   font-family: inherit;
   font-size: 13px;
   cursor: pointer;
+}
+
+button:focus-visible,
+[role="button"]:focus-visible,
+[role="option"]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .btn {
@@ -170,6 +209,17 @@ input[type="range"] {
   background: transparent;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
 .card {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -189,6 +239,14 @@ input[type="range"] {
 }
 .reply-bubble.selected {
   border-color: var(--accent);
+}
+.reply-bubble.sent {
+  background: var(--success-soft);
+  border-color: var(--sent-border);
+}
+.reply-bubble.sent:hover,
+.reply-bubble.sent:focus-within {
+  background: var(--success-soft);
 }
 .reply-bubble.field-drag-over {
   border-color: var(--accent);
@@ -261,6 +319,72 @@ input[type="range"] {
 }
 .toggle-switch:checked::before {
   left: 16px;
+}
+
+/* Sakelar tema vertikal: matahari di atas, bulan di bawah. */
+.theme-toggle {
+  position: relative;
+  display: flex;
+  flex: 0 0 auto;
+  width: 26px;
+  height: 48px;
+  min-height: 48px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 0;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: background-color 160ms ease, border-color 160ms ease;
+}
+.theme-toggle:hover {
+  border-color: var(--accent);
+}
+.theme-toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.theme-toggle-sun,
+.theme-toggle-moon {
+  position: relative;
+  z-index: 2;
+  pointer-events: none;
+}
+.theme-toggle:not(.dark) .theme-toggle-sun,
+.theme-toggle.dark .theme-toggle-moon {
+  color: var(--on-accent);
+}
+.theme-toggle-thumb {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.28);
+  transition: transform 160ms ease;
+}
+.theme-toggle.dark .theme-toggle-thumb {
+  transform: translateY(22px);
+}
+
+.slack-sync-logo {
+  transition: filter 160ms ease;
+}
+:root[data-theme="dark"] .slack-sync-logo {
+  filter: brightness(0) invert(1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  body,
+  .theme-toggle,
+  .theme-toggle-thumb {
+    transition: none;
+  }
 }
 
 .badge {
@@ -347,6 +471,18 @@ tbody tr:nth-child(even) td {
 }
 tr:hover td {
   background: var(--surface-hover);
+}
+/* Status kirim di tabel harus tetap terbaca saat zebra stripe maupun hover baris aktif. */
+tbody td.item-sent-cell,
+tbody td.reply-sent-cell,
+tbody tr:hover td.item-sent-cell,
+tbody tr:hover td.reply-sent-cell {
+  background: var(--success-soft);
+}
+.item-sent-input,
+.item-sent-input:focus {
+  background: var(--success-soft);
+  border-color: var(--sent-border) !important;
 }
 /* Overlay "Instant Intake" (poin revisi, Tab Table) — nongol CUMA di cell yang lagi di-cursor
    (bukan satu row penuh). AUDIT (poin revisi): dulu delay-nya pakai `transition-delay` di rule
@@ -508,6 +644,215 @@ th.hover-ready .row-quicksend {
 
 .spin {
   animation: spin 0.8s linear infinite;
+}
+
+/* Universal emoji picker: one category at a time + virtual rows keeps scrolling light. */
+.emoji-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(8, 12, 20, 0.48);
+  backdrop-filter: blur(3px);
+}
+
+.emoji-dialog {
+  width: min(430px, calc(100vw - 32px));
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+}
+
+.emoji-dialog-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 8px;
+}
+
+.emoji-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  color: var(--text-muted);
+  background: var(--surface-2, var(--surface));
+}
+
+.emoji-search:focus-within {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.emoji-search input {
+  width: 100%;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  outline: 0;
+  background: transparent;
+}
+
+.emoji-category-bar {
+  display: flex;
+  gap: 3px;
+  overflow-x: auto;
+  padding: 5px 12px 8px;
+  border-bottom: 1px solid var(--border);
+}
+
+.emoji-category-bar button {
+  display: grid;
+  flex: 0 0 34px;
+  width: 34px;
+  height: 32px;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  font-size: 17px;
+  cursor: pointer;
+}
+
+.emoji-category-bar button:hover,
+.emoji-category-bar button.active {
+  background: var(--accent-soft);
+}
+
+.emoji-category-bar button.active {
+  color: var(--accent);
+  box-shadow: inset 0 -2px 0 var(--accent);
+}
+
+.emoji-slack-mark {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  place-items: center;
+  border-radius: 6px;
+  background: #4a154b;
+  color: white;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.emoji-section-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 34px;
+  padding: 0 14px;
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.emoji-load-error {
+  color: var(--danger);
+  font-size: 10px;
+  text-transform: none;
+}
+
+.emoji-grid-scroll {
+  height: 294px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0 10px;
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(9, minmax(0, 1fr));
+  align-content: start;
+}
+
+.emoji-cell {
+  position: relative;
+  height: 42px;
+}
+
+.emoji-tile {
+  display: grid;
+  width: 100%;
+  height: 40px;
+  place-items: center;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  font-size: 23px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.emoji-tile:hover,
+.emoji-tile:focus-visible {
+  background: var(--accent-soft);
+  outline: none;
+  transform: scale(1.06);
+}
+
+.emoji-tile img {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
+.emoji-favorite {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  display: grid;
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: var(--surface);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.emoji-cell:hover .emoji-favorite,
+.emoji-favorite:focus-visible,
+.emoji-favorite.active {
+  opacity: 1;
+}
+
+.emoji-favorite.active {
+  color: #e9a400;
+}
+
+.emoji-loading,
+.emoji-empty {
+  display: grid;
+  height: 294px;
+  place-content: center;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.emoji-loading {
+  grid-auto-flow: column;
+  gap: 7px;
+}
+
+.emoji-dialog-footer {
+  padding: 8px 14px 10px;
+  border-top: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 10px;
 }
 @keyframes spin {
   from {

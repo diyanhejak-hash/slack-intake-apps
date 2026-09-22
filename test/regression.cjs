@@ -44,6 +44,7 @@ const reactionCalls = [];
 const reactionRemoveCalls = [];
 const oauthAccessCalls = [];
 let failUpload = false;
+let confirmedUploadCount = null;
 let failPermalink = false;
 // Simulasi 429 SEKALI doang (poin revisi, test auto-retry) -- angka = retryAfter (detik) yang
 // dikasih ke error, flag auto-reset ke false abis 1x throw (jadi panggilan berikutnya sukses,
@@ -70,7 +71,7 @@ function throwIfTokenExpiredOnce() {
 }
 let serial = 0;
 class MockSlack {
-  constructor() { this.userPage = 0; this.channelPage = 0; }
+  constructor() { this.userPage = 0; this.channelPage = 0; this.memberPage = 0; }
   chat = {
     postMessage: async (args) => { throwIfTokenExpiredOnce(); calls.push(args); return { ts: `${++serial}.000` }; },
     update: async (args) => { updateCalls.push(args); return { ts: args.ts }; },
@@ -89,6 +90,9 @@ class MockSlack {
         throw err;
       }
       if (failUpload) throw Error("mock upload failure");
+      const count = confirmedUploadCount ?? (args.file_uploads || []).length;
+      confirmedUploadCount = null;
+      return { ok: true, files: [{ ok: true, files: Array.from({ length: count }, (_, i) => ({ id: `F${i}` })) }] };
     },
   };
   reactions = {
@@ -136,6 +140,11 @@ class MockSlack {
     conversations: async () => (++this.channelPage === 1
       ? { channels: [{ id: "CA", name: "First" }], response_metadata: { next_cursor: "next" } }
       : { channels: [{ id: "CB", name: "Second" }], response_metadata: { next_cursor: "" } }),
+  };
+  conversations = {
+    members: async () => (++this.memberPage === 1
+      ? { members: ["U1"], response_metadata: { next_cursor: "next" } }
+      : { members: ["U2"], response_metadata: { next_cursor: "" } }),
   };
 }
 const slack = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
@@ -204,6 +213,14 @@ async function test(name, fn) {
       assert.equal(attempts.length, 2); // attempt 1 (kena rate-limit) + attempt 2 (retry, sukses)
       assert.equal(attempts[0], attempts[1]); // KEDUA attempt baca jumlah byte yang SAMA (stream fresh, bukan basi/0)
       assert.ok(attempts[1] > 0); // bukan 0 byte -- itu gejala bug lama (stream udah abis kebaca attempt pertama)
+    });
+    await test("upload file hanya dianggap sukses kalau jumlah file yang dikonfirmasi Slack sesuai", async () => {
+      const file = path.join(temp, "upload-count.txt"); fs.writeFileSync(file, "x");
+      confirmedUploadCount = 0;
+      await assert.rejects(
+        send("upload-count", "CA", [{ files: [{ path: file, filename: "upload-count.txt" }] }]),
+        /Slack mengonfirmasi 0 dari 1 file/
+      );
     });
     await test("sendItem/ensureRoot/syncAssignMessage/sendReplies (poin revisi, bug ditemukan lewat audit D15) — error token_expired TETAP bawa .data abis dibungkus jadi pesan actionable, biar auto-refresh token di main.cjs bisa ke-deteksi", async () => {
       // sendItem
@@ -409,6 +426,31 @@ async function test(name, fn) {
     await test("Slack lists consume every cursor page", async () => {
       assert.equal((await slack.listUsers("MOCK")).length, 2);
       assert.equal((await slack.listChannels("MOCK")).length, 2);
+      assert.equal((await slack.getChannelMembers({ token: "MOCK", channelId: "CA" })).join(","), "U1,U2");
+    });
+    await test("cache member lokal ditimpa per workspace tanpa mengubah info atau assignment artis", () => {
+      const cacheProject = projects.createProject({ name: "member-cache", channelId: "C-CACHE", channelName: "cache" });
+      const itemId = projects.addItem(cacheProject.id, { name: "CACHE_001", source: "manual" });
+      projects.addItemArtist(itemId, "U-CACHE", "Nama Assignment");
+      const presetId = projects.saveArtistPreset({ memberId: "U-CACHE", nickname: "Nama Preset", codeName: "cache" });
+
+      projects.replaceCachedSlackUsers([{ id: "U-CACHE", name: "Nama Lama", avatar: "old.png" }]);
+      projects.replaceCachedChannelMemberIds("C-CACHE", ["U-CACHE"]);
+      assert.equal(projects.listCachedSlackUsers()[0].name, "Nama Lama");
+      assert.equal(projects.listCachedChannelMemberIds("C-CACHE").join(","), "U-CACHE");
+
+      projects.replaceCachedSlackUsers([{ id: "U-NEW", name: "Nama Baru" }]);
+      projects.replaceCachedChannelMemberIds("C-CACHE", ["U-NEW"]);
+      assert.equal(projects.listCachedSlackUsers().map((u) => u.id).join(","), "U-NEW");
+      assert.equal(projects.listCachedChannelMemberIds("C-CACHE").join(","), "U-NEW");
+      assert.equal(projects.getProject(cacheProject.id).items[0].artists[0].artist_id, "U-CACHE");
+      assert.equal(projects.listArtistPresets().find((p) => p.id === presetId).nickname, "Nama Preset");
+
+      projects.setScope("U-OTHER", "T-OTHER");
+      assert.equal(projects.listCachedSlackUsers().length, 0);
+      assert.equal(projects.listCachedChannelMemberIds("C-CACHE").length, 0);
+      projects.setScope("U-TEST", "T-TEST");
+      projects.removeArtistPreset(presetId);
     });
     await test("listCustomEmojis (poin revisi, Preset Artis \"ambil dari Slack\") — resolve alias 1 level, skip alias yang nunjuk ke nama gak ada, urut alfabetis", async () => {
       const result = await slack.listCustomEmojis("MOCK");
@@ -484,6 +526,7 @@ async function test(name, fn) {
       assert.equal(restored.status_id, preset); // status TIDAK hilang
       assert.equal(restored.status_sent_shortcode, "done-d03");
       assert.equal(restored.replies[0].sent, true); // reply TETAP kekunci (bukan kebuka lagi buat edit)
+      assert.equal(restored.replies[0].sent_by_user_id, "U-TEST");
       assert.equal(restored.reactions[0].sent, 1); // reaction TETAP dianggap udah terkirim
 
       projects.removeStatusPreset(preset); // status_presets GLOBAL -- jangan nyisa, tes lain hitung jumlah persis
@@ -740,6 +783,7 @@ async function test(name, fn) {
       projects.markReplySent(replyId);
       loaded = projects.getProject(rp.id).items.find((i) => i.id === itemId);
       assert.equal(loaded.replies.find((r) => r.id === replyId).sent, true);
+      assert.equal(loaded.replies.find((r) => r.id === replyId).sent_by_user_id, "U-TEST");
 
       assert.throws(() => projects.updateReply(replyId, { textValue: "coba edit lagi" }), /udah kekirim/);
       assert.throws(() => projects.addFilesToReply(replyId, itemId, []), /udah kekirim/);
@@ -752,6 +796,7 @@ async function test(name, fn) {
       projects.unlockReply(replyId);
       loaded = projects.getProject(rp.id).items.find((i) => i.id === itemId);
       assert.equal(loaded.replies.find((r) => r.id === replyId).sent, false);
+      assert.equal(loaded.replies.find((r) => r.id === replyId).sent_by_user_id, null);
       // Field kebuka lagi -- edit BOLEH lagi (bukan cuma UI, backend-nya beneran gak ke-lock lagi).
       projects.updateReply(replyId, { textValue: "isi abis buka gembok" });
       assert.equal(projects.getProject(rp.id).items.find((i) => i.id === itemId).replies[0].text_value, "isi abis buka gembok");
@@ -1132,6 +1177,18 @@ async function test(name, fn) {
       await slack.sendReplies({ token: "MOCK", channelId: "CA", threadKey: "phase-post", threadTs: root.threadTs, posts });
       assert.equal(calls.filter((c) => c.text === "phase first" && c.thread_ts === root.threadTs).length, 1);
     });
+    await test("sendReplies tidak menganggap field sukses saat Slack mengonfirmasi file lebih sedikit", async () => {
+      const file = path.join(temp, "reply-upload-count.txt"); fs.writeFileSync(file, "x");
+      const root = await slack.ensureRoot({ token: "MOCK", channelId: "CA", itemName: "reply-upload-count", threadKey: "reply-upload-count-root" });
+      confirmedUploadCount = 0;
+      await assert.rejects(
+        slack.sendReplies({
+          token: "MOCK", channelId: "CA", threadKey: "reply-upload-count", threadTs: root.threadTs,
+          posts: [{ files: [{ path: file, filename: "reply-upload-count.txt" }] }],
+        }),
+        /Slack mengonfirmasi 0 dari 1 file/
+      );
+    });
     await test("handle() auto-refresh token_expired sekali lalu retry, gagal kalau refresh gagal (poin revisi)", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/function handle\(channel, fn\) \{[\s\S]*?\n\}\n/)[0];
@@ -1505,13 +1562,18 @@ async function test(name, fn) {
         return { invoke: (payload) => handler({}, payload), sendItemCalls };
       }
 
-      // scope "replies" -- R-OLD (sent) di-skip, R-NEW doang yang masuk payload.
+      // scope "replies" -- R-OLD (sent) di-skip, R-NEW doang yang masuk payload. Poin revisi
+      // (bug dilaporkan: field hasil pecahan Merge gak kekirim/gak ke-lock kalau field LAIN di
+      // item yang sama gagal) -- sendItem sekarang dipanggil TERPISAH per field (bukan 1 array
+      // gabungan): panggilan pertama pastiin root (posts kosong), panggilan berikutnya SATU per
+      // reply yang belum sent.
       {
         const ctx = makeContext();
         await ctx.invoke({ projectId: "P", itemId: "I", scope: "replies" });
-        assert.equal(ctx.sendItemCalls.length, 1);
-        assert.equal(ctx.sendItemCalls[0].posts.length, 1);
-        assert.equal(ctx.sendItemCalls[0].posts[0].text, "field baru");
+        assert.equal(ctx.sendItemCalls.length, 2);
+        assert.equal(ctx.sendItemCalls[0].posts.length, 0);
+        assert.equal(ctx.sendItemCalls[1].posts.length, 1);
+        assert.equal(ctx.sendItemCalls[1].posts[0].text, "field baru");
       }
       // scope "field" langsung ke R-OLD -- no-op (posts kosong), gak resend field yang udah sent.
       {
@@ -1520,6 +1582,60 @@ async function test(name, fn) {
         assert.equal(ctx.sendItemCalls.length, 1);
         assert.equal(ctx.sendItemCalls[0].posts.length, 0);
       }
+    });
+    await test("send:quick scope \"replies\" (poin revisi, bug dilaporkan: merge >10 file misahin field \"Animatic\" jadi 2, salah satu gagal upload) — field yang gagal TETAP dicoba (gak ke-skip gara-gara field lain), field yang sukses TETAP di-lock walau field tetangganya gagal", async () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
+      const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
+      const sendItemCalls = [];
+      const markedSent = [];
+      let handler;
+      const context = {
+        activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
+        projects: {
+          getProject: () => ({
+            channel_id: "CA",
+            items: [{
+              id: "I", name: "item", artists: [],
+              // Simulasi merge >10 file: 2 reply kategori/judul SAMA ("Animatic"), field-1
+              // (11-20.mp4) sukses, field-2 (21-30.mp4) gagal upload.
+              replies: [
+                { id: "R-1", title: "Animatic", text_value: null, sent: false },
+                { id: "R-2", title: "Animatic", text_value: null, sent: false },
+              ],
+            }],
+          }),
+          addLog: () => {},
+          listItemReactions: () => [],
+          getArtistAssignModes: () => ({ mention: false, react: false }),
+          markReplySent: (id) => markedSent.push(id),
+        },
+        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {},
+        replyToPost: (reply) => ({ text: reply.title, files: [{ path: "/x", filename: `${reply.id}.mp4` }] }),
+        reconcileItemStatusState: async () => {},
+        slack: {
+          findThreadChannel: () => null,
+          resolveAttempt: () => {},
+          sendItem: async (args) => {
+            sendItemCalls.push(args);
+            const fileId = args.posts[0]?.files?.[0]?.filename;
+            if (fileId === "R-2.mp4") throw new Error("upload gagal (simulasi network)");
+            return { threadTs: "1.000", isNew: true };
+          },
+          addReaction: async () => {},
+          syncAssignMessage: async () => {},
+        },
+      };
+      vm.runInNewContext(quick, context);
+      await assert.rejects(handler({}, { projectId: "P", itemId: "I", scope: "replies" }), /upload gagal/);
+
+      // Root-ensure (posts kosong) + R-1 (sukses) + R-2 (gagal) — TIGA panggilan, R-2 TETAP
+      // dicoba walau urutannya SETELAH field yang independen (bukan ke-skip diam-diam).
+      assert.equal(sendItemCalls.length, 3);
+      assert.equal(sendItemCalls[1].posts[0].files[0].filename, "R-1.mp4");
+      assert.equal(sendItemCalls[2].posts[0].files[0].filename, "R-2.mp4");
+      // Cuma field yang BENERAN sukses (R-1) yang di-lock -- R-2 TETAP kebuka, bisa dicoba lagi
+      // lewat Instant Intake tanpa perlu "buka gembok" dulu.
+      assert.deepEqual(markedSent, ["R-1"]);
     });
     await test("quick-send scope \"artist\" pada item TANPA artis (poin revisi, bug dilaporkan) — TIDAK throw, placeholder tetap ke-post (mention) / no-op aman (react)", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
@@ -1787,7 +1903,7 @@ async function test(name, fn) {
       // item:changed didorong buat I1 & I2 (yang beneran berubah), TIDAK buat I3 (gagal/di-skip).
       assert.deepEqual(notifyPushes.map((p) => p.itemId).sort(), ["I1", "I2"]);
     });
-    await test("artistAssign:syncItem & slackPull:syncItem (poin revisi, Pull/Push scope per-item di Tab Input) — cuma proses SATU item, item lain di project TIDAK ikut kesentuh, throw jelas kalau item gak ketemu", async () => {
+    await test("item:pushRootName, artistAssign:syncItem & slackPull:syncItem — Push Item cuma rename root; Push penuh/Pull tetap scope satu item", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("slackSocket:clearToken",[\s\S]*?\n\}\);/)[0];
 
@@ -1864,7 +1980,23 @@ async function test(name, fn) {
       await handlers["artistAssign:syncItem"]({}, { projectId: "P", itemId: "I1", openAfter: false });
       assert.equal(openSlackCalls.length, 1); // tetap 1, gak nambah
 
+      // Overlay Push pada kolom Item adalah jalur khusus: nama root saja. Tidak boleh ikut
+      // reconcile artis/status/reaction seperti Push utama/kolom Artis/Status.
+      const beforeRootOnly = {
+        roots: rootSyncCalls.length,
+        reactions: addReactionCalls.length,
+        assignments: syncAssignCalls.length,
+        opened: openSlackCalls.length,
+      };
+      const rootOnlyResult = await handlers["item:pushRootName"]({}, { projectId: "P", itemId: "I1", openAfter: false });
+      assert.equal(rootOnlyResult.itemName, "Item 1");
+      assert.equal(rootSyncCalls.length, beforeRootOnly.roots + 1);
+      assert.equal(addReactionCalls.length, beforeRootOnly.reactions);
+      assert.equal(syncAssignCalls.length, beforeRootOnly.assignments);
+      assert.equal(openSlackCalls.length, beforeRootOnly.opened);
+
       await assert.rejects(handlers["artistAssign:syncItem"]({}, { projectId: "P", itemId: "I-GAK-ADA" }), /Item tidak ditemukan/);
+      await assert.rejects(handlers["item:pushRootName"]({}, { projectId: "P", itemId: "I-GAK-ADA" }), /Item tidak ditemukan/);
 
       // Pull scope item.
       const pullResult = await handlers["slackPull:syncItem"]({}, { projectId: "P", itemId: "I1" });
@@ -2827,16 +2959,20 @@ async function test(name, fn) {
       assert.equal(await admin.isAdminMember(flaky, "TOKEN"), true); // percobaan 2 (network pulih) -- BENERAN discan ulang, ketemu
       assert.equal(attempt, 2);
     });
-    await test("requireAdminMember (poin revisi, bug ditemukan lewat audit D08) — dipanggil di AWAL artistRealtimeAssign:set/slackSocket:setToken&clearToken/keywordAutomation:setEnabled&save&remove (verifikasi manual di source), fungsinya sendiri TOLAK non-admin-member, LOLOS admin-member", async () => {
+    await test("requireAdminMember (poin revisi, bug ditemukan lewat audit D08) — dipanggil di AWAL slackSocket:setToken&clearToken/keywordAutomation:setEnabled&save&remove (verifikasi manual di source), TAPI TIDAK di artistRealtimeAssign:set (poin revisi lanjutan, diminta user — toggle Realtime Sync dibuka buat SEMUA user, bukan admin-member doang), fungsi guard-nya sendiri TOLAK non-admin-member, LOLOS admin-member", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/async function requireAdminMember\(\)[\s\S]*?\n\}/)[0];
-      // Poin revisi (audit D08) — pastiin KEENAM handler yang seharusnya digate BENERAN manggil
+      // Poin revisi (audit D08) — pastiin KELIMA handler yang seharusnya digate BENERAN manggil
       // requireAdminMember() di baris pertama badan fungsinya, bukan cuma fungsi guard-nya doang
       // yang bener tapi lupa dipasang di salah satu handler.
-      for (const handlerName of ["artistRealtimeAssign:set", "slackSocket:setToken", "slackSocket:clearToken", "keywordAutomation:setEnabled", "keywordAutomation:save", "keywordAutomation:remove"]) {
+      for (const handlerName of ["slackSocket:setToken", "slackSocket:clearToken", "keywordAutomation:setEnabled", "keywordAutomation:save", "keywordAutomation:remove"]) {
         const handlerBlock = source.match(new RegExp(`handle\\("${handlerName.replace(":", "\\:")}",[\\s\\S]*?\\n\\}\\);`))[0];
         assert.ok(handlerBlock.includes("requireAdminMember()"), `${handlerName} harusnya manggil requireAdminMember()`);
       }
+      // artistRealtimeAssign:set SENGAJA TIDAK digate -- pastiin gak ada yang nge-reintroduce guard
+      // ini tanpa sadar (mis. copy-paste dari handler lain).
+      const realtimeSetBlock = source.match(/handle\("artistRealtimeAssign:set",[\s\S]*?\n\}\);/)[0];
+      assert.ok(!realtimeSetBlock.includes("requireAdminMember()"), "artistRealtimeAssign:set harusnya TIDAK digate admin lagi");
 
       let allowed = false;
       const context = {
@@ -2868,6 +3004,7 @@ async function test(name, fn) {
         currentToken: () => "MOCK",
         authStore: { loadToken: () => savedToken },
         adminAccess: load("electron/adminAccess.cjs", {}),
+        projects: { listCachedSlackUsers: () => [{ id: "U1", name: "Diyan" }] },
         slack: {
           listChannels: async () => [{ id: "C-ADM", name: "hb-adm", isPrivate: true }],
           createPrivateChannel: async () => { throw new Error("harusnya gak sampai bikin channel baru, udah ada"); },
@@ -2977,6 +3114,17 @@ async function test(name, fn) {
       projects.setProjectPhase(mp.id, "input");
       assert.throws(() => projects.mergeItems([one, two]), /Merge gak bisa dipakai lagi/);
       assert.equal(projects.getProject(mp.id).items.length, 2); // gagal -- gak ada yang kehapus
+    });
+    await test("merge koma: suffix angka diurutkan numerik dan prefix yang sama hanya ditulis sekali", () => {
+      const mp = projects.createProject({ name: "merge-comma-name", channelId: "CA", channelName: "test" });
+      const ids = ["BF44_010", "BF44_001", "BF44_005", "BF44_002"].map((name) => projects.addItem(mp.id, { name }));
+      const merged = projects.mergeItems(ids, ", ");
+      assert.equal(projects.getProject(mp.id).items.find((i) => i.id === merged.keepId).name, "BF44_001, 002, 005, 010");
+
+      const mixed = projects.createProject({ name: "merge-comma-mixed", channelId: "CA", channelName: "test" });
+      const mixedIds = ["BF44_010", "BG20_002"].map((name) => projects.addItem(mixed.id, { name }));
+      const mixedMerged = projects.mergeItems(mixedIds, ", ");
+      assert.equal(projects.getProject(mixed.id).items.find((i) => i.id === mixedMerged.keepId).name, "BF44_010, BG20_002");
     });
     await test("merge memecah reply gabungan yang lewat 10 file jadi reply baru (poin revisi)", () => {
       const mp = projects.createProject({ name: "merge-cap", channelId: "CA", channelName: "test" });

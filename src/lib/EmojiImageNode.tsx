@@ -6,7 +6,7 @@
 import { useEffect, useState, type JSX } from "react";
 import { DecoratorNode, type LexicalNode, type NodeKey, type SerializedLexicalNode, type Spread } from "lexical";
 import { useFileBlobUrl } from "./fileUrl";
-import { getCustomEmojiImagePath, subscribeEmojiPresets } from "./emojiPresetStore";
+import { getEmojiImageSource, subscribeEmojiCatalog } from "./emojiCatalog";
 
 export type SerializedEmojiImageNode = Spread<{ name: string }, SerializedLexicalNode>;
 
@@ -62,12 +62,14 @@ function EmojiImageComponent({ name }: { name: string }) {
   // Preset bisa berubah (ditambah/dihapus lewat EmojiPresetModal) SETELAH node ini kebentuk —
   // subscribe biar node yang lagi kelihatan ikut update tanpa perlu reload/reopen field.
   const [, forceTick] = useState(0);
-  useEffect(() => subscribeEmojiPresets(() => forceTick((v) => v + 1)), []);
+  useEffect(() => subscribeEmojiCatalog(() => forceTick((v) => v + 1)), []);
 
-  const imagePath = getCustomEmojiImagePath(name);
-  const url = useFileBlobUrl(imagePath || null);
+  const imageSource = getEmojiImageSource(name);
+  const remoteImage = imageSource?.startsWith("http") ? imageSource : undefined;
+  const localUrl = useFileBlobUrl(imageSource && !remoteImage ? imageSource : null);
+  const url = remoteImage || localUrl;
 
-  if (!imagePath) {
+  if (!imageSource) {
     // Preset custom-nya udah dihapus (atau cache belum sempat kemuat) — fallback teks polos,
     // biar gak keliatan "rusak".
     return <span>:{name}:</span>;

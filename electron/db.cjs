@@ -86,6 +86,25 @@ CREATE TABLE IF NOT EXISTS artist_groups (
   member_ids_json TEXT NOT NULL
 );
 
+-- Cache direktori Slack dipisah total dari preset/assignment artis. Profil disimpan per
+-- workspace; keanggotaan disimpan per workspace+channel dan cuma dipakai sebagai filter UI.
+CREATE TABLE IF NOT EXISTS slack_user_cache (
+  team_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  avatar TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (team_id, user_id)
+);
+
+CREATE TABLE IF NOT EXISTS slack_channel_member_cache (
+  team_id TEXT NOT NULL,
+  channel_id TEXT NOT NULL,
+  user_id TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY (team_id, channel_id, user_id)
+);
+
 -- Artis Preset (poin revisi) — GLOBAL buat seluruh app (pola sama kayak emoji_presets/
 -- hyperlink_presets), satu baris per Slack member_id (users.list). nickname = ganti tampilan
 -- nama di dropdown Artis (fallback ke nama Slack asli kalau NULL). code_name = shortcode custom
@@ -257,24 +276,6 @@ CREATE TABLE IF NOT EXISTS hyperlink_presets (
   url TEXT NOT NULL
 );
 
--- Preset Emoji (poin revisi) — global buat SELURUH app (bukan per-project, pola sama kayak
--- hyperlink_presets di atas). "unicode" = emoji unicode biasa (value = karakternya sendiri).
--- "custom" = ala custom emoji Slack (value = nama TANPA titik dua, image_path = PNG lokal buat
--- preview picker doang — dipilih jadi teks shortcode ":nama:" pas di-insert, BUKAN gambarnya,
--- gak divalidasi ke Slack asli sama sekali).
--- slack_shortcode (poin revisi: fitur Reaction) — nama emoji ala Slack TANPA titik dua, dibutuhin
--- buat manggil reactions.add (Slack API butuh "name", bukan karakter unicode/gambar). Unicode:
--- diambil dari field colons yang dikasih picker emoji-mart pas milih (contoh "grinning" buat 😀).
--- Custom: sama persis kayak value-nya sendiri (nama custom emoji-nya).
-CREATE TABLE IF NOT EXISTS emoji_presets (
-  id TEXT PRIMARY KEY,
-  type TEXT NOT NULL, -- 'unicode' | 'custom'
-  value TEXT NOT NULL,
-  image_path TEXT,
-  slack_shortcode TEXT,
-  sort_order INTEGER NOT NULL DEFAULT 0
-);
-
 -- Reaction per item (poin revisi) — awalnya PENDING, nunggu "Kirim ke Slack" biasa (urutan:
 -- pesan utama -> semua reply -> reaction). Beda dari reaction INSTAN (overlay hover pil item)
 -- yang fire-and-forget, gak pernah nyentuh tabel ini sama sekali.
@@ -351,6 +352,9 @@ if (!projectColumns.includes("phase")) db.exec(`ALTER TABLE projects ADD COLUMN 
 // rename item yang gak nyampe ke pesan root). NULL = belum pernah kekirim.
 const replyColumns = db.prepare(`PRAGMA table_info(replies)`).all().map((c) => c.name);
 if (!replyColumns.includes("sent_at")) db.exec(`ALTER TABLE replies ADD COLUMN sent_at TEXT`);
+// Identitas akun Slack yang benar-benar mengirim field. Field lama tetap NULL; getProject()
+// memberi fallback ke akun aktif supaya UI masih bisa menampilkan pengirim yang masuk akal.
+if (!replyColumns.includes("sent_by_user_id")) db.exec(`ALTER TABLE replies ADD COLUMN sent_by_user_id TEXT`);
 
 // threadPk DULU (rename-recreate buat PK lama), BARU cek kolom artist_sent/permalink — kalau
 // dibalik, rename-recreate di bawah bakal bikin ulang tabel threads TANPA 2 kolom itu (hardcoded
@@ -401,9 +405,6 @@ if (assignMsgPk.length === 1 && assignMsgPk[0] === "item_id") {
     COMMIT;
   `);
 }
-
-const emojiPresetColumns = db.prepare(`PRAGMA table_info(emoji_presets)`).all().map((c) => c.name);
-if (!emojiPresetColumns.includes("slack_shortcode")) db.exec(`ALTER TABLE emoji_presets ADD COLUMN slack_shortcode TEXT`);
 
 const seedBuiltinTemplate = db.prepare(
   `INSERT OR IGNORE INTO templates (id, name, is_builtin, fields_json) VALUES (?, ?, 1, ?)`

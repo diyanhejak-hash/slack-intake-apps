@@ -18,6 +18,12 @@ contextBridge.exposeInMainWorld("api", {
   slack: {
     listChannels: () => ipcRenderer.invoke("slack:listChannels"),
     listUsers: () => ipcRenderer.invoke("slack:listUsers"),
+    refreshUsers: () => ipcRenderer.invoke("slack:refreshUsers"),
+    onUsersUpdated: (cb) => {
+      const listener = (_e, users) => cb(users);
+      ipcRenderer.on("slack:usersUpdated", listener);
+      return () => ipcRenderer.removeListener("slack:usersUpdated", listener);
+    },
     createChannel: (payload) => ipcRenderer.invoke("slack:createChannel", payload),
     listCustomEmojis: () => ipcRenderer.invoke("slack:listCustomEmojis"),
     downloadEmojiImage: (url) => ipcRenderer.invoke("slack:downloadEmojiImage", url),
@@ -29,6 +35,8 @@ contextBridge.exposeInMainWorld("api", {
     create: (payload) => ipcRenderer.invoke("project:create", payload),
     list: () => ipcRenderer.invoke("project:list"),
     load: (id) => ipcRenderer.invoke("project:load", id),
+    listChannelMemberIds: (id) => ipcRenderer.invoke("project:listChannelMemberIds", id),
+    refreshChannelMembers: (id) => ipcRenderer.invoke("project:refreshChannelMembers", id),
     rename: (id, name) => ipcRenderer.invoke("project:rename", id, name),
     setPhase: (id, phase) => ipcRenderer.invoke("project:setPhase", id, phase),
     delete: (id) => ipcRenderer.invoke("project:delete", id),
@@ -39,6 +47,7 @@ contextBridge.exposeInMainWorld("api", {
     removeFile: (fileId) => ipcRenderer.invoke("project:removeFile", fileId),
   },
   item: {
+    pushRootName: (payload) => ipcRenderer.invoke("item:pushRootName", payload),
     addManual: (payload) => ipcRenderer.invoke("item:addManual", payload),
     update: (itemId, patch) => ipcRenderer.invoke("item:update", itemId, patch),
     remove: (itemId) => ipcRenderer.invoke("item:remove", itemId),
@@ -88,13 +97,6 @@ contextBridge.exposeInMainWorld("api", {
     list: () => ipcRenderer.invoke("hyperlink:list"),
     save: (payload) => ipcRenderer.invoke("hyperlink:save", payload),
     delete: (id) => ipcRenderer.invoke("hyperlink:delete", id),
-  },
-  emojiPreset: {
-    list: () => ipcRenderer.invoke("emojiPreset:list"),
-    addUnicode: (payload) => ipcRenderer.invoke("emojiPreset:addUnicode", payload),
-    addCustom: (payload) => ipcRenderer.invoke("emojiPreset:addCustom", payload),
-    remove: (id) => ipcRenderer.invoke("emojiPreset:remove", id),
-    pickImage: () => ipcRenderer.invoke("emojiPreset:pickImage"),
   },
   artistPreset: {
     list: () => ipcRenderer.invoke("artistPreset:list"),

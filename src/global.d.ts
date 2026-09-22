@@ -57,6 +57,8 @@ export interface Reply {
    * diedit lagi atau dikunci read-only (isi Slack gak ikut ke-update kalau field diedit
    * setelah terkirim — lihat diskusi rename item yang gak nyampe ke pesan root). */
   sent: boolean;
+  /** Slack member ID yang melakukan pengiriman terakhir. */
+  sent_by_user_id?: string | null;
 }
 
 /** Multi-artist per item (poin revisi) — ganti artist_id/artist_name tunggal yang lama. */
@@ -161,18 +163,6 @@ export interface HyperlinkPreset {
   url: string;
 }
 
-export interface EmojiPreset {
-  id: string;
-  type: "unicode" | "custom";
-  /** unicode: karakter emoji-nya sendiri. custom: nama TANPA titik dua (dipakai jadi ":value:" pas insert). */
-  value: string;
-  /** cuma ada buat type "custom" — path PNG lokal, buat preview picker doang. */
-  image_path: string | null;
-  /** nama Slack TANPA titik dua (poin revisi fitur Reaction) — dibutuhin buat reactions.add. */
-  slack_shortcode: string | null;
-  sort_order: number;
-}
-
 export interface ItemReaction {
   id: string;
   item_id: string;
@@ -258,6 +248,8 @@ declare global {
       slack: {
         listChannels: () => Promise<SlackChannel[]>;
         listUsers: () => Promise<SlackUser[]>;
+        refreshUsers: () => Promise<{ refreshed: boolean; users: SlackUser[] }>;
+        onUsersUpdated: (cb: (users: SlackUser[]) => void) => () => void;
         createChannel: (payload: { name: string; memberIds: string[] }) => Promise<{ channelId: string; name: string }>;
         /** Custom emoji ASLI dari workspace (poin revisi, Preset Artis "ambil dari Slack") —
          * nama valid + URL gambar (alias di-resolve 1 level). Butuh scope `emoji:read` (login
@@ -274,6 +266,8 @@ declare global {
         create: (payload: { name: string; channelId: string; channelName: string }) => Promise<Project>;
         list: () => Promise<ProjectSummary[]>;
         load: (id: string) => Promise<Project>;
+        listChannelMemberIds: (id: string) => Promise<string[]>;
+        refreshChannelMembers: (id: string) => Promise<{ refreshed: boolean; memberIds: string[] }>;
         rename: (id: string, name: string) => Promise<void>;
         setPhase: (id: string, phase: "setup" | "input") => Promise<void>;
         delete: (id: string) => Promise<void>;
@@ -284,6 +278,7 @@ declare global {
         removeFile: (fileId: string) => Promise<void>;
       };
       item: {
+        pushRootName: (payload: { projectId: string; itemId: string; openAfter?: boolean }) => Promise<{ itemName: string }>;
         addManual: (payload: { projectId: string; name: string; artistId?: string; artistName?: string }) => Promise<string>;
         update: (itemId: string, patch: Record<string, unknown>) => Promise<void>;
         remove: (itemId: string) => Promise<void>;
@@ -339,14 +334,6 @@ declare global {
         list: () => Promise<HyperlinkPreset[]>;
         save: (payload: { id?: string; label: string; url: string }) => Promise<string>;
         delete: (id: string) => Promise<void>;
-      };
-      emojiPreset: {
-        list: () => Promise<EmojiPreset[]>;
-        addUnicode: (payload: { char: string; shortcode?: string }) => Promise<string | null>;
-        addCustom: (payload: { name: string; filePath: string }) => Promise<string>;
-        remove: (id: string) => Promise<void>;
-        /** Dialog pilih file PNG lokal — null kalau dibatalkan. */
-        pickImage: () => Promise<string | null>;
       };
       /** Artis Preset (poin revisi) — nickname/code_name/PNG per Slack member. `sourcePath`
        * (poin revisi) sekarang diisi dari image_path preset emoji custom yang dipilih lewat

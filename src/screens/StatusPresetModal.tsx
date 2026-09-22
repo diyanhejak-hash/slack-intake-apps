@@ -5,9 +5,10 @@
 // bukan digabung ke modal Preset Artis.
 import { useEffect, useRef, useState } from "react";
 import { X, Trash2, Plus, Grip } from "lucide-react";
-import type { EmojiPreset, StatusPreset } from "../global";
+import type { StatusPreset } from "../global";
 import { useFileBlobUrl } from "../lib/fileUrl";
-import { CombinedEmojiPickerButton } from "./EmojiPicker";
+import type { EmojiChoice } from "../lib/emojiCatalog";
+import { UniversalEmojiPicker } from "./EmojiPicker";
 
 export default function StatusPresetModal({ onClose }: { onClose: () => void }) {
   const [presets, setPresets] = useState<StatusPreset[]>([]);
@@ -165,39 +166,22 @@ function StatusPresetEditRow({ preset, onDone, onCancel }: { preset: StatusPrese
   const [busy, setBusy] = useState(false);
   const previewUrl = useFileBlobUrl(pickedPath || preset?.image_path);
 
-  function pickPreset(emojiPreset: EmojiPreset) {
-    if (!emojiPreset.slack_shortcode) return;
-    setCodeName(emojiPreset.slack_shortcode);
-    if (emojiPreset.type === "custom") {
-      setPickedPath(emojiPreset.image_path);
-      setPickedUnicode(null);
-    } else {
+  async function pickEmoji(emoji: EmojiChoice) {
+    setCodeName(emoji.shortcode);
+    if (emoji.type === "unicode") {
       setPickedPath(null);
-      setPickedUnicode(emojiPreset.value);
+      setPickedUnicode(emoji.value);
+      return;
     }
-  }
-
-  async function pickFromSlack(emojiName: string, url: string) {
     setBusy(true);
     try {
-      const tempPath = await window.api.slack.downloadEmojiImage(url);
-      setCodeName(emojiName);
-      setPickedPath(tempPath);
+      setPickedPath(await window.api.slack.downloadEmojiImage(emoji.imageUrl || ""));
       setPickedUnicode(null);
     } catch (err) {
-      alert(err instanceof Error ? err.message : "Gagal ambil gambar emoji dari Slack.");
+      alert(err instanceof Error ? err.message : "Gagal mengambil gambar emoji dari Slack.");
     } finally {
       setBusy(false);
     }
-  }
-
-  // Poin revisi (tombol "+" — Semua Emoji) — pilih langsung dari picker unicode lengkap, gak
-  // perlu bikin preset dulu. `colons` dari emoji-mart bentuknya ":nama:" (ada titik dua), code_name
-  // kita simpen TANPA titik dua (sama pola kayak semua shortcode lain di app ini).
-  function pickUnicode(native: string, colons: string) {
-    setCodeName(colons.replace(/^:|:$/g, ""));
-    setPickedPath(null);
-    setPickedUnicode(native);
   }
 
   async function save() {
@@ -231,7 +215,7 @@ function StatusPresetEditRow({ preset, onDone, onCancel }: { preset: StatusPrese
           — pilih emoji —
         </span>
       )}
-      <CombinedEmojiPickerButton onPickPreset={pickPreset} onPickSlack={pickFromSlack} onPickUnicode={pickUnicode} disabled={busy} />
+      <UniversalEmojiPicker onPick={pickEmoji} disabled={busy} title="Pilih emoji status" />
       <button className="btn btn-primary" disabled={busy || !name.trim() || !codeName} onClick={save} style={{ padding: "4px 8px", fontSize: 11, flexShrink: 0 }}>
         Simpan
       </button>

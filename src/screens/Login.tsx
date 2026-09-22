@@ -2,6 +2,7 @@ import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { AuthStatus } from "../global";
 import logo from "../assets/HB5_new.png";
+import ThemeToggle from "./ThemeToggle";
 
 export default function Login({ onLoggedIn }: { onLoggedIn: (a: AuthStatus) => void }) {
   const [busy, setBusy] = useState(false);
@@ -21,7 +22,8 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (a: AuthStatus) => v
   }
 
   return (
-    <div style={{ display: "flex", height: "100%", alignItems: "center", justifyContent: "center" }}>
+    <div style={{ position: "relative", display: "flex", height: "100%", alignItems: "center", justifyContent: "center" }}>
+      <div style={{ position: "absolute", top: 14, right: 16 }}><ThemeToggle /></div>
       <div className="card" style={{ padding: 32, width: 340, textAlign: "center" }}>
         <img src={logo} alt="Slack Intake Apps" style={{ width: 48, height: 48, margin: "0 auto 16px", display: "block" }} />
         <h1 style={{ marginBottom: 6 }}>Slack Intake Apps</h1>

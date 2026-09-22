@@ -40,6 +40,7 @@ app.on('browser-window-created', (_event, win) => {
       assert.equal(state.status.loggedIn, false);
       assert.equal(state.denied, true);
       assert.match(state.body, /Slack/);
+      assert.equal(win.getTitle(), `Slack Intake Apps v${app.getVersion()}`);
       require('../electron/auth-store.cjs').loadToken = () => ({ userId: 'SMOKE', teamId: 'SMOKE', team: 'Test', accessToken: 'FAKE' });
       const fixture = path.join(temp, 'fixture.txt');
       fs.writeFileSync(fixture, 'fixture');

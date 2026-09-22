@@ -1,242 +1,158 @@
-// Tombol Emoji + popover — SHARED, dipakai di toolbar field (Drawer.tsx/ReplyRow) DAN di Prefix
-// modal Generate Item (MainTable.tsx). Poin revisi: popover ini SEKARANG cuma nampilin preset
-// (bukan picker lengkap lagi) — daftar lengkapnya pindah ke dalam modal "Kelola preset" (buka
-// lewat baris teks di bawah popover, ATAU dari menu Edit).
-import { Suspense, useEffect, useState } from "react";
-import { Smile, FileText, Loader2, X, Plus, ArrowLeft } from "lucide-react";
-import type { EmojiPreset } from "../global";
-import { useFileBlobUrl } from "../lib/fileUrl";
-import { LazyEmojiPicker, type PickedEmoji } from "../lib/emojiPicker";
-import EmojiPresetModal from "./EmojiPresetModal";
+import { useDeferredValue, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { Loader2, Search, Smile, Star, X } from "lucide-react";
+import { loadSlackEmoji, loadUnicodeEmoji, type EmojiCategory, type EmojiChoice } from "../lib/emojiCatalog";
 
-export default function EmojiPicker({ onPick }: { onPick: (text: string, preset: EmojiPreset) => void }) {
-  const [open, setOpen] = useState(false);
-  const [presets, setPresets] = useState<EmojiPreset[]>([]);
-  const [showManage, setShowManage] = useState(false);
+const FAVORITES_KEY = "slack-intake.emoji-favorites.v1";
+const COLS = 9;
+const ROW_HEIGHT = 42;
+const VIEW_HEIGHT = 294;
 
-  function refresh() {
-    window.api.emojiPreset.list().then(setPresets);
+function readFavorites(): string[] {
+  try {
+    const value = JSON.parse(localStorage.getItem(FAVORITES_KEY) || "[]");
+    return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
   }
+}
+
+function VirtualEmojiGrid({ emojis, favorites, onToggleFavorite, onPick }: {
+  emojis: EmojiChoice[];
+  favorites: Set<string>;
+  onToggleFavorite: (emoji: EmojiChoice) => void;
+  onPick: (emoji: EmojiChoice) => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+  const [scrollTop, setScrollTop] = useState(0);
+  const rows = Math.ceil(emojis.length / COLS);
+  const startRow = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - 2);
+  const endRow = Math.min(rows, Math.ceil((scrollTop + VIEW_HEIGHT) / ROW_HEIGHT) + 2);
+  const visible = emojis.slice(startRow * COLS, endRow * COLS);
+
   useEffect(() => {
-    if (open) refresh();
-  }, [open]);
+    if (ref.current) ref.current.scrollTop = 0;
+    setScrollTop(0);
+  }, [emojis]);
 
-  function pick(preset: EmojiPreset) {
-    onPick(preset.type === "unicode" ? preset.value : `:${preset.value}:`, preset);
-    setOpen(false);
-  }
+  if (!emojis.length) return <div className="emoji-empty">Emoji tidak ditemukan.</div>;
 
   return (
-    <div style={{ position: "relative" }}>
-      {/* onMouseDown preventDefault di tombol toggle DAN wrapper popover — biar fokus/selection di
-          text area gak ilang duluan sebelum onPick jalan (bug lama: emoji gak ke-insert). */}
-      <button className="icon-btn" title="Emoji" onMouseDown={(e) => e.preventDefault()} onClick={() => setOpen((v) => !v)}>
-        <Smile size={13} />
-      </button>
-      {open && (
-        <div className="card" style={{ position: "absolute", bottom: 34, left: 0, padding: 8, width: 200, zIndex: 10 }} onMouseDown={(e) => e.preventDefault()}>
-          {presets.length === 0 ? (
-            <div className="caption" style={{ padding: "10px 4px", textAlign: "center" }}>
-              Belum ada preset emoji.
+    <div ref={ref} className="emoji-grid-scroll scrollbar-thin" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+      <div className="emoji-grid" style={{ paddingTop: startRow * ROW_HEIGHT, paddingBottom: Math.max(0, (rows - endRow) * ROW_HEIGHT) }}>
+        {visible.map((emoji) => {
+          const favorite = favorites.has(emoji.key);
+          const tooltip = emoji.type === "custom" ? `:${emoji.shortcode}:` : `${emoji.name} · :${emoji.shortcode}:`;
+          return (
+            <div className="emoji-cell" key={emoji.key}>
+              <button className="emoji-tile" title={tooltip} aria-label={`Pilih ${tooltip}`} onMouseDown={(event) => event.preventDefault()} onClick={() => onPick(emoji)}>
+                {emoji.imageUrl ? <img src={emoji.imageUrl} alt="" loading="lazy" /> : <span>{emoji.value}</span>}
+              </button>
+              <button
+                className={`emoji-favorite ${favorite ? "active" : ""}`}
+                title={favorite ? "Hapus dari favorit" : "Tambah ke favorit"}
+                aria-label={favorite ? `Hapus ${tooltip} dari favorit` : `Tambahkan ${tooltip} ke favorit`}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={(event) => { event.stopPropagation(); onToggleFavorite(emoji); }}
+              >
+                <Star size={10} fill={favorite ? "currentColor" : "none"} />
+              </button>
             </div>
-          ) : (
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 4 }}>
-              {presets.map((p) => (
-                <EmojiPresetButton key={p.id} preset={p} onClick={() => pick(p)} />
-              ))}
-            </div>
-          )}
-          <button
-            className="btn"
-            style={{ width: "100%", marginTop: 6, justifyContent: "center", fontSize: 11, padding: "4px 0" }}
-            onClick={() => setShowManage(true)}
-          >
-            Kelola preset...
-          </button>
-        </div>
-      )}
-      {showManage && (
-        <EmojiPresetModal
-          onClose={() => {
-            setShowManage(false);
-            refresh();
-          }}
-        />
-      )}
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-// Diexport — dipake ulang di picker gabungan preset+workspace Slack (ArtistPresetModal.tsx),
-// biar gak duplikat render tombol grid preset.
-export function EmojiPresetButton({ preset, onClick }: { preset: EmojiPreset; onClick: () => void }) {
-  const url = useFileBlobUrl(preset.type === "custom" ? preset.image_path : null);
-  return (
-    <button
-      onClick={onClick}
-      title={preset.type === "custom" ? `:${preset.value}:` : undefined}
-      style={{ border: "none", background: "none", fontSize: 16, cursor: "pointer", padding: 4, display: "flex", alignItems: "center", justifyContent: "center", width: 26, height: 26 }}
-    >
-      {preset.type === "unicode" ? preset.value : url ? <img src={url} alt="" style={{ width: 18, height: 18, objectFit: "contain" }} /> : <FileText size={14} className="muted" />}
-    </button>
-  );
-}
-
-// Picker GABUNGAN (poin revisi) — preset lokal (grid, sama kayak popover "Add React"), custom
-// emoji workspace Slack (list nama+thumbnail, cari), DAN (poin revisi lanjutan) tombol "+" buka
-// picker emoji STANDAR lengkap (emoji-mart, ribuan emoji unicode, sama yang dipakai EmojiPresetModal)
-// — bisa langsung pilih tanpa perlu bikin preset dulu. Dipakai di modal Preset Artis DAN Kelola
-// Status. Emoji workspace di-load 1x pas dialog dibuka (bukan disalin permanen ke preset lokal —
-// "gabung" di sini artinya gabung TAMPILAN/pilihan doang).
-//
-// Poin revisi (bug dilaporkan): dulu render sebagai popover position:absolute nempel di tombol —
-// kalau tombolnya ada di dalam container yang overflow:auto (kayak list Kelola Status/Preset
-// Artis), popover-nya ke-CLIP sama scroll area itu, user harus scroll buat liat isinya. Sekarang
-// dialog TERSENDIRI (position:fixed, di tengah layar, sama pola kayak modal lain di app ini) —
-// gak mungkin ke-clip lagi, gak peduli tombolnya ada di mana pun.
-export function CombinedEmojiPickerButton({
-  onPickPreset,
-  onPickSlack,
-  onPickUnicode,
-  disabled,
-}: {
-  onPickPreset: (preset: EmojiPreset) => void;
-  onPickSlack: (name: string, url: string) => void;
-  /** Pilih langsung dari picker emoji standar lengkap (tombol "+") — native = karakternya
-   * sendiri, colons = shortcode Slack (":smile:", DENGAN titik dua) buat reactions.add. */
-  onPickUnicode?: (native: string, colons: string) => void;
+export function UniversalEmojiPicker({ onPick, disabled, title = "Emoji", triggerClassName = "icon-btn", triggerStyle, triggerContent, headerExtra }: {
+  onPick: (emoji: EmojiChoice) => void | Promise<void>;
   disabled?: boolean;
+  title?: string;
+  triggerClassName?: string;
+  triggerStyle?: CSSProperties;
+  triggerContent?: ReactNode;
+  headerExtra?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
-  const [showFull, setShowFull] = useState(false);
-  const [presets, setPresets] = useState<EmojiPreset[]>([]);
-  const [slackEmojis, setSlackEmojis] = useState<{ name: string; url: string }[] | null>(null);
-  const [loadingSlack, setLoadingSlack] = useState(false);
+  const [unicodeCategories, setUnicodeCategories] = useState<EmojiCategory[]>([]);
+  const [slackEmoji, setSlackEmoji] = useState<EmojiChoice[]>([]);
   const [slackError, setSlackError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
-  const [showManage, setShowManage] = useState(false);
+  const deferredQuery = useDeferredValue(query.trim().toLowerCase());
+  const [favorites, setFavorites] = useState(readFavorites);
+  const [activeCategory, setActiveCategory] = useState(() => readFavorites().length ? "favorites" : "slack");
 
-  function refreshPresets() {
-    window.api.emojiPreset.list().then(setPresets);
+  useEffect(() => {
+    if (!open || unicodeCategories.length) return;
+    setLoading(true);
+    Promise.allSettled([loadUnicodeEmoji(), loadSlackEmoji()]).then(([unicodeResult, slackResult]) => {
+      if (unicodeResult.status === "fulfilled") setUnicodeCategories(unicodeResult.value);
+      if (slackResult.status === "fulfilled") setSlackEmoji(slackResult.value);
+      else setSlackError(slackResult.reason instanceof Error ? slackResult.reason.message : "Gagal memuat emoji Slack.");
+    }).finally(() => setLoading(false));
+  }, [open, unicodeCategories.length]);
+
+  const allEmoji = useMemo(() => [...slackEmoji, ...unicodeCategories.flatMap((category) => category.emojis)], [slackEmoji, unicodeCategories]);
+  const favoriteSet = useMemo(() => new Set(favorites), [favorites]);
+  const favoriteEmoji = useMemo(() => favorites.map((key) => allEmoji.find((emoji) => emoji.key === key)).filter((emoji): emoji is EmojiChoice => Boolean(emoji)), [favorites, allEmoji]);
+  const categories = useMemo(() => [
+    ...(favoriteEmoji.length ? [{ id: "favorites", label: "Favorit", icon: "★", emojis: favoriteEmoji }] : []),
+    { id: "slack", label: "Emoji Slack", icon: "S", emojis: slackEmoji },
+    ...unicodeCategories,
+  ], [favoriteEmoji, slackEmoji, unicodeCategories]);
+  const shownEmoji = useMemo(() => deferredQuery
+    ? allEmoji.filter((emoji) => emoji.keywords.includes(deferredQuery) || emoji.shortcode.includes(deferredQuery))
+    : categories.find((category) => category.id === activeCategory)?.emojis || [], [activeCategory, allEmoji, categories, deferredQuery]);
+  const shownLabel = deferredQuery ? `Hasil pencarian · ${shownEmoji.length}` : categories.find((category) => category.id === activeCategory)?.label || "Emoji";
+
+  useEffect(() => {
+    if (allEmoji.length && activeCategory === "favorites" && !favoriteEmoji.length) setActiveCategory("slack");
+  }, [activeCategory, allEmoji.length, favoriteEmoji.length]);
+
+  function toggleFavorite(emoji: EmojiChoice) {
+    setFavorites((current) => {
+      const next = current.includes(emoji.key) ? current.filter((key) => key !== emoji.key) : [emoji.key, ...current];
+      localStorage.setItem(FAVORITES_KEY, JSON.stringify(next));
+      return next;
+    });
   }
 
-  function toggle() {
-    const next = !open;
-    setOpen(next);
-    if (next) {
-      setShowFull(false);
-      refreshPresets();
-      if (slackEmojis === null && !loadingSlack) {
-        setLoadingSlack(true);
-        setSlackError(null);
-        window.api.slack.listCustomEmojis()
-          .then(setSlackEmojis)
-          .catch((err) => setSlackError(err instanceof Error ? err.message : "Gagal ambil daftar emoji dari Slack."))
-          .finally(() => setLoadingSlack(false));
-      }
-    }
-  }
-
-  function pickFull(emoji: PickedEmoji) {
-    onPickUnicode?.(emoji.native, emoji.colons);
+  async function pick(emoji: EmojiChoice) {
+    await onPick(emoji);
     setOpen(false);
   }
 
-  const q = query.trim().toLowerCase();
-  const filteredPresets = presets.filter((p) => !q || p.value.toLowerCase().includes(q) || (p.slack_shortcode || "").includes(q));
-  const filteredSlack = (slackEmojis || []).filter((e) => e.name.includes(q));
-  const nothingFound = !loadingSlack && filteredPresets.length === 0 && filteredSlack.length === 0;
-
   return (
-    <div style={{ position: "relative", display: "inline-block" }}>
-      <button className="icon-btn" title="Pilih emoji (preset + workspace Slack)" disabled={disabled} onMouseDown={(e) => e.preventDefault()} onClick={toggle}>
-        <Smile size={13} />
+    <>
+      <button className={triggerClassName} style={triggerStyle} title={title} disabled={disabled} onMouseDown={(event) => event.preventDefault()} onClick={(event) => { event.stopPropagation(); setOpen(true); }}>
+        {triggerContent || <Smile size={13} />}
       </button>
       {open && (
-        <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 70, display: "flex", alignItems: "center", justifyContent: "center" }} onClick={() => setOpen(false)}>
-          <div className="card" style={{ padding: 8, width: 280, maxHeight: "70vh", display: "flex", flexDirection: "column", background: "var(--surface)" }} onClick={(e) => e.stopPropagation()}>
-            {showFull ? (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                  <button className="icon-btn" title="Kembali" onClick={() => setShowFull(false)}>
-                    <ArrowLeft size={13} />
-                  </button>
-                  <span className="label" style={{ marginBottom: 0 }}>Semua Emoji</span>
-                  <button className="icon-btn" style={{ marginLeft: "auto" }} onClick={() => setOpen(false)}>
-                    <X size={13} />
-                  </button>
-                </div>
-                <div style={{ flex: 1, overflow: "auto" }} className="scrollbar-thin">
-                  <Suspense
-                    fallback={
-                      <div className="caption" style={{ textAlign: "center", padding: 20 }}>
-                        Memuat emoji…
-                      </div>
-                    }
-                  >
-                    <LazyEmojiPicker onPick={pickFull} />
-                  </Suspense>
-                </div>
-              </>
-            ) : (
-              <>
-                <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
-                  <input
-                    autoFocus
-                    placeholder="Cari emoji…"
-                    value={query}
-                    onChange={(e) => setQuery(e.target.value)}
-                    style={{ flex: 1, minWidth: 0 }}
-                  />
-                  {onPickUnicode && (
-                    <button className="icon-btn" title="Semua emoji standar (bukan cuma preset)" onClick={() => setShowFull(true)}>
-                      <Plus size={13} />
-                    </button>
-                  )}
-                  <button className="icon-btn" onClick={() => setOpen(false)}>
-                    <X size={13} />
-                  </button>
-                </div>
-                <div style={{ flex: 1, overflow: "auto" }} className="scrollbar-thin">
-                  {filteredPresets.length > 0 && (
-                    <div style={{ display: "grid", gridTemplateColumns: "repeat(6, 1fr)", gap: 4, marginBottom: 6 }}>
-                      {filteredPresets.map((p) => (
-                        <EmojiPresetButton key={p.id} preset={p} onClick={() => { onPickPreset(p); setOpen(false); }} />
-                      ))}
-                    </div>
-                  )}
-                  {loadingSlack && (
-                    <div className="caption" style={{ textAlign: "center", padding: 10, display: "flex", alignItems: "center", justifyContent: "center", gap: 4 }}>
-                      <Loader2 size={13} className="spin" /> Memuat emoji workspace…
-                    </div>
-                  )}
-                  {slackError && <div className="caption" style={{ color: "var(--danger)" }}>{slackError}</div>}
-                  {!loadingSlack && filteredSlack.map((e) => (
-                    <button
-                      key={`slack-${e.name}`}
-                      className="btn"
-                      style={{ width: "100%", justifyContent: "flex-start", alignItems: "center", gap: 6, border: "none", fontSize: 12 }}
-                      onClick={() => { onPickSlack(e.name, e.url); setOpen(false); }}
-                    >
-                      <img src={e.url} alt="" width={16} height={16} style={{ objectFit: "contain", flexShrink: 0 }} />
-                      :{e.name}:
-                    </button>
-                  ))}
-                  {nothingFound && <div className="caption" style={{ padding: "6px 0", textAlign: "center" }}>Gak ketemu.</div>}
-                </div>
-                <button
-                  className="btn"
-                  style={{ width: "100%", marginTop: 6, justifyContent: "center", fontSize: 11, padding: "4px 0", flexShrink: 0 }}
-                  onClick={() => { setOpen(false); setShowManage(true); }}
-                >
-                  Kelola preset...
+        <div className="emoji-dialog-backdrop" role="dialog" aria-modal="true" aria-label="Pilih emoji" onMouseDown={() => setOpen(false)}>
+          <div className="emoji-dialog" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="emoji-dialog-header">
+              <div className="emoji-search"><Search size={14} /><input autoFocus value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Cari emoji atau shortcode…" /></div>
+              <button className="icon-btn" title="Tutup" aria-label="Tutup pemilih emoji" onClick={() => setOpen(false)}><X size={15} /></button>
+            </div>
+            {headerExtra}
+            <div className="emoji-category-bar scrollbar-thin" aria-label="Kategori emoji">
+              {categories.map((category) => (
+                <button key={category.id} className={activeCategory === category.id && !deferredQuery ? "active" : ""} title={category.label} aria-label={category.label} onClick={() => { setQuery(""); setActiveCategory(category.id); }}>
+                  {category.id === "slack" ? <span className="emoji-slack-mark">S</span> : category.icon}
                 </button>
-              </>
-            )}
+              ))}
+            </div>
+            <div className="emoji-section-title"><span>{shownLabel}</span>{slackError && <span className="emoji-load-error" title={slackError}>Slack tidak tersedia</span>}</div>
+            {loading && !allEmoji.length ? <div className="emoji-loading"><Loader2 size={18} className="spin" /> Memuat emoji…</div> : <VirtualEmojiGrid emojis={shownEmoji} favorites={favoriteSet} onToggleFavorite={toggleFavorite} onPick={pick} />}
+            <div className="emoji-dialog-footer">Klik emoji untuk memilih · arahkan mouse untuk melihat shortcode</div>
           </div>
         </div>
       )}
-      {showManage && <EmojiPresetModal onClose={() => { setShowManage(false); refreshPresets(); }} />}
-    </div>
+    </>
   );
+}
+
+export default function EmojiPicker({ onPick }: { onPick: (emoji: EmojiChoice) => void | Promise<void> }) {
+  return <UniversalEmojiPicker onPick={onPick} />;
 }

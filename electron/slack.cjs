@@ -224,6 +224,15 @@ async function withRetry(fn, maxAttempts = 4) {
   }
 }
 
+function assertUploadedFileCount(result, expected) {
+  const responses = Array.isArray(result?.files) ? result.files : [];
+  const nested = responses.filter((entry) => Array.isArray(entry?.files));
+  const confirmed = nested.length
+    ? nested.reduce((total, entry) => total + entry.files.length, 0)
+    : responses.filter((entry) => entry?.id).length;
+  if (confirmed !== expected) throw new Error(`Slack mengonfirmasi ${confirmed} dari ${expected} file.`);
+}
+
 // wrapSlackError (poin revisi, bug ditemukan lewat audit D15) — sendItem/sendReplies/
 // syncAssignMessage nge-bungkus error asli Slack SDK jadi `new Error(pesan-gabungan)` biar
 // pesannya lebih actionable buat user ("Hasil kirim perlu diperiksa..."), TAPI itu ngebuang
@@ -490,10 +499,12 @@ async function sendItem({ token, channelId, itemName, threadKey, artistIds = [],
         await request("post", async () => {
           const streams = post.files.map((f) => fs.createReadStream(f.path));
           try {
-            return await c.files.uploadV2({
+            const result = await c.files.uploadV2({
               channel_id: channelId, thread_ts: threadTs, initial_comment: post.text || undefined,
               file_uploads: post.files.map((f, i) => ({ file: streams[i], filename: f.filename })),
             });
+            assertUploadedFileCount(result, post.files.length);
+            return result;
           } finally { streams.forEach((stream) => stream.destroy()); }
         });
       } else if (post.text) {
@@ -652,10 +663,12 @@ async function sendReplies({ token, channelId, threadKey, threadTs, posts = [] }
         await request(async () => {
           const streams = post.files.map((f) => fs.createReadStream(f.path));
           try {
-            return await c.files.uploadV2({
+            const result = await c.files.uploadV2({
               channel_id: channelId, thread_ts: threadTs, initial_comment: post.text || undefined,
               file_uploads: post.files.map((f, i) => ({ file: streams[i], filename: f.filename })),
             });
+            assertUploadedFileCount(result, post.files.length);
+            return result;
           } finally { streams.forEach((stream) => stream.destroy()); }
         });
       } else if (post.text) {

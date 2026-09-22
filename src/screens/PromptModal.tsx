@@ -38,7 +38,7 @@ export default function PromptModal({
       <div className="card" style={{ padding: 16, width: 360, background: "var(--surface)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
           <h3>{title}</h3>
-          <button className="icon-btn" onClick={onCancel}>
+          <button className="icon-btn" onClick={onCancel} aria-label="Tutup" title="Tutup">
             <X size={13} />
           </button>
         </div>

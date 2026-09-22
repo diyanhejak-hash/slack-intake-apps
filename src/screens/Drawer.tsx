@@ -26,13 +26,12 @@ import {
   ChevronDown,
   ChevronUp,
   Lock,
-  Unlock,
+  CircleUserRound,
 } from "lucide-react";
-import type { ArtistPreset, ItemFile, ProjectItem, Reply, SlackUser, StatusPreset, Template, TemplateField } from "../global";
+import type { ArtistPreset, HyperlinkPreset, ItemFile, ProjectItem, Reply, SlackUser, StatusPreset, Template, TemplateField } from "../global";
 import { useFileBlobUrl, fileKind } from "../lib/fileUrl";
 const PdfViewer = lazy(() => import("./PdfViewer"));
 const VideoPlayer = lazy(() => import("./VideoPlayer"));
-import PromptModal from "./PromptModal";
 import RichTextEditor, { type ActiveFormats, type RichTextEditorHandle } from "./RichTextEditor";
 import CapturePoolStrip from "./CapturePoolStrip";
 import QuickSendButton from "./QuickSendButton";
@@ -83,6 +82,7 @@ export default function Drawer({
   canPrev,
   canNext,
   users,
+  senderUsers,
   artistPresets,
   onAddArtist,
   onRemoveArtist,
@@ -110,6 +110,8 @@ export default function Drawer({
   canPrev: boolean;
   canNext: boolean;
   users: SlackUser[];
+  /** Daftar penuh, tidak terpotong filter grup artis, untuk label pengirim field. */
+  senderUsers: SlackUser[];
   /** Poin revisi — buat nampilin icon react/emoji preset tiap artis di ArtistPicker. */
   artistPresets: ArtistPreset[];
   /** Multi-artist (poin revisi) — assign/lepas 1 artis, dipanggil tiap toggle klik ArtistPicker. */
@@ -137,6 +139,7 @@ export default function Drawer({
 }) {
   const isMaximized = useIsWindowMaximized();
   const [templates, setTemplates] = useState<Template[]>([]);
+  const [hyperlinkPresets, setHyperlinkPresets] = useState<HyperlinkPreset[]>([]);
   const [selectedReplyIds, setSelectedReplyIds] = useState<Set<string>>(new Set());
   const [showTemplateBuilder, setShowTemplateBuilder] = useState(false);
   // Section Field/Reply collapsible (poin revisi, diminta user) — preferensi tampilan doang,
@@ -176,6 +179,7 @@ export default function Drawer({
 
   useEffect(() => {
     window.api.template.list().then(setTemplates);
+    window.api.hyperlink.list().then(setHyperlinkPresets);
   }, []);
 
   // Drawer gak lagi di-`key`-in per item.id di MainTable (poin revisi: "Statis file display
@@ -432,6 +436,9 @@ export default function Drawer({
                     reply={reply}
                     itemId={item.id}
                     projectId={projectId}
+                    users={senderUsers}
+                    hyperlinkPresets={hyperlinkPresets}
+                    onRefreshHyperlinks={() => window.api.hyperlink.list().then(setHyperlinkPresets)}
                     selected={selectedReplyIds.has(reply.id)}
                     onToggleSelected={() =>
                       setSelectedReplyIds((prev) => {
@@ -707,6 +714,9 @@ function ReplyRow({
   reply,
   itemId,
   projectId,
+  users,
+  hyperlinkPresets,
+  onRefreshHyperlinks,
   selected,
   onToggleSelected,
   onChanged,
@@ -720,6 +730,9 @@ function ReplyRow({
   reply: Reply;
   itemId: string;
   projectId: string;
+  users: SlackUser[];
+  hyperlinkPresets: HyperlinkPreset[];
+  onRefreshHyperlinks: () => Promise<void>;
   selected: boolean;
   onToggleSelected: () => void;
   onChanged: () => void;
@@ -734,7 +747,11 @@ function ReplyRow({
   instantIntakeEnabled: boolean;
 }) {
   const editorRef = useRef<RichTextEditorHandle | null>(null);
-  const [showLinkPrompt, setShowLinkPrompt] = useState(false);
+  const linkMenuRef = useRef<HTMLDivElement | null>(null);
+  const [showLinkMenu, setShowLinkMenu] = useState(false);
+  const [selectedLinkPreset, setSelectedLinkPreset] = useState("");
+  const [linkName, setLinkName] = useState("");
+  const [linkUrl, setLinkUrl] = useState("");
   // Highlight tombol toolbar yang lagi aktif di posisi kursor — port dari Command Builder.
   const [activeFormats, setActiveFormats] = useState<ActiveFormats>({ bold: false, italic: false, bulletList: false, numberList: false });
   const [fieldDragOver, setFieldDragOver] = useState(false);
@@ -743,11 +760,29 @@ function ReplyRow({
   // kalau langsung pakai boolean bakal kedip-kedip. Cuma beneran "leave" (balik ke 0) yang
   // matiin highlight.
   const dragCounter = useRef(0);
+
+  useEffect(() => {
+    if (!showLinkMenu) return;
+    function closeOnOutsideClick(event: MouseEvent) {
+      if (linkMenuRef.current && !linkMenuRef.current.contains(event.target as Node)) setShowLinkMenu(false);
+    }
+    function closeOnEscape(event: KeyboardEvent) {
+      if (event.key === "Escape") setShowLinkMenu(false);
+    }
+    document.addEventListener("mousedown", closeOnOutsideClick);
+    document.addEventListener("keydown", closeOnEscape);
+    return () => {
+      document.removeEventListener("mousedown", closeOnOutsideClick);
+      document.removeEventListener("keydown", closeOnEscape);
+    };
+  }, [showLinkMenu]);
   // Read-only lock (poin revisi, diminta user) — field yang UDAH kekirim ke Slack gak bisa
   // diedit lagi (isi Slack gak ikut ke-update kalau diedit belakangan), tapi thumbnail file
   // TETAP tampil & bisa di-klik buat preview. Backend (projects.cjs assertReplyEditable) udah
   // nolak panggilan edit apa pun buat reply ini juga -- ini cuma nyembunyiin UI-nya.
   const locked = reply.sent;
+  const sender = users.find((user) => user.id === reply.sent_by_user_id);
+  const senderName = sender?.name || reply.sent_by_user_id || "Akun Slack aktif";
 
   async function attachFiles() {
     if (locked) return;
@@ -826,7 +861,7 @@ function ReplyRow({
 
   return (
     <div
-      className={`card reply-bubble ${selected ? "selected" : ""} ${fieldDragOver ? "field-drag-over" : ""}`}
+      className={`card reply-bubble ${locked ? "sent" : ""} ${selected ? "selected" : ""} ${fieldDragOver ? "field-drag-over" : ""}`}
       style={{ padding: 10 }}
       onDragEnter={(e) => {
         e.preventDefault();
@@ -842,57 +877,73 @@ function ReplyRow({
     >
       {/* b2 revisi — urutan header: Drag, Judul, Checkbox, Broadcast, Trash (1 baris). */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-        <div
-          draggable
-          onDragStart={onDragStart}
-          title="Drag buat ubah urutan"
-          style={{
-            width: 20,
-            height: 20,
-            borderRadius: 5,
-            color: "var(--text-muted)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            flexShrink: 0,
-            cursor: "grab",
-          }}
-        >
-          <Grip size={14} />
-        </div>
+        {locked ? (
+          <div title={`Dikirim oleh ${senderName}`} style={{ display: "inline-flex", alignItems: "center", gap: 5, color: "var(--success)", flexShrink: 0, maxWidth: 150 }}>
+            <CircleUserRound size={18} />
+            <span style={{ fontSize: 11, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{senderName}</span>
+          </div>
+        ) : (
+          <div
+            draggable
+            onDragStart={onDragStart}
+            title="Drag buat ubah urutan"
+            style={{
+              width: 20,
+              height: 20,
+              borderRadius: 5,
+              color: "var(--text-muted)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              flexShrink: 0,
+              cursor: "grab",
+            }}
+          >
+            <Grip size={14} />
+          </div>
+        )}
+        {locked ? (
+          <div style={{ flex: 1 }} />
+        ) : (
         <input
           // key ikut reply.title: sama kayak fix di MainTable — defaultValue gak nangkep
           // perubahan dari luar (mis. konsolidasi reply pas Merge) tanpa remount paksa.
           key={`${reply.id}:${reply.title}`}
           defaultValue={reply.title}
-          disabled={locked}
+          aria-label="Judul field"
           onBlur={(e) => e.target.value !== reply.title && window.api.reply.update(reply.id, { title: e.target.value }).then(onChanged)}
           style={{ flex: 1, border: "none", background: "transparent", fontWeight: 600, padding: "2px 0" }}
         />
+        )}
         <div className="reply-actions" style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {/* Satu ikon switch lock/open (poin revisi, diminta user) — gabungan indikator + tombol
+              buka gembok yang tadinya 2 elemen terpisah. Tampil Lock (terkirim) selama locked,
+              klik langsung buka gembok -- begitu kebuka, blok `{locked && ...}` ini otomatis
+              ilang (state balik jadi field biasa/editable), gak perlu icon "Open" nempel terus. */}
           {locked && (
+            <button
+              className="icon-btn"
+              title="Udah kekirim ke Slack — klik buat buka gembok (pakai HANYA kalau field ini SEBENARNYA gagal terkirim, mis. field lain di kiriman yang sama gagal, biar bisa dikirim ulang lewat Instant Intake)"
+              onClick={() => {
+                if (confirm("Buka gembok field ini? Cuma lakuin ini kalau field ini BENERAN belum/gagal terkirim ke Slack — kalau ternyata udah kekirim, kirim ulang bisa bikin pesan dobel di Slack.")) {
+                  window.api.reply.unlock(reply.id).then(onChanged);
+                }
+              }}
+            >
+              <Lock size={12} />
+            </button>
+          )}
+          <input type="checkbox" checked={selected} onChange={onToggleSelected} aria-label={`Pilih field ${reply.title || "tanpa judul"}`} />
+          {!locked && (
             <>
-              <span title="Udah kekirim ke Slack — gak bisa diedit lagi" style={{ display: "inline-flex", color: "var(--text-muted)" }}><Lock size={12} /></span>
-              <button
-                className="icon-btn"
-                title="Buka gembok — pakai HANYA kalau field ini SEBENARNYA gagal terkirim (mis. field lain di kiriman yang sama gagal), biar bisa dikirim ulang lewat Instant Intake"
-                onClick={() => {
-                  if (confirm("Buka gembok field ini? Cuma lakuin ini kalau field ini BENERAN belum/gagal terkirim ke Slack — kalau ternyata udah kekirim, kirim ulang bisa bikin pesan dobel di Slack.")) {
-                    window.api.reply.unlock(reply.id).then(onChanged);
-                  }
-                }}
-              >
-                <Unlock size={12} />
+              <button className="icon-btn" title="Broadcast ke semua item kategori sama" onClick={() => window.api.reply.broadcast(reply.id, projectId).then(onChanged)}>
+                <Radio size={13} />
+              </button>
+              <button className="icon-btn" title="Hapus field ini" onClick={() => window.api.reply.remove(reply.id).then(onChanged)}>
+                <Trash2 size={13} />
               </button>
             </>
           )}
-          <input type="checkbox" checked={selected} onChange={onToggleSelected} />
-          <button className="icon-btn" title="Broadcast ke semua item kategori sama" onClick={() => window.api.reply.broadcast(reply.id, projectId).then(onChanged)}>
-            <Radio size={13} />
-          </button>
-          <button className="icon-btn" title="Hapus field ini" onClick={() => window.api.reply.remove(reply.id).then(onChanged)}>
-            <Trash2 size={13} />
-          </button>
         </div>
       </div>
 
@@ -903,8 +954,9 @@ function ReplyRow({
           sekali, diganti teks read-only biasa (thumbnail filenya tetap di AttachedFilesRow di
           bawah, di luar blok ini). */}
       {locked ? (
-        <div style={{ padding: "4px 0", whiteSpace: "pre-wrap", color: "var(--text-muted)", fontSize: 13 }}>
-          {reply.text_value || <em>(kosong)</em>}
+        <div style={{ padding: "4px 0", whiteSpace: "pre-wrap", color: "var(--text)", fontSize: 13 }}>
+          {reply.title && <div style={{ fontWeight: 700, marginBottom: reply.text_value ? 8 : 0 }}>{reply.title}</div>}
+          {reply.text_value || null}
         </div>
       ) : (
       <div className="field-editor-wrap" style={{ position: "relative" }} onPasteCapture={onFieldPasteCapture}>
@@ -930,9 +982,108 @@ function ReplyRow({
           >
             <Italic size={13} />
           </button>
-          <button className="icon-btn" title="Link" onMouseDown={(e) => e.preventDefault()} onClick={() => setShowLinkPrompt(true)}>
-            <LinkIcon size={13} />
-          </button>
+          <div ref={linkMenuRef} style={{ position: "relative", display: "inline-flex" }}>
+            <button
+              className="icon-btn"
+              title="Link"
+              aria-haspopup="dialog"
+              aria-expanded={showLinkMenu}
+              onMouseDown={(e) => e.preventDefault()}
+              onClick={() => {
+                const next = !showLinkMenu;
+                setShowLinkMenu(next);
+                if (next) {
+                  const selectedText = editorRef.current?.getSelectedText().trim() || "";
+                  setSelectedLinkPreset("");
+                  setLinkName(selectedText);
+                  setLinkUrl("");
+                  void onRefreshHyperlinks().catch(() => undefined);
+                }
+              }}
+              style={showLinkMenu ? { background: "var(--accent-soft)", color: "var(--accent)" } : {}}
+            >
+              <LinkIcon size={13} />
+            </button>
+            {showLinkMenu && (
+              <div
+                className="card"
+                role="dialog"
+                aria-label="Sisipkan hyperlink"
+                style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, zIndex: 50, width: 290, padding: 10, background: "var(--surface)" }}
+              >
+                <select
+                  className="input"
+                  aria-label="Preset hyperlink"
+                  value={selectedLinkPreset}
+                  onChange={(event) => {
+                    const presetId = event.target.value;
+                    const selectedText = editorRef.current?.getSelectedText().trim() || "";
+                    setSelectedLinkPreset(presetId);
+                    if (!presetId) {
+                      setLinkName(selectedText);
+                      setLinkUrl("");
+                      return;
+                    }
+                    const preset = hyperlinkPresets.find((item) => item.id === presetId);
+                    if (preset) {
+                      setLinkName(selectedText || preset.label);
+                      setLinkUrl(preset.url);
+                    }
+                  }}
+                  style={{ width: "100%" }}
+                >
+                  <option value="">URL manual</option>
+                  {hyperlinkPresets.map((preset) => (
+                    <option key={preset.id} value={preset.id}>
+                      {preset.label}
+                    </option>
+                  ))}
+                </select>
+
+                {!selectedLinkPreset && (
+                  <input
+                    className="input"
+                    type="url"
+                    aria-label="URL hyperlink"
+                    placeholder="https://..."
+                    value={linkUrl}
+                    onChange={(event) => setLinkUrl(event.target.value)}
+                    autoFocus
+                    style={{ width: "100%", marginTop: 8 }}
+                  />
+                )}
+
+                <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                  <input
+                    className="input"
+                    aria-label="Nama hyperlink"
+                    placeholder="Nama"
+                    value={linkName}
+                    onChange={(event) => setLinkName(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" || !linkUrl.trim()) return;
+                      event.preventDefault();
+                      editorRef.current?.insertLink(linkUrl.trim(), linkName.trim() || undefined);
+                      setShowLinkMenu(false);
+                    }}
+                    style={{ flex: 1, minWidth: 0 }}
+                  />
+                  <button
+                    className="btn btn-primary"
+                    disabled={!linkUrl.trim()}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => {
+                      editorRef.current?.insertLink(linkUrl.trim(), linkName.trim() || undefined);
+                      setShowLinkMenu(false);
+                    }}
+                    style={{ whiteSpace: "nowrap" }}
+                  >
+                    Sisipkan Link
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
           <button
             className="icon-btn"
             title="Bullet list"
@@ -951,14 +1102,10 @@ function ReplyRow({
           >
             <ListOrdered size={13} />
           </button>
-          <EmojiPicker
-            onPick={(text, preset) => {
-              // Custom emoji (poin revisi) — insert node gambar inline, BUKAN teks ":nama:" polos.
-              // Unicode tetap teks biasa (karakternya sendiri udah tampil sebagai emoji).
-              if (preset.type === "custom") editorRef.current?.insertEmojiImage(preset.value);
-              else editorRef.current?.insertText(text);
-            }}
-          />
+          <EmojiPicker onPick={(emoji) => {
+            if (emoji.type === "custom") editorRef.current?.insertEmojiImage(emoji.shortcode);
+            else editorRef.current?.insertText(emoji.value);
+          }} />
           <button className="icon-btn" title="Tambah file" onMouseDown={(e) => e.preventDefault()} onClick={attachFiles}>
             <Paperclip size={13} />
           </button>
@@ -1004,19 +1151,6 @@ function ReplyRow({
 
       <AttachedFilesRow files={reply.files} locked={locked} onRemove={(fileId) => window.api.reply.removeFile(fileId).then(onChanged)} onSelect={(fileId) => onSelectFile(reply.id, fileId)} />
 
-      {showLinkPrompt && (
-        <PromptModal
-          title="Sisipkan Link"
-          label="URL link"
-          placeholder="https://..."
-          submitLabel="Sisipkan"
-          onSubmit={(url) => {
-            setShowLinkPrompt(false);
-            editorRef.current?.insertLink(url);
-          }}
-          onCancel={() => setShowLinkPrompt(false)}
-        />
-      )}
     </div>
   );
 }
@@ -1447,4 +1581,3 @@ function CapturePreviewModal({
     </div>
   );
 }
-

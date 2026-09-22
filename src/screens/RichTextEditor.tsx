@@ -15,7 +15,7 @@ import { LexicalErrorBoundary } from "@lexical/react/LexicalErrorBoundary";
 import { $isListNode, ListItemNode, ListNode, INSERT_UNORDERED_LIST_COMMAND, INSERT_ORDERED_LIST_COMMAND } from "@lexical/list";
 import { LinkNode, $createLinkNode } from "@lexical/link";
 import { $convertFromMarkdownString, $convertToMarkdownString } from "@lexical/markdown";
-import { $getSelection, $isRangeSelection, $setSelection, $createTextNode, FORMAT_TEXT_COMMAND, type LexicalEditor, type RangeSelection } from "lexical";
+import { $getRoot, $getSelection, $isRangeSelection, $setSelection, $createTextNode, FORMAT_TEXT_COMMAND, type LexicalEditor, type RangeSelection } from "lexical";
 import { SLACK_TRANSFORMERS } from "../lib/slackMarkdown";
 import { $createEmojiImageNode, EmojiImageNode } from "../lib/EmojiImageNode";
 
@@ -44,6 +44,8 @@ export interface RichTextEditorHandle {
   /** Baca isi editor saat ini sebagai string Slack mrkdwn — buat submit aktif (mis. composer
    * pas Enter), beda dari onBlurValue yang cuma jalan pas blur. */
   getMarkdown: () => string;
+  /** Teks yang sedang diblok, termasuk seleksi terakhir saat fokus pindah ke toolbar/popover. */
+  getSelectedText: () => string;
   /** Poin revisi: icon centang "selesai edit" di dalam field — alternatif klik-di-luar buat commit
    * perubahan. Blur DOM root-nya aja (bukan reimplement logic commit) — native onBlur yang udah
    * ada (handleBlur) yang jalanin convert+onBlurValue, sama persis kayak klik area luar. */
@@ -156,6 +158,13 @@ const RichTextEditor = forwardRef<
             $setSelection(lastSelectionRef.current);
             selection = $getSelection();
           }
+          // Link dari preset juga harus bisa dimasukkan saat editor belum pernah difokuskan
+          // dan tidak ada teks yang diblok. Dalam kondisi itu belum ada selection yang bisa
+          // dipulihkan, jadi buat posisi sisip di akhir Field.
+          if (!$isRangeSelection(selection)) {
+            $getRoot().selectEnd();
+            selection = $getSelection();
+          }
           if (!$isRangeSelection(selection)) return;
           const text = label || selection.getTextContent() || url;
           const linkNode = $createLinkNode(url);
@@ -186,6 +195,17 @@ const RichTextEditor = forwardRef<
           markdown = $convertToMarkdownString(SLACK_TRANSFORMERS, undefined, true);
         });
         return markdown;
+      },
+      getSelectedText() {
+        const editor = editorRef.current;
+        if (!editor) return "";
+        let text = "";
+        editor.getEditorState().read(() => {
+          const selection = $getSelection();
+          if ($isRangeSelection(selection)) text = selection.getTextContent();
+          else if (lastSelectionRef.current) text = lastSelectionRef.current.getTextContent();
+        });
+        return text;
       },
       commitAndBlur() {
         editorRef.current?.getRootElement()?.blur();

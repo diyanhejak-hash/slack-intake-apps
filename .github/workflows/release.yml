@@ -88,13 +88,13 @@ jobs:
             release/*.AppImage
           if-no-files-found: ignore
 
-  # Jalan SEKALI abis semua platform di atas kelar (always() -- TETAP jalan walau salah satu
-  # platform gagal, publish installer platform yang SUKSES aja, sama kayak perilaku lama).
+  # Jalan SEKALI hanya kalau SEMUA build/check platform sukses. Rilis resmi tidak boleh terbit
+  # parsial karena satu platform yang gagal bisa menandakan regresi lintas-platform.
   # Cuma jalan pas tag push -- workflow_dispatch manual TETAP cuma nyimpen artifact biasa (tab
   # Actions), gak bikin Release beneran, biar gak numpuk Release buat percobaan/tes.
   release:
     needs: build
-    if: ${{ always() && startsWith(github.ref, 'refs/tags/') }}
+    if: ${{ success() && startsWith(github.ref, 'refs/tags/') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write

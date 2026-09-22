@@ -1,7 +1,7 @@
 # Panduan Project — Slack Intake Apps
 
 > Dokumen ini adalah ringkasan menyeluruh: apa aplikasi ini, konsep dasarnya, apa yang sudah
-> dan belum dikerjakan, plus panduan install/build. Ditulis 2026-09-20, versi app `0.3.1`.
+> dan belum dikerjakan, plus panduan install/build. Diperbarui 2026-09-22, versi app `0.3.7`.
 > Untuk detail teknis mendalam per fitur lihat [rancangan-desain.md](rancangan-desain.md)
 > (log desain) dan [CARA-TES-BEDAH-COMMAND-BUILDER.md](CARA-TES-BEDAH-COMMAND-BUILDER.md)
 > (checklist tes manual per fitur, sangat panjang/detail).
@@ -251,9 +251,10 @@ Sudah ada pipeline CI (`.github/workflows/release.yml`) yang otomatis build **Wi
 macOS sekaligus** begitu tag versi baru di-push (macOS gak bisa dibuild dari mesin Windows lokal
 — ini satu-satunya jalur dapat installer Mac):
 
-```bash
-git tag v0.3.2
-git push origin v0.3.2
+```powershell
+$version = (Get-Content package.json | ConvertFrom-Json).version
+git tag "v$version"
+git push origin "v$version"
 ```
 
 Pipeline menjalankan `npm run check` (sama seperti lokal) lalu publish installer sebagai GitHub

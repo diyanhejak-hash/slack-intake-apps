@@ -9,7 +9,6 @@ import PromptModal from "./PromptModal";
 import SendRecovery from "./SendRecovery";
 import ChannelPicker from "./ChannelPicker";
 import QuickSendButton from "./QuickSendButton";
-import EmojiPresetModal from "./EmojiPresetModal";
 import ArtistPresetModal from "./ArtistPresetModal";
 import StatusPresetModal from "./StatusPresetModal";
 import KeywordAutomationModal from "./KeywordAutomationModal";
@@ -18,7 +17,7 @@ import ArtistPicker from "./ArtistPicker";
 import EmojiPicker from "./EmojiPicker";
 import ToastHost from "./ToastHost";
 import { showToast } from "../lib/toast";
-import { refreshEmojiPresetCache } from "../lib/emojiPresetStore";
+import { refreshEmojiCatalogCache } from "../lib/emojiCatalog";
 import { hoverDelayHandlers } from "../lib/hoverDelay";
 import slackButtonImg from "../assets/SlackButton.png";
 
@@ -28,6 +27,7 @@ interface UndoCommand {
 }
 
 const PALETTE = ["#2F6FEB", "#F59E0B", "#16A34A", "#DC2626", "#7C3AED", "#0EA5E9", "#DB2777", "#65A30D"];
+const CHANNEL_MEMBERS_GROUP_ID = "__channel_members__";
 
 // Label progress per-fase (poin revisi) — send:start sekarang kirim per-fase lintas semua item
 // (bukan per-item lagi), jadi "1/10" restart tiap ganti fase; label ini biar jelas itu fase baru.
@@ -45,15 +45,17 @@ export default function MainTable({
   onOpenProject,
 }: {
   projectId: string;
-  /** Sistem Admin/Member (poin revisi, diminta user) — gate toggle Realtime Sync (SyncControls)
-   * & menu "Otomasi Kata Kunci..." (MenuBar), default hidden buat user biasa. Pull/Push (manual,
-   * Web API, gak lewat Socket Mode/event) TETAP kepake semua orang, gak digate ini. */
+  /** Sistem Admin/Member (poin revisi, diminta user) — gate menu "Otomasi Kata Kunci..." (MenuBar)
+   * doang, default hidden buat user biasa. Toggle Realtime Sync (SyncControls, poin revisi
+   * lanjutan) UDAH gak digate lagi -- kebuka semua user. Pull/Push (manual, Web API, gak lewat
+   * Socket Mode/event) dari dulu emang gak digate. */
   isAdminMember: boolean;
   onBackToStartMenu: () => void;
   onOpenProject: (id: string) => void;
 }) {
   const [project, setProject] = useState<Project | null>(null);
   const [users, setUsers] = useState<SlackUser[]>([]);
+  const [channelMemberIds, setChannelMemberIds] = useState<string[]>([]);
   const [groups, setGroups] = useState<ArtistGroup[]>([]);
   const [artistPresets, setArtistPresets] = useState<ArtistPreset[]>([]);
   const [showArtistPresetManager, setShowArtistPresetManager] = useState(false);
@@ -145,7 +147,6 @@ export default function MainTable({
   const [showBatchFile, setShowBatchFile] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [showHyperlinkManager, setShowHyperlinkManager] = useState(false);
-  const [showEmojiPresetManager, setShowEmojiPresetManager] = useState(false);
   const [showSaveAs, setShowSaveAs] = useState(false);
   const [showTemplateAll, setShowTemplateAll] = useState(false);
   const [openMenu, setOpenMenu] = useState<MenuName | null>(null);
@@ -219,7 +220,8 @@ export default function MainTable({
     // Poin revisi (bug dilaporkan: gagal fetch listUsers nongolin alert() native jelek, "seakan
     // nge-block input") — timeout/gagal koneksi Slack (light call, 60s, lihat slack.cjs) TOAST
     // doang, gak boleh nge-crash ke alert() blocking cuma gara-gara dropdown Artis kosong.
-    window.api.slack.listUsers().then(setUsers).catch((err) => showToast(err instanceof Error ? err.message : "Gagal ambil daftar user Slack.", "error"));
+    window.api.slack.listUsers().then(setUsers);
+    const offUsersUpdated = window.api.slack.onUsersUpdated(setUsers);
     window.api.artistGroup.list().then(setGroups);
     window.api.artistPreset.list().then(setArtistPresets);
     window.api.statusPreset.list().then(setStatusPresets);
@@ -228,7 +230,7 @@ export default function MainTable({
     // Cache preset custom emoji (poin revisi) — di-load sedini mungkin biar pas Tab Reply
     // dibuka, EmojiImageNode udah bisa langsung parse ":nama:" tersimpan jadi gambar (bukan
     // nunggu field-nya sendiri yang fetch).
-    refreshEmojiPresetCache();
+    refreshEmojiCatalogCache();
     const offProgress = window.api.send.onProgress((data) => { if (data.projectId === projectId) { setProgress(data); setSending(true); } });
     const offDone = window.api.send.onDone(({ results, projectId: completedProject }) => {
       if (completedProject !== projectId) return;
@@ -250,9 +252,23 @@ export default function MainTable({
       offProgress();
       offDone();
       offItemChanged();
+      offUsersUpdated();
       void window.api.project.releaseUndo(projectId).catch(() => undefined);
     };
   }, [projectId]);
+
+  useEffect(() => {
+    if (!project?.channel_id) return;
+    // Membership channel hanya filter tampilan: baca cache dulu, lalu refresh di background.
+    let cancelled = false;
+    (async () => {
+      const cached = await window.api.project.listChannelMemberIds(projectId);
+      if (!cancelled) setChannelMemberIds(cached);
+      const result = await window.api.project.refreshChannelMembers(projectId);
+      if (!cancelled) setChannelMemberIds(result.memberIds);
+    })().catch(() => undefined);
+    return () => { cancelled = true; };
+  }, [projectId, project?.channel_id]);
 
   function pushUndo(cmd: UndoCommand) {
     undoStack.current.push(cmd);
@@ -299,7 +315,7 @@ export default function MainTable({
       // (defense in depth, guard querySelector di atas jadi valid lagi buat keduanya juga).
       if (e.defaultPrevented || document.querySelector('[aria-modal="true"]') ||
         showGenerate || showWorkload || showHelp || showPreview || showBatchFile ||
-        showLog || showHyperlinkManager || showEmojiPresetManager || showArtistPresetManager ||
+        showLog || showHyperlinkManager || showArtistPresetManager ||
         showStatusPresetManager || showKeywordAutomation || showSaveAs || showTemplateAll || openMenu || bulkPasteCol) return;
       const active = document.activeElement as HTMLElement | null;
       const tag = (active?.tagName || "").toLowerCase();
@@ -396,7 +412,9 @@ export default function MainTable({
   // ditampilkan pakai nickname preset kalau ada, fallback nama Slack asli kalau belum. Cuma
   // ganti TAMPILAN (u.name) — u.id tetap Slack member_id asli, mention/lookup lain gak kepengaruh.
   const visibleUsers = useMemo(() => {
-    const base = !activeGroupId ? users : (() => {
+    const base = activeGroupId === CHANNEL_MEMBERS_GROUP_ID
+      ? users.filter((u) => channelMemberIds.includes(u.id))
+      : !activeGroupId ? users : (() => {
       const g = groups.find((g) => g.id === activeGroupId);
       return g ? users.filter((u) => g.memberIds.includes(u.id)) : users;
     })();
@@ -404,7 +422,7 @@ export default function MainTable({
       const nickname = presetByMember.get(u.id)?.nickname;
       return nickname ? { ...u, name: nickname } : u;
     });
-  }, [users, groups, activeGroupId, presetByMember]);
+  }, [users, groups, activeGroupId, channelMemberIds, presetByMember]);
 
   const workload = useMemo(() => {
     if (!project) return [];
@@ -726,7 +744,10 @@ export default function MainTable({
       const item = project.items.find((i) => i.id === id);
       // openAfter=false -- overlay KOLOM bisa nge-Push BANYAK item sekaligus, jangan buka tab
       // Slack per item (beda dari overlay per-row/menu-bar Push yang cuma 1 target).
-      if (item) pushItem(item, false).catch((err) => showToast(err instanceof Error ? err.message : `Gagal push "${item.name}".`, "error"));
+      if (item) {
+        const operation = scope === "item" ? pushItemName(item, false) : pushItem(item, false);
+        operation.catch((err) => showToast(err instanceof Error ? err.message : `Gagal push "${item.name}".`, "error"));
+      }
     }
     // doSend cuma kenal scope "item"/"artist"/"replies" -- "status" efeknya SAMA persis kayak
     // "item" di send:start (status SELALU ikut disinkron di Fase 2 apa pun scope-nya), jadi
@@ -818,8 +839,12 @@ export default function MainTable({
       setReactionTick((v) => v + 1);
     });
   }
-  function quickSendOrPush(item: ProjectItem, scope: "item" | "artist") {
-    return item.has_thread ? pushItem(item) : quickSend(item.id, scope);
+  function pushItemName(item: ProjectItem, openAfter = true) {
+    return window.api.item.pushRootName({ projectId, itemId: item.id, openAfter }).then(refresh);
+  }
+  function quickSendOrPush(item: ProjectItem, scope: "item" | "artist" | "status") {
+    if (item.has_thread) return scope === "item" ? pushItemName(item) : pushItem(item);
+    return quickSend(item.id, scope === "status" ? "item" : scope);
   }
 
   async function handleSetPhase(phase: "setup" | "input") {
@@ -898,19 +923,28 @@ export default function MainTable({
             ))}
           </div>
         </div>
-        {/* Poin revisi (diminta user) — ganti notif toast pas toggle Realtime Sync jadi pill
-            status PERSISTEN (bukan sekejap), rata kanan section nama project. Ada SELAMA
-            toggle-nya ON, ilang begitu di-OFF-in (bukan animasi masuk/keluar, murni tampil/gak). */}
-        {realtimeAssignEnabled && (
-          <span
-            style={{
-              display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 999,
-              background: "var(--success)", color: "#fff", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
-            }}
-          >
-            Slack Realtime Sync Active
-          </span>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          {/* Keterangan channel terhubung (poin revisi, diminta user) — cuma teks read-only,
+              muncul pas tahap Input doang (Setup belum tentu channel-nya final/relevan). */}
+          {project.phase === "input" && (
+            <span className="caption" style={{ whiteSpace: "nowrap" }}>
+              # {project.channel_name}
+            </span>
+          )}
+          {/* Poin revisi (diminta user) — ganti notif toast pas toggle Realtime Sync jadi pill
+              status PERSISTEN (bukan sekejap), rata kanan section nama project. Ada SELAMA
+              toggle-nya ON, ilang begitu di-OFF-in (bukan animasi masuk/keluar, murni tampil/gak). */}
+          {realtimeAssignEnabled && (
+            <span
+              style={{
+                display: "inline-flex", alignItems: "center", gap: 5, padding: "3px 10px", borderRadius: 999,
+                background: "var(--success)", color: "#fff", fontSize: 11, fontWeight: 600, whiteSpace: "nowrap",
+              }}
+            >
+              Slack Realtime Sync Active
+            </span>
+          )}
+        </div>
       </div>
 
       <MenuBar
@@ -927,7 +961,6 @@ export default function MainTable({
         onToggleLog={() => setShowLog((v) => !v)}
         onGroupEditor={() => setShowArtistPresetManager(true)}
         onHyperlinkManager={() => setShowHyperlinkManager(true)}
-        onEmojiPresetManager={() => setShowEmojiPresetManager(true)}
         onArtistPresetManager={() => setShowArtistPresetManager(true)}
         onHelp={() => setShowHelp(true)}
         instantIntakeEnabled={instantIntakeEnabled}
@@ -995,7 +1028,7 @@ export default function MainTable({
                 sinkron), digantikan Pull/Push/Toggle yang direposisi ke sini (dulu di MenuBar,
                 lihat Chrome.tsx). */}
             {project.phase === "input" ? (
-              <div style={{ marginLeft: "auto" }}>
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 9 }}>
                 <SyncControls
                   realtimeAssignEnabled={realtimeAssignEnabled}
                   onToggleRealtimeAssign={toggleRealtimeAssign}
@@ -1007,21 +1040,22 @@ export default function MainTable({
                   pulling={pulling}
                   onPullFromSlack={activeTab === "table" ? handlePullFromSlack : handlePullActiveItem}
                   scopeLabel={activeTab === "table" ? "semua item project ini" : activeItem ? `item "${activeItem.name}"` : "item aktif"}
-                  isAdminMember={isAdminMember}
                 />
               </div>
             ) : (
               /* "Kirim ke Slack" (poin revisi) — dipindah dari MenuBar ke sini, tetap rata kanan,
                  bareng buat Tab Table & Tab Reply (baris ini di luar switch activeTab). */
-              <button
+              <div style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 9 }}>
+                <button
                 className="btn"
                 onClick={() => setShowPreview(true)}
                 disabled={project.items.length === 0 || sending}
                 title={`Preview & Kirim (${effectiveItemIds.length}${selected.size === 0 && project.items.length > 0 ? " — semua" : ""})`}
-                style={{ marginLeft: "auto", marginBottom: 4, background: "#fff", borderRadius: 999, padding: "1px 6px", border: "1px solid var(--border-strong)" }}
+                style={{ marginBottom: 4, background: "var(--surface)", borderRadius: 999, padding: "1px 6px", border: "1px solid var(--border-strong)" }}
               >
                 <img src={slackButtonImg} alt="Kirim ke Slack" style={{ height: 22, display: "block" }} />
-              </button>
+                </button>
+              </div>
             )}
           </div>
 
@@ -1040,6 +1074,7 @@ export default function MainTable({
                   canPrev={activeIndex > 0}
                   canNext={activeIndex >= 0 && activeIndex < project.items.length - 1}
                   users={visibleUsers}
+                  senderUsers={users}
                   artistPresets={artistPresets}
                   onAddArtist={handleAddArtist}
                   onRemoveArtist={handleRemoveArtist}
@@ -1134,6 +1169,8 @@ export default function MainTable({
               </thead>
               <tbody>
                 {project.items.map((item, index) => {
+                  const unsentReplyCount = item.replies.filter((reply) => !reply.sent).length;
+                  const allRepliesSent = item.replies.length > 0 && unsentReplyCount === 0;
                   return (
                     <tr key={item.id}>
                       <td
@@ -1158,7 +1195,7 @@ export default function MainTable({
                           <span title="Lagi sinkron ke Slack…" style={{ display: "inline-flex" }}><Loader2 size={12} className="spin" /></span>
                         ) : index + 1}
                       </td>
-                      <td style={{ position: "relative" }} {...cellHoverHandlers("item", item.id)}>
+                      <td className={item.has_thread ? "item-sent-cell" : ""} style={{ position: "relative" }} {...cellHoverHandlers("item", item.id)}>
                         {/* Poin revisi (diminta user) — Tab Table dibersihin dari fitur React
                             (ItemReactionBar/chip) sama sekali, react cuma ada di Tab Reply
                             (Drawer) sekarang, di bawah item Pill. */}
@@ -1170,9 +1207,11 @@ export default function MainTable({
                           // berubah dari luar, ini bug yang dilaporkan ("baru kelihatan bener
                           // setelah reopen project").
                           key={`${item.id}:${item.name}`}
+                          className={item.has_thread ? "item-sent-input" : ""}
                           defaultValue={item.name}
+                          aria-label={`Nama item ${index + 1}`}
                           placeholder="Nama item…"
-                          style={{ border: "1px solid var(--border)", borderRadius: 4, background: "transparent", width: "100%", padding: "4px 6px", cursor: "pointer" }}
+                          style={{ border: "1px solid var(--border)", borderRadius: 4, background: item.has_thread ? "var(--success-soft)" : "transparent", width: "100%", padding: "4px 6px", cursor: "pointer" }}
                           onFocus={() => setEditingCell({ itemId: item.id, col: "item" })}
                           onBlur={(e) => {
                             setEditingCell((c) => (c?.itemId === item.id && c.col === "item" ? null : c));
@@ -1182,20 +1221,21 @@ export default function MainTable({
                         />
                         {instantIntakeEnabled && !(editingCell?.itemId === item.id && editingCell.col === "item") && (
                           <QuickSendButton
-                            title={item.has_thread ? "Push — sinkron ulang item ini ke Slack" : "Instant Intake — kirim nama item ini aja (gak ada artis/reply)"}
+                            title={item.has_thread ? "Push — perbarui nama root item ini di Slack" : "Instant Intake — kirim nama item ini aja (gak ada artis/reply)"}
+                            action={item.has_thread ? "push" : "intake"}
                             onClick={() => quickSendOrPush(item, "item")}
                           />
                         )}
                       </td>
-                      <td style={{ position: "relative" }} {...hoverDelayHandlers()}>
+                      <td className={allRepliesSent ? "reply-sent-cell" : ""} style={{ position: "relative" }} {...hoverDelayHandlers()}>
                         <button
                           className="icon-btn"
-                          title={item.replies.length ? `${item.replies.length} reply` : "Belum ada reply"}
+                          title={item.replies.length ? (allRepliesSent ? "Semua reply sudah terkirim" : `${unsentReplyCount} reply belum terkirim`) : "Belum ada reply"}
                           onClick={() => openReplyTab(item.id)}
                           style={{ position: "relative" }}
                         >
                           <MessageSquare size={16} className={item.replies.length ? "" : "muted"} fill={item.replies.length ? "var(--accent-soft)" : "none"} />
-                          {item.replies.length > 0 && (
+                          {unsentReplyCount > 0 && (
                             <span
                               style={{
                                 position: "absolute",
@@ -1212,11 +1252,11 @@ export default function MainTable({
                                 textAlign: "center",
                               }}
                             >
-                              {item.replies.length}
+                              {unsentReplyCount}
                             </span>
                           )}
                         </button>
-                        {instantIntakeEnabled && <QuickSendButton title="Instant Intake — kirim semua reply/field item ini aja" onClick={() => quickSend(item.id, "replies")} />}
+                        {instantIntakeEnabled && <QuickSendButton action={allRepliesSent ? "push" : "intake"} title={allRepliesSent ? "Push — semua reply item ini sudah terkirim" : "Instant Intake — kirim semua reply/field yang belum terkirim"} onClick={() => quickSend(item.id, "replies")} />}
                       </td>
                       {project.phase === "input" && (
                         <>
@@ -1235,6 +1275,7 @@ export default function MainTable({
                             {instantIntakeEnabled && !(editingCell?.itemId === item.id && editingCell.col === "artist") && (
                               <QuickSendButton
                                 title={item.has_thread ? "Push — sinkron ulang artis item ini ke Slack" : "Instant Intake — mention artis ini aja"}
+                                action={item.has_thread ? "push" : "intake"}
                                 onClick={() => quickSendOrPush(item, "artist")}
                               />
                             )}
@@ -1249,7 +1290,8 @@ export default function MainTable({
                             {instantIntakeEnabled && !(editingCell?.itemId === item.id && editingCell.col === "status") && (
                               <QuickSendButton
                                 title={item.has_thread ? "Push — sinkron ulang status item ini ke Slack" : "Instant Intake — kirim status item ini aja"}
-                                onClick={() => quickSendOrPush(item, "item")}
+                                action={item.has_thread ? "push" : "intake"}
+                                onClick={() => quickSendOrPush(item, "status")}
                               />
                             )}
                           </td>
@@ -1461,10 +1503,11 @@ export default function MainTable({
 
       {showHyperlinkManager && <HyperlinkManager onClose={() => setShowHyperlinkManager(false)} />}
 
-      {showEmojiPresetManager && <EmojiPresetModal onClose={() => setShowEmojiPresetManager(false)} />}
       {showArtistPresetManager && (
         <ArtistPresetModal
           users={users}
+          channelMemberIds={channelMemberIds}
+          channelMembersGroupId={CHANNEL_MEMBERS_GROUP_ID}
           groups={groups}
           activeGroupId={activeGroupId}
           onSelectGroup={setActiveGroupId}
@@ -1528,7 +1571,7 @@ function GenerateItemModal({ onClose, onGenerate }: { onClose: () => void; onGen
               polos, bukan rich editor, gak ada tracking posisi kursor). */}
           <div style={{ display: "flex", gap: 4 }}>
             <input placeholder="Prefix, mis. HT5_" value={prefix} onChange={(e) => setPrefix(e.target.value)} style={{ flex: 1 }} />
-            <EmojiPicker onPick={(text) => setPrefix((p) => p + text)} />
+            <EmojiPicker onPick={(emoji) => setPrefix((p) => p + (emoji.type === "unicode" ? emoji.value : `:${emoji.shortcode}:`))} />
           </div>
           <div style={{ display: "flex", gap: 6 }}>
             <label className="caption" style={{ flex: 1 }}>
@@ -1808,7 +1851,7 @@ function HyperlinkManager({ onClose }: { onClose: () => void }) {
 
   return (
     <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 30, display: "flex", alignItems: "center", justifyContent: "center" }}>
-      <div className="card" style={{ padding: 16, width: 360, background: "var(--surface)" }}>
+      <div className="card" style={{ padding: 16, width: 360, maxWidth: "calc(100vw - 32px)", maxHeight: "calc(100vh - 32px)", overflowY: "auto", background: "var(--surface)" }}>
         <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 10 }}>
           <h3>Hyperlink Preset</h3>
           <button className="icon-btn" onClick={onClose} aria-label="Tutup" title="Tutup">
@@ -1816,12 +1859,12 @@ function HyperlinkManager({ onClose }: { onClose: () => void }) {
           </button>
         </div>
         {presets.map((p) => (
-          <div key={p.id} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "4px 0" }}>
-            <div>
-              <div style={{ fontSize: 13 }}>{p.label}</div>
-              <div className="caption">{p.url}</div>
+          <div key={p.id} style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, padding: "4px 0" }}>
+            <div style={{ flex: 1, minWidth: 0 }} title={`${p.label}\n${p.url}`}>
+              <div style={{ fontSize: 13, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.label}</div>
+              <div className="caption" style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{p.url}</div>
             </div>
-            <button className="icon-btn" onClick={() => window.api.hyperlink.delete(p.id).then(refresh)} aria-label="Hapus hyperlink" title="Hapus hyperlink">
+            <button className="icon-btn" style={{ flexShrink: 0 }} onClick={() => window.api.hyperlink.delete(p.id).then(refresh)} aria-label="Hapus hyperlink" title="Hapus hyperlink">
               <X size={12} />
             </button>
           </div>
@@ -1829,6 +1872,7 @@ function HyperlinkManager({ onClose }: { onClose: () => void }) {
         <div style={{ display: "flex", gap: 6, marginTop: 10 }}>
           <input
             placeholder="Label"
+            aria-label="Nama preset hyperlink"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
             className={touched && !label.trim() ? "input-error" : ""}
@@ -1836,12 +1880,13 @@ function HyperlinkManager({ onClose }: { onClose: () => void }) {
           />
           <input
             placeholder="URL"
+            aria-label="URL preset hyperlink"
             value={url}
             onChange={(e) => setUrl(e.target.value)}
             className={touched && !url.trim() ? "input-error" : ""}
-            style={{ flex: 1 }}
+            style={{ flex: 1, minWidth: 0 }}
           />
-          <button className="icon-btn" onClick={save} aria-label="Tambah hyperlink" title="Tambah hyperlink">
+          <button className="icon-btn" style={{ flexShrink: 0 }} onClick={save} aria-label="Tambah hyperlink" title="Tambah hyperlink">
             <Plus size={13} />
           </button>
         </div>
@@ -1849,4 +1894,3 @@ function HyperlinkManager({ onClose }: { onClose: () => void }) {
     </div>
   );
 }
-

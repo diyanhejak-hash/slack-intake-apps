@@ -69,7 +69,7 @@ function referencedFile(file) {
   for (const table of ["project_files", "item_files", "reply_files"]) {
     if (db.prepare(`SELECT 1 FROM ${table} WHERE stored_path=?`).get(file)) return true;
   }
-  if (db.prepare(`SELECT 1 FROM batch_files WHERE path=?`).get(file) || db.prepare(`SELECT 1 FROM emoji_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM artist_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM status_presets WHERE image_path=?`).get(file)) return true;
+  if (db.prepare(`SELECT 1 FROM batch_files WHERE path=?`).get(file) || db.prepare(`SELECT 1 FROM artist_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM status_presets WHERE image_path=?`).get(file)) return true;
   return [...deletedItems.values(), ...mergedItems.values()].some((s) => JSON.stringify(s).includes(JSON.stringify(file)));
 }
 
@@ -94,13 +94,8 @@ function isManagedFile(filePath) {
     `SELECT 1 FROM reply_files f JOIN replies r ON r.id=f.reply_id JOIN items i ON i.id=r.item_id JOIN projects p ON p.id=i.project_id WHERE f.stored_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
   ].some((sql) => db.prepare(sql).get(resolved, activeScope.userId, activeScope.teamId));
   if (scoped) return true;
-  // emoji_presets/artist_presets/status_presets GLOBAL (gak ada owner_user_id/owner_team_id,
-  // pola sama kayak hyperlink_presets) — bug yang pernah ketauan (poin revisi): thumbnail custom
-  // emoji gagal kebaca terus-terusan ("File tidak terdaftar di project") gara-gara tabel ini
-  // kelewat di-cek di atas. status_presets ditambah di sini juga (poin revisi fitur Status) biar
-  // gak kena bug SAMA PERSIS lagi.
-  return !!db.prepare(`SELECT 1 FROM emoji_presets WHERE image_path = ?`).get(resolved)
-    || !!db.prepare(`SELECT 1 FROM artist_presets WHERE image_path = ?`).get(resolved)
+  // Preset artis/status bersifat global, jadi preview lokalnya tidak terikat project aktif.
+  return !!db.prepare(`SELECT 1 FROM artist_presets WHERE image_path = ?`).get(resolved)
     || !!db.prepare(`SELECT 1 FROM status_presets WHERE image_path = ?`).get(resolved);
 }
 
@@ -188,6 +183,7 @@ function getProject(id) {
     for (const reply of item.replies) {
       reply.files = db.prepare(`SELECT * FROM reply_files WHERE reply_id = ?`).all(reply.id);
       reply.sent = !!reply.sent_at;
+      if (reply.sent && !reply.sent_by_user_id) reply.sent_by_user_id = activeScope.userId;
     }
   }
   // General Display (project_files) — beda dari item.files, lihat catatan skema di db.cjs.
@@ -301,8 +297,8 @@ function restoreItem(snapshot) {
     // UDAH terkirim sebelum dihapus TETAP kekunci read-only setelah Undo (bukan kebuka lagi buat
     // diedit padahal Slack udah punya isi lama itu).
     db.prepare(
-      `INSERT INTO replies (id, item_id, category, type, title, text_value, sort_order, sent_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
-    ).run(r.id, snapshot.id, r.category, r.type, r.title, r.text_value, r.sort_order, r.sent_at || null);
+      `INSERT INTO replies (id, item_id, category, type, title, text_value, sort_order, sent_at, sent_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    ).run(r.id, snapshot.id, r.category, r.type, r.title, r.text_value, r.sort_order, r.sent_at || null, r.sent_by_user_id || null);
     for (const rf of r.files) {
       db.prepare(`INSERT INTO reply_files (id, reply_id, stored_path, original_name) VALUES (?, ?, ?, ?)`).run(rf.id, r.id, rf.stored_path, rf.original_name);
     }
@@ -354,6 +350,14 @@ function computeMergedName(rows, separator) {
     const min = Math.min(...nums);
     const max = Math.max(...nums);
     return `${parsed[0].prefix}${String(min).padStart(width, "0")}-${String(max).padStart(width, "0")}`;
+  }
+  const parsed = rows.map((r) => {
+    const m = r.name.match(/^(.*?)(\d+)$/);
+    return m ? { prefix: m[1], numStr: m[2], num: parseInt(m[2], 10) } : null;
+  });
+  if (parsed.every(Boolean) && new Set(parsed.map((p) => p.prefix)).size === 1) {
+    const sorted = [...parsed].sort((a, b) => a.num - b.num);
+    return `${sorted[0].prefix}${sorted.map((p) => p.numStr).join(", ")}`;
   }
   return rows.map((r) => r.name).join(", ");
 }
@@ -661,8 +665,8 @@ function isReplySent(replyId) {
 function assertReplyEditable(replyId) {
   if (isReplySent(replyId)) throw new Error("Field ini udah kekirim ke Slack, gak bisa diedit lagi.");
 }
-function markReplySent(replyId) {
-  db.prepare(`UPDATE replies SET sent_at = ? WHERE id = ?`).run(now(), replyId);
+function markReplySent(replyId, sentByUserId = activeScope.userId) {
+  db.prepare(`UPDATE replies SET sent_at = ?, sent_by_user_id = ? WHERE id = ?`).run(now(), sentByUserId || null, replyId);
 }
 
 // "Buka gembok" (poin revisi, diminta user) — override manual field yang kelanjur ke-lock
@@ -673,7 +677,7 @@ function markReplySent(replyId) {
 // Slack sendiri (murni lokal) -- user yang tanggung jawab pastiin gak dobel post kalau field-nya
 // TERNYATA udah beneran nyampe di Slack.
 function unlockReply(replyId) {
-  db.prepare(`UPDATE replies SET sent_at = NULL WHERE id = ?`).run(replyId);
+  db.prepare(`UPDATE replies SET sent_at = NULL, sent_by_user_id = NULL WHERE id = ?`).run(replyId);
   const row = db.prepare(`SELECT item_id FROM replies WHERE id=?`).get(replyId);
   const projectId = row && projectIdForItem(row.item_id);
   if (projectId) touchProject(projectId);
@@ -949,51 +953,6 @@ function saveHyperlinkPreset({ id, label, url }) {
 
 function deleteHyperlinkPreset(id) {
   db.prepare(`DELETE FROM hyperlink_presets WHERE id = ?`).run(id);
-}
-
-function listEmojiPresets() {
-  return db.prepare(`SELECT * FROM emoji_presets ORDER BY sort_order, rowid`).all();
-}
-
-function nextEmojiPresetOrder() {
-  return (db.prepare(`SELECT COALESCE(MAX(sort_order), -1) AS m FROM emoji_presets`).get().m ?? -1) + 1;
-}
-
-// `shortcode` (poin revisi: fitur Reaction) — nama Slack TANPA titik dua, dari field `colons`
-// picker emoji-mart (contoh emoji.colons ":grinning:" -> disimpan "grinning"). Opsional buat jaga
-// kompatibilitas kalau ada caller lama yang belum ngasih, tapi SEMUA pemanggil baru wajib ngasih
-// biar preset ini bisa dipakai jadi reaction.
-function addUnicodeEmojiPreset(char, shortcode) {
-  if (!char) throw new Error("Emoji kosong.");
-  if (db.prepare(`SELECT 1 FROM emoji_presets WHERE type = 'unicode' AND value = ?`).get(char)) return null; // udah ada, gak dobel
-  const id = uuid();
-  const clean = shortcode ? String(shortcode).replace(/:/g, "") : null;
-  db.prepare(`INSERT INTO emoji_presets (id, type, value, slack_shortcode, sort_order) VALUES (?, 'unicode', ?, ?, ?)`).run(id, char, clean, nextEmojiPresetOrder());
-  return id;
-}
-
-// Custom emoji ala Slack (poin revisi) — cuma nyimpen NAMA + PNG buat preview picker lokal, gak
-// pernah divalidasi/di-upload ke Slack beneran. Insert ke text field-nya berupa teks ":nama:"
-// (jalur SLACK_TRANSFORMERS/mrkdwn biasa) — kalau workspace Slack tujuan kebetulan punya custom
-// emoji nama sama, otomatis kerender; kalau enggak, ya tampil apa adanya, SENGAJA gak ditolak.
-// `slack_shortcode` = nama-nya sendiri (dipakai juga buat reaction — kalau workspace Slack tujuan
-// gak punya custom emoji nama sama, reactions.add bakal gagal jelas dengan error dari Slack).
-function addCustomEmojiPreset(name, sourcePath) {
-  const cleanName = String(name || "").trim().toLowerCase().replace(/[^a-z0-9_+-]/g, "");
-  if (!cleanName) throw new Error("Nama emoji custom gak valid (huruf kecil/angka/_/-/+ doang).");
-  if (db.prepare(`SELECT 1 FROM emoji_presets WHERE type = 'custom' AND value = ?`).get(cleanName)) {
-    throw new Error(`Emoji custom ":${cleanName}:" udah ada.`);
-  }
-  const { storedPath } = stageFile("emoji-presets", sourcePath);
-  const id = uuid();
-  db.prepare(`INSERT INTO emoji_presets (id, type, value, image_path, slack_shortcode, sort_order) VALUES (?, 'custom', ?, ?, ?, ?)`).run(id, cleanName, storedPath, cleanName, nextEmojiPresetOrder());
-  return id;
-}
-
-function removeEmojiPreset(id) {
-  const row = db.prepare(`SELECT image_path FROM emoji_presets WHERE id = ?`).get(id);
-  if (row?.image_path) removeStoredFile(row.image_path);
-  db.prepare(`DELETE FROM emoji_presets WHERE id = ?`).run(id);
 }
 
 // ---------- Artis Preset (poin revisi) ----------
@@ -1296,6 +1255,42 @@ function clearLogs() {
   db.prepare(`DELETE FROM logs`).run();
 }
 
+// Direktori member lokal. Penggantian cache tidak pernah menyentuh artist_presets,
+// item_artists, reaction, atau data project lain.
+function listCachedSlackUsers() {
+  if (!activeScope.teamId) return [];
+  return db.prepare(
+    `SELECT user_id AS id, name, avatar FROM slack_user_cache WHERE team_id=? ORDER BY name COLLATE NOCASE`
+  ).all(activeScope.teamId);
+}
+
+function replaceCachedSlackUsers(users) {
+  if (!activeScope.teamId) return;
+  db.prepare(`DELETE FROM slack_user_cache WHERE team_id=?`).run(activeScope.teamId);
+  const insert = db.prepare(
+    `INSERT INTO slack_user_cache(team_id,user_id,name,avatar,updated_at) VALUES(?,?,?,?,?)`
+  );
+  const updatedAt = now();
+  for (const user of users) insert.run(activeScope.teamId, user.id, user.name, user.avatar || null, updatedAt);
+}
+
+function listCachedChannelMemberIds(channelId) {
+  if (!activeScope.teamId || !channelId) return [];
+  return db.prepare(
+    `SELECT user_id FROM slack_channel_member_cache WHERE team_id=? AND channel_id=? ORDER BY user_id`
+  ).all(activeScope.teamId, channelId).map((row) => row.user_id);
+}
+
+function replaceCachedChannelMemberIds(channelId, memberIds) {
+  if (!activeScope.teamId || !channelId) return;
+  db.prepare(`DELETE FROM slack_channel_member_cache WHERE team_id=? AND channel_id=?`).run(activeScope.teamId, channelId);
+  const insert = db.prepare(
+    `INSERT INTO slack_channel_member_cache(team_id,channel_id,user_id,updated_at) VALUES(?,?,?,?)`
+  );
+  const updatedAt = now();
+  for (const userId of new Set(memberIds)) insert.run(activeScope.teamId, channelId, userId, updatedAt);
+}
+
 function listArtistGroups() {
   return db.prepare(`SELECT * FROM artist_groups`).all().map((g) => ({ ...g, memberIds: JSON.parse(g.member_ids_json) }));
 }
@@ -1522,6 +1517,10 @@ module.exports = {
   addLog,
   listLogs,
   clearLogs,
+  listCachedSlackUsers,
+  replaceCachedSlackUsers,
+  listCachedChannelMemberIds,
+  replaceCachedChannelMemberIds,
   listBatchSections,
   saveBatchSections,
   applyBatchSections,
@@ -1553,10 +1552,6 @@ module.exports = {
   listHyperlinkPresets,
   saveHyperlinkPreset,
   deleteHyperlinkPreset,
-  listEmojiPresets,
-  addUnicodeEmojiPreset,
-  addCustomEmojiPreset,
-  removeEmojiPreset,
   listArtistPresets,
   saveArtistPreset,
   removeArtistPreset,
@@ -1599,8 +1594,9 @@ for (const name of [
   "addCapturedFile", "addCapturedFileToReply", "restoreItem", "mergeItems", "unmergeItems",
   "removeItem", "deleteProject", "removeReply", "removeReplies", "removeRepliesByCategory",
   "broadcastReply", "saveBatchSections", "applyBatchSections", "importProject", "duplicateProject",
-  "addCustomEmojiPreset", "removeEmojiPreset", "saveArtistPreset", "removeArtistPreset",
-  "saveStatusPreset", "removeStatusPreset"
+  "saveArtistPreset", "removeArtistPreset",
+  "saveStatusPreset", "removeStatusPreset",
+  "replaceCachedSlackUsers", "replaceCachedChannelMemberIds"
 ]) {
   const mutate = module.exports[name];
   module.exports[name] = (...args) => transaction(() => mutate(...args));

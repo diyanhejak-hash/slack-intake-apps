@@ -46,6 +46,9 @@ export default function App() {
   }, []);
   useEffect(() => {
     if (!auth?.loggedIn) return;
+    // Satu-satunya refresh direktori user dari Slack per sesi aplikasi. Semua layar membaca
+    // cache lokal; kegagalan refresh tidak mengosongkan cache lama.
+    window.api.slack.refreshUsers().catch(() => undefined);
     window.api.admin.getStatus().then(setAdminStatus).catch(() => setAdminStatus({ isOwner: false, isAdminMember: false }));
   }, [auth?.loggedIn]);
 

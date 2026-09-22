@@ -17,6 +17,7 @@
 //     komponen ini WAJIB async dan pemanggilnya yang nanganin loading/error state-nya sendiri.
 import { useState } from "react";
 import { SendHorizontal, Loader2, Check } from "lucide-react";
+import SlackSyncIcon from "./SlackSyncIcon";
 
 // Gak ada modal lagi buat instant-send, jadi feedback loading/sukses/gagal-nya HARUS dari tombol
 // ini sendiri (icon Loader2 muter pas ngirim, Check sekejap kalau sukses, alert() kalau gagal —
@@ -28,7 +29,7 @@ import { SendHorizontal, Loader2, Check } from "lucide-react";
 //   - "inline" (Tab Reply, ReplyRow) — flow normal sejajar checkbox/broadcast/trash di
 //     `.reply-actions`, reveal-nya ikut mekanisme hover `.reply-actions` yang udah ada (gak perlu
 //     delay terpisah, biar konsisten sama ikon lain di baris yang sama).
-export default function QuickSendButton({ onClick, title, variant = "overlay", disabled = false }: { onClick: () => Promise<unknown>; title: string; variant?: "overlay" | "inline"; disabled?: boolean }) {
+export default function QuickSendButton({ onClick, title, variant = "overlay", action = "intake", disabled = false }: { onClick: () => Promise<unknown>; title: string; variant?: "overlay" | "inline"; action?: "intake" | "push"; disabled?: boolean }) {
   const [state, setState] = useState<"idle" | "sending" | "done">("idle");
 
   async function handleClick() {
@@ -64,10 +65,10 @@ export default function QuickSendButton({ onClick, title, variant = "overlay", d
         width: 22,
         height: 22,
         borderRadius: "50%",
-        background: "var(--success)",
-        border: "2px solid var(--surface)",
+        background: action === "push" ? "var(--surface)" : "var(--success)",
+        border: action === "push" ? "2px solid var(--accent)" : "2px solid var(--surface)",
         boxShadow: "0 1px 3px rgba(0,0,0,0.3)",
-        color: "#fff",
+        color: action === "push" ? "var(--accent)" : "#fff",
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
@@ -79,6 +80,8 @@ export default function QuickSendButton({ onClick, title, variant = "overlay", d
         <Loader2 size={11} className="spin" />
       ) : state === "done" ? (
         <Check size={12} strokeWidth={3} />
+      ) : action === "push" ? (
+        <SlackSyncIcon direction="up" busy={false} />
       ) : (
         <SendHorizontal size={11} fill="currentColor" />
       )}
