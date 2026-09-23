@@ -1508,11 +1508,13 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     });
 
     const itemState = new Map(targets.map((item) => [item.id, {}]));
-    async function runPass(phase, label, fn) {
+    async function runPass(phase, label, fn, { blockLater = false } = {}) {
       for (let i = 0; i < targets.length; i++) {
         const item = targets[i];
         const state = itemState.get(item.id);
-        if (state.failed) { await stepDone(); continue; }
+        // Hanya kegagalan root yang membuat fase sesudahnya mustahil dijalankan. Kegagalan
+        // assign/status tidak boleh membuang Reply yang independen dan sudah siap dikirim.
+        if (state.blocked) { await stepDone(); continue; }
         if (cancelRequested) { state.cancelled = true; await stepDone(); continue; }
         if (!event.sender.isDestroyed()) event.sender.send("send:progress", { projectId, jobId, index: i, total: targets.length, itemName: item.name, phase });
         try {
@@ -1541,7 +1543,8 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
             }
           }
           state.failed = true;
-          state.reason = err.message;
+          state.reason ||= err.message;
+          if (blockLater || cancelRequested) state.blocked = true;
           projects.addLog("error", `Gagal (${label}) "${item.name}": ${err.message}`);
         }
         await stepDone();
@@ -1556,7 +1559,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
       });
       state.threadTs = threadTs;
       state.isNew = isNew;
-    });
+    }, { blockLater: true });
 
     // Fase 2 — assign: mention @artis (kalau scope & mode global ngizinin) DAN/ATAU react
     // pakai code_name artis (data-driven, gak digate scope/mode — sama kayak reaction flush
@@ -1715,7 +1718,7 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
   // Urutan preferensi channel: eksplisit dari caller > channel tempat item ini SUDAH punya
   // thread (kalau ada — cegah bikin thread DUPLIKAT kalau kiriman asli dulu dikirim ke channel
   // lain lewat override Slack View Preview, project.channel_id sekarang beda) > default project.
-  const targetChannelId = channelId || slack.findThreadChannel(threadKey(projectId, item.id)) || project.channel_id;
+  const targetChannelId = channelId || slack.findThreadChannel(threadKey(projectId, item.id), project.channel_id) || project.channel_id;
 
   await confirmLegacyThread(projectId, item, targetChannelId);
   const itemThreadKey = threadKey(projectId, item.id);
@@ -1876,7 +1879,7 @@ handle("send:recover", async (_e, { projectId, itemId, channelId, threadLink }) 
   const project = projects.getProject(projectId);
   if (!project?.items.some((i) => i.id === itemId)) throw new Error("Item tidak ditemukan.");
   const key = threadKey(projectId, itemId);
-  const target = channelId || slack.findThreadChannel(key) || project.channel_id;
+  const target = channelId || slack.findThreadChannel(key, project.channel_id) || project.channel_id;
   const attempt = slack.pendingAttempt(key, target);
   if (!attempt) return { message: "Tidak ada kiriman tertunda." };
   let threadTs;

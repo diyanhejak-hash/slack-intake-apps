@@ -983,6 +983,10 @@ async function test(name, fn) {
       const d = await slack.sendItem({ ...args, token: "A", threadKey: "project-B/item" });
       assert.notEqual(c.threadTs, d.threadTs);
       assert.equal(slack.findThreadChannel("project-A/item"), "CA");
+      await slack.sendItem({ token: "A", itemName: "collision", channelId: "CB", threadKey: "project-A/item" });
+      db.prepare(`UPDATE threads SET updated_at=? WHERE item_name=? AND channel_id=?`).run("2099-01-01T00:00:00.000Z", "project-A/item", "CB");
+      assert.equal(slack.findThreadChannel("project-A/item"), "CB");
+      assert.equal(slack.findThreadChannel("project-A/item", "CA"), "CA");
     });
     await test("uncertain root is not posted twice and can be reconciled", async () => {
       const original = MockSlack.prototype.constructor;
@@ -2746,12 +2750,13 @@ async function test(name, fn) {
       assert.equal(logs[logs.length - 1][0], "error");
       assert.ok(logs[logs.length - 1][1].includes('preset Status target-nya udah gak ada'));
     });
-    await test("send:start (poin revisi 4-fase) kirim per-fase lintas semua item, item gagal di-skip fase berikutnya", async () => {
+    await test("send:start: root gagal memblokir item, tetapi assign gagal tidak boleh membuang Reply", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("send:start",[\s\S]*?\n\}\);/)[0];
       const callLog = [];
       const reactionCalls = [];
       const sentReactionIds = [];
+      const sentReplyIds = [];
       const reactionsByItem = { A: [{ id: "RA", slack_shortcode: "artis-a", sent: 0 }, { id: "RX", slack_shortcode: "manual", sent: 0 }], B: [] };
       let handler;
       const context = {
@@ -2763,6 +2768,7 @@ async function test(name, fn) {
             items: [
               { id: "A", name: "Item A", artists: [{ artist_id: "U1" }], files: [], replies: [] },
               { id: "B", name: "Item B", artists: [], files: [], replies: [] },
+              { id: "C", name: "Item C", artists: [], files: [], replies: [{ id: "RC", sent: false, files: [] }] },
             ],
           }),
           addLog: () => {},
@@ -2776,9 +2782,10 @@ async function test(name, fn) {
               if (r) r.sent = 1;
             }
           },
+          markReplySent: (id) => sentReplyIds.push(id),
           getArtistAssignModes: () => ({ mention: true, react: false }),
         },
-        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: (reply) => reply ? { text: "field" } : null,
         reconcileItemStatusState: async () => {},
         slack: {
           ensureRoot: async ({ threadKey: key }) => {
@@ -2786,7 +2793,10 @@ async function test(name, fn) {
             if (key === "B") throw new Error("root gagal buat B");
             return { threadTs: `${key}.ts`, isNew: true };
           },
-          syncAssignMessage: async ({ itemId }) => { callLog.push(`artist:${itemId}`); },
+          syncAssignMessage: async ({ itemId }) => {
+            callLog.push(`artist:${itemId}`);
+            if (itemId === "C") throw new Error("assign gagal buat C");
+          },
           addReaction: async ({ name }) => { reactionCalls.push(name); },
           sendReplies: async ({ threadKey: key }) => { callLog.push(`post:${key}`); return { permalink: undefined }; },
         },
@@ -2799,13 +2809,16 @@ async function test(name, fn) {
         },
       };
       vm.runInNewContext(block, context);
-      const { results } = await handler({ sender: { isDestroyed: () => false, send: () => {} } }, { projectId: "P", itemIds: ["A", "B"], scope: undefined });
+      const { results } = await handler({ sender: { isDestroyed: () => false, send: () => {} } }, { projectId: "P", itemIds: ["A", "B", "C"], scope: undefined });
 
       // Item B gagal di fase root -> di-skip TOTAL di fase artist/react/post, item A tetap lanjut.
       assert.deepEqual(callLog.filter((c) => c.endsWith(":B")), ["root:B"]);
       assert.deepEqual(callLog.filter((c) => c.endsWith(":A")), ["root:A", "artist:A", "post:A"]);
+      // Item C gagal assign, tetapi Reply independennya tetap dicoba dan ditandai terkirim.
+      assert.deepEqual(callLog.filter((c) => c.includes(":C")), ["root:C", "artist:C", "post:C#reply:RC"]);
+      assert.deepEqual(sentReplyIds, ["RC"]);
       // Urutan GLOBAL per-fase (bukan per-item lagi): semua root dulu, baru artist.
-      assert.deepEqual(callLog.filter((c) => c.startsWith("root:") || c.startsWith("artist:")), ["root:A", "root:B", "artist:A"]);
+      assert.deepEqual(callLog.filter((c) => c.startsWith("root:") || c.startsWith("artist:")), ["root:A", "root:B", "root:C", "artist:A", "artist:C"]);
       // Reaction artis (artis-a) ke-flush pas fase artist, reaction manual (manual) di fase react
       // terpisah -- dua-duanya ke-flush, gak dobel-proses.
       assert.deepEqual(reactionCalls.sort(), ["artis-a", "manual"]);
@@ -2814,6 +2827,7 @@ async function test(name, fn) {
       assert.deepEqual(sentReactionIds.sort(), ["RA", "RX"]);
       assert.equal(results.find((r) => r.itemId === "A").status, "berhasil");
       assert.equal(results.find((r) => r.itemId === "B").status, "gagal");
+      assert.equal(results.find((r) => r.itemId === "C").status, "gagal");
     });
     await test("send:start scope \"item\"/\"replies\" (poin revisi, Instant Intake per-kolom) TETAP sinkron assign message, gak di-skip lagi", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");

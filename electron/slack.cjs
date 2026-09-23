@@ -308,7 +308,11 @@ const getThreadChannel = db.prepare(`SELECT channel_id FROM threads WHERE item_n
 // — daripada nebak project.channel_id doang (bisa keliru kalau kiriman ASLI dulu dikirim ke
 // channel LAIN lewat override di Slack View Preview), cek dulu item ini pernah punya thread di
 // channel mana. Null kalau item ini beneran belum pernah dikirim sama sekali.
-function findThreadChannel(itemName) {
+function findThreadChannel(itemName, preferredChannelId) {
+  // Satu item dapat punya thread di beberapa channel setelah pernah dikirim lewat channel
+  // override. Untuk aksi dari project, utamakan channel project kalau thread-nya memang ada;
+  // fallback ke thread terbaru hanya ketika channel project belum pernah punya thread.
+  if (preferredChannelId && getThread.get(itemName, preferredChannelId)) return preferredChannelId;
   return getThreadChannel.get(itemName)?.channel_id || null;
 }
 
