@@ -298,7 +298,7 @@ async function test(name, fn) {
             getArtistAssignModes: () => ({ mention: false, react: false }),
           },
           currentToken: () => tokenValue,
-          threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+          threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {}, replyToPost: () => null,
           reconcileItemStatusState: async () => {},
           tryRefreshToken: async () => {
             refreshCalls.push(1);
@@ -841,6 +841,10 @@ async function test(name, fn) {
       // Field kebuka lagi -- edit BOLEH lagi (bukan cuma UI, backend-nya beneran gak ke-lock lagi).
       projects.updateReply(replyId, { textValue: "isi abis buka gembok" });
       assert.equal(projects.getProject(rp.id).items.find((i) => i.id === itemId).replies[0].text_value, "isi abis buka gembok");
+      projects.lockReply(replyId);
+      loaded = projects.getProject(rp.id).items.find((i) => i.id === itemId);
+      assert.equal(loaded.replies.find((r) => r.id === replyId).sent, true);
+      assert.throws(() => projects.updateReply(replyId, { textValue: "tetap terkunci" }), /udah kekirim/);
     });
     await test("multi-artist (poin revisi): banyak artis per item, bidirectional chip artis<->reaction, union pas merge + restore pas unmerge", () => {
       const src = path.join(temp, "multi-artist.png");
@@ -926,6 +930,21 @@ async function test(name, fn) {
       projects.setInstantIntakeEnabled(false); // reset biar gak nyampur ke test lain.
       assert.equal(projects.getInstantIntakeEnabled(), false);
     });
+    await test("channel pilihan terakhir tersimpan per project tanpa mengubah project lain", () => {
+      const first = projects.createProject({ name: "channel-a", channelId: "CA", channelName: "awal-a" });
+      const second = projects.createProject({ name: "channel-b", channelId: "CB", channelName: "awal-b" });
+      const updated = projects.setProjectChannel(first.id, "CC", "tujuan-baru");
+      assert.equal(updated.channel_id, "CC");
+      assert.equal(updated.channel_name, "tujuan-baru");
+      assert.equal(projects.getProject(second.id).channel_id, "CB");
+      assert.throws(() => projects.setProjectChannel(first.id, "", "invalid"), /tidak valid/);
+    });
+    await test("Auto Pop-up Slack default aktif dan preferensinya tersimpan", () => {
+      assert.equal(projects.getAutoOpenSlackEnabled(), true);
+      assert.equal(projects.setAutoOpenSlackEnabled(false), false);
+      assert.equal(projects.getAutoOpenSlackEnabled(), false);
+      assert.equal(projects.setAutoOpenSlackEnabled(true), true);
+    });
     await test("batch survives source removal, import, duplicate, deletion and resync", () => {
       const bp = projects.createProject({ name: "roundtrip", channelId: "CA", channelName: "audit" });
       const bi = projects.addItem(bp.id, { name: "batch" });
@@ -962,7 +981,7 @@ async function test(name, fn) {
       assert.ok(replies.every((r) => r.files.length <= 10));
       assert.deepEqual(replies.map((r) => r.files.length).sort((a, b) => b - a), [10, 5]);
       assert.equal(replies.reduce((n, r) => n + r.files.length, 0), 15); // gak ada file ilang
-      assert.ok(replies.every((r) => r.title === "Assets")); // title kategori sama di kedua field
+      assert.deepEqual(replies.map((r) => r.title), ["Assets 1", "Assets 2"]);
 
       // Field ke-2 (5 file, belum penuh) ditandain SENT -- batch APPLY BARU berikutnya harus
       // bikin field ke-3, BUKAN numpuk ke field ke-2 yang udah dikunci walau masih ada sisa slot.
@@ -981,6 +1000,7 @@ async function test(name, fn) {
       const replies2 = projects.getProject(bp.id).items.find((i) => i.id === itemId).replies;
       assert.equal(replies2.length, 3); // field baru ke-3, bukan numpuk ke field ke-2 yang sent
       assert.equal(replies2.find((r) => r.id === lockedReplyId).files.length, 5); // field terkunci gak berubah
+      assert.deepEqual(replies2.map((r) => r.title), ["Assets 1", "Assets 2", "Assets 3"]);
     });
     await test("cross-account broadcast, batch IDs and silent legacy adoption are rejected", () => {
       projects.setScope("OTHER", "OTHERTEAM");
@@ -1480,7 +1500,7 @@ async function test(name, fn) {
       let handler, finish;
       const context = { activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
         projects: { getProject: () => ({ channel_id: "CA", items: [{ id: "I", name: "item", replies: [] }] }), addLog: () => {} },
-        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {}, replyToPost: () => null,
         slack: { findThreadChannel: () => null, resolveAttempt: () => {}, sendItem: () => new Promise((_resolve, reject) => { finish = reject; }) } };
       vm.runInNewContext(quick, context);
       const first = handler({}, { projectId: "P", itemId: "I", scope: "item" });
@@ -1506,7 +1526,7 @@ async function test(name, fn) {
           // buat test ini (fokusnya reaction flush doang).
           getArtistAssignModes: () => ({ mention: false, react: true }),
         },
-        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {}, replyToPost: () => null,
         reconcileItemStatusState: async () => {},
         slack: {
           findThreadChannel: () => null,
@@ -1515,6 +1535,7 @@ async function test(name, fn) {
           // "pesan belum ada" vs "pesan udah ada", dua-duanya lewat sendItem yang sama; yang
           // dites di sini murni "reaction pending ikut ke-flush abis sendItem sukses".
           sendItem: async () => ({ threadTs: "1234.0001", isNew: true, permalink: undefined }),
+          syncAssignMessage: async () => {},
           addReaction: async (args) => { addedReactions.push(args); },
         },
       };
@@ -1524,7 +1545,7 @@ async function test(name, fn) {
       assert.ok(addedReactions.every((a) => a.channelId === "CA" && a.timestamp === "1234.0001"));
       assert.deepEqual(sentIds, ["R1", "R2"]);
     });
-    await test("quick-send (poin revisi) sinkron assign message lewat syncAssignMessage buat SEMUA scope, gak lewat sendItem lagi — suppressed pas mode react", async () => {
+    await test("quick-send selalu menempatkan assignment/placeholder sebelum field untuk semua scope", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       function makeContext(mode) {
@@ -1539,7 +1560,7 @@ async function test(name, fn) {
             listItemReactions: () => [],
             getArtistAssignModes: () => ({ mention: mode === "mention", react: mode === "react" }),
           },
-          currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+          currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {}, replyToPost: () => null,
           reconcileItemStatusState: async () => {},
           slack: {
             findThreadChannel: () => null,
@@ -1553,12 +1574,12 @@ async function test(name, fn) {
         return { invoke: (payload) => handler({}, payload), get syncCalls() { return syncCalls; }, get syncArgs() { return syncArgs; }, get sentArtistIds() { return sentArtistIds; } };
       }
 
-      // Mode react: syncAssignMessage TIDAK PERNAH kepanggil (gak ada assign message buat mode
-      // ini sama sekali, artis diberitahu lewat reaction, test terpisah di atas).
+      // Mode react: assignment placeholder tetap menjadi reply pertama walau Mention OFF.
       {
         const ctx = makeContext("react");
         await ctx.invoke({ projectId: "P", itemId: "I", scope: "artist" });
-        assert.equal(ctx.syncCalls, 0);
+        assert.equal(ctx.syncCalls, 1);
+        assert.equal(ctx.syncArgs.artistIds.length, 0);
         assert.equal(ctx.sentArtistIds.length, 0); // sendItem juga gak pernah dikasih artistIds lagi (poin revisi)
       }
       // Mode mention, scope APAPUN (termasuk "item"/"replies" — poin revisi terbaru: Instant
@@ -1577,6 +1598,7 @@ async function test(name, fn) {
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       function makeContext() {
         const sendItemCalls = [];
+        const sendRepliesCalls = [];
         let handler;
         const context = {
           activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
@@ -1596,19 +1618,20 @@ async function test(name, fn) {
             getArtistAssignModes: () => ({ mention: false, react: false }),
             markReplySent: () => {},
           },
-          currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {},
+          currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {},
           replyToPost: (reply) => (reply.text_value ? { text: reply.text_value } : null),
           reconcileItemStatusState: async () => {},
           slack: {
             findThreadChannel: () => null,
             resolveAttempt: () => {},
             sendItem: async (args) => { sendItemCalls.push(args); return { threadTs: "1.000", isNew: true }; },
+            sendReplies: async (args) => { sendRepliesCalls.push(args); return {}; },
             addReaction: async () => {},
             syncAssignMessage: async () => {},
           },
         };
         vm.runInNewContext(quick, context);
-        return { invoke: (payload) => handler({}, payload), sendItemCalls };
+        return { invoke: (payload) => handler({}, payload), sendItemCalls, sendRepliesCalls };
       }
 
       // scope "replies" -- R-OLD (sent) di-skip, R-NEW doang yang masuk payload. Poin revisi
@@ -1619,10 +1642,10 @@ async function test(name, fn) {
       {
         const ctx = makeContext();
         await ctx.invoke({ projectId: "P", itemId: "I", scope: "replies" });
-        assert.equal(ctx.sendItemCalls.length, 2);
+        assert.equal(ctx.sendItemCalls.length, 1);
         assert.equal(ctx.sendItemCalls[0].posts.length, 0);
-        assert.equal(ctx.sendItemCalls[1].posts.length, 1);
-        assert.equal(ctx.sendItemCalls[1].posts[0].text, "field baru");
+        assert.equal(ctx.sendRepliesCalls.length, 1);
+        assert.equal(ctx.sendRepliesCalls[0].posts[0].text, "field baru");
       }
       // scope "field" langsung ke R-OLD -- no-op (posts kosong), gak resend field yang udah sent.
       {
@@ -1630,12 +1653,14 @@ async function test(name, fn) {
         await ctx.invoke({ projectId: "P", itemId: "I", scope: "field", replyId: "R-OLD" });
         assert.equal(ctx.sendItemCalls.length, 1);
         assert.equal(ctx.sendItemCalls[0].posts.length, 0);
+        assert.equal(ctx.sendRepliesCalls.length, 0);
       }
     });
-    await test("send:quick scope \"replies\" (poin revisi, bug dilaporkan: merge >10 file misahin field \"Animatic\" jadi 2, salah satu gagal upload) — field yang gagal TETAP dicoba (gak ke-skip gara-gara field lain), field yang sukses TETAP di-lock walau field tetangganya gagal", async () => {
+    await test("send:quick mengirim field berurutan dan berhenti sebelum field berikutnya saat satu field gagal", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       const sendItemCalls = [];
+      const sendRepliesCalls = [];
       const markedSent = [];
       let handler;
       const context = {
@@ -1650,6 +1675,7 @@ async function test(name, fn) {
               replies: [
                 { id: "R-1", title: "Animatic", text_value: null, sent: false },
                 { id: "R-2", title: "Animatic", text_value: null, sent: false },
+                { id: "R-3", title: "Animatic", text_value: null, sent: false },
               ],
             }],
           }),
@@ -1658,7 +1684,7 @@ async function test(name, fn) {
           getArtistAssignModes: () => ({ mention: false, react: false }),
           markReplySent: (id) => markedSent.push(id),
         },
-        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {},
+        currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {},
         replyToPost: (reply) => ({ text: reply.title, files: [{ path: "/x", filename: `${reply.id}.mp4` }] }),
         reconcileItemStatusState: async () => {},
         slack: {
@@ -1666,9 +1692,13 @@ async function test(name, fn) {
           resolveAttempt: () => {},
           sendItem: async (args) => {
             sendItemCalls.push(args);
+            return { threadTs: "1.000", isNew: true };
+          },
+          sendReplies: async (args) => {
+            sendRepliesCalls.push(args);
             const fileId = args.posts[0]?.files?.[0]?.filename;
             if (fileId === "R-2.mp4") throw new Error("upload gagal (simulasi network)");
-            return { threadTs: "1.000", isNew: true };
+            return {};
           },
           addReaction: async () => {},
           syncAssignMessage: async () => {},
@@ -1679,14 +1709,16 @@ async function test(name, fn) {
 
       // Root-ensure (posts kosong) + R-1 (sukses) + R-2 (gagal) — TIGA panggilan, R-2 TETAP
       // dicoba walau urutannya SETELAH field yang independen (bukan ke-skip diam-diam).
-      assert.equal(sendItemCalls.length, 3);
-      assert.equal(sendItemCalls[1].posts[0].files[0].filename, "R-1.mp4");
-      assert.equal(sendItemCalls[2].posts[0].files[0].filename, "R-2.mp4");
+      assert.equal(sendItemCalls.length, 1);
+      assert.equal(sendRepliesCalls.length, 2);
+      assert.equal(sendRepliesCalls[0].posts[0].files[0].filename, "R-1.mp4");
+      assert.equal(sendRepliesCalls[1].posts[0].files[0].filename, "R-2.mp4");
+      assert.ok(!sendRepliesCalls.some((call) => call.posts[0].files[0].filename === "R-3.mp4"));
       // Cuma field yang BENERAN sukses (R-1) yang di-lock -- R-2 TETAP kebuka, bisa dicoba lagi
       // lewat Instant Intake tanpa perlu "buka gembok" dulu.
       assert.deepEqual(markedSent, ["R-1"]);
     });
-    await test("quick-send scope \"artist\" pada item TANPA artis (poin revisi, bug dilaporkan) — TIDAK throw, placeholder tetap ke-post (mention) / no-op aman (react)", async () => {
+    await test("quick-send scope \"artist\" pada item tanpa artis tetap mem-post placeholder pada semua mode", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const quick = source.match(/handle\("send:quick",[\s\S]*?\n\}\);/)[0];
       function makeContext(mode) {
@@ -1701,7 +1733,7 @@ async function test(name, fn) {
             listItemReactions: () => [],
             getArtistAssignModes: () => ({ mention: mode === "mention", react: mode === "react" }),
           },
-          currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+          currentToken: () => "MOCK", threadKey: () => "key", confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {}, replyToPost: () => null,
           reconcileItemStatusState: async () => {},
           slack: {
             findThreadChannel: () => null,
@@ -1726,7 +1758,8 @@ async function test(name, fn) {
       {
         const ctx = makeContext("react");
         await ctx.invoke(); // gak boleh reject
-        assert.equal(ctx.syncCalls, 0);
+        assert.equal(ctx.syncCalls, 1);
+        assert.equal(ctx.syncArgs.artistIds.length, 0);
       }
     });
     await test("quick-send (poin revisi, \"Instant Intake jadi sumber kebenaran\") — resolveAttempt(\"restart\") dipanggil SEBELUM sendItem, bersihin bookkeeping percobaan lama biar gak keblokir \"Isi berubah sejak kiriman parsial\"", async () => {
@@ -1737,12 +1770,14 @@ async function test(name, fn) {
       const context = {
         activeSend: null, require: nativeRequire, handle: (_name, fn) => { handler = fn; },
         projects: { getProject: () => ({ channel_id: "CA", items: [{ id: "I", name: "item", replies: [], artists: [] }] }), addLog: () => {}, listItemReactions: () => [], getArtistAssignModes: () => ({ mention: false, react: false }) },
-        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {}, replyToPost: () => null,
         reconcileItemStatusState: async () => {},
         slack: {
           findThreadChannel: () => null,
           resolveAttempt: (args) => { callOrder.push(["resolveAttempt", args]); },
           sendItem: async () => { callOrder.push(["sendItem"]); return { threadTs: "1.000", isNew: true }; },
+          syncAssignMessage: async () => {},
+          addReaction: async () => {},
         },
       };
       vm.runInNewContext(quick, context);
@@ -1816,7 +1851,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: (name, fn) => { handlers[name] = fn; },
-        openSlack: () => {},
+        openSlack: () => {}, autoOpenSlack: () => {},
         projects: {
           getProject: () => ({
             items: [
@@ -1876,7 +1911,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: (name, fn) => { handlers[name] = fn; },
-        openSlack: () => {},
+        openSlack: () => {}, autoOpenSlack: () => {},
         currentToken: () => "MOCK",
         threadKey: (_p, id) => id,
         // notifyItemChanged ASLI ikut ke-extract di block ini (posisinya di antara
@@ -1968,7 +2003,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: (name, fn) => { handlers[name] = fn; },
-        openSlack: (args) => openSlackCalls.push(args),
+        openSlack: (args) => openSlackCalls.push(args), autoOpenSlack: (args) => openSlackCalls.push(args),
         currentToken: () => "MOCK",
         threadKey: (_p, id) => id,
         win: { isDestroyed: () => false, webContents: { send: (_c, data) => notifyPushes.push(data) } },
@@ -2065,7 +2100,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: (name, fn) => { handlers[name] = fn; },
-        openSlack: () => {},
+        openSlack: () => {}, autoOpenSlack: () => {},
         currentToken: () => "MOCK",
         threadKey: (_p, id) => id,
         win: { isDestroyed: () => false, webContents: { send: (_c, data) => notifyPushes.push(data) } },
@@ -2121,7 +2156,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: (name, fn) => { handlers[name] = fn; },
-        openSlack: (args) => { openSlackCalls.push(args); },
+        openSlack: (args) => { openSlackCalls.push(args); }, autoOpenSlack: (args) => { openSlackCalls.push(args); },
         projects: {
           getProject: () => ({ items: [{ id: "I", name: "item-003" }] }),
           addItemArtist: (_itemId, artistId, artistName) => { if (!itemArtists.find((a) => a.artist_id === artistId)) itemArtists.push({ artist_id: artistId, artist_name: artistName }); },
@@ -2231,7 +2266,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: (name, fn) => { handlers[name] = fn; },
-        openSlack: () => {},
+        openSlack: () => {}, autoOpenSlack: () => {},
         projects: {
           getProject: () => ({ items: [{ id: "I", name: "item-both" }] }),
           addItemArtist: (_itemId, artistId, artistName) => { if (!itemArtists.find((a) => a.artist_id === artistId)) itemArtists.push({ artist_id: artistId, artist_name: artistName }); },
@@ -2283,7 +2318,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: (name, fn) => { handlers[name] = fn; },
-        openSlack: () => {},
+        openSlack: () => {}, autoOpenSlack: () => {},
         projects: {
           getProject: () => ({ items: [{ id: "I", name: "item-order" }] }),
           addItemArtist: (_itemId, artistId, artistName) => { if (!itemArtists.find((a) => a.artist_id === artistId)) itemArtists.push({ artist_id: artistId, artist_name: artistName }); },
@@ -2330,7 +2365,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: (name, fn) => { handlers[name] = fn; },
-        openSlack: (args) => { openSlackCalls.push(args); },
+        openSlack: (args) => { openSlackCalls.push(args); }, autoOpenSlack: (args) => { openSlackCalls.push(args); },
         projects: {
           getProject: () => ({ items: [{ id: "I", name: "item-status" }] }),
           getRealtimeAssignEnabled: () => realtime,
@@ -2381,7 +2416,7 @@ async function test(name, fn) {
       const context = {
         require: nativeRequire,
         handle: () => {},
-        openSlack: () => {},
+        openSlack: () => {}, autoOpenSlack: () => {},
         projects: {
           getItemStatus: () => itemStatus,
           setItemStatusSentShortcode: (_itemId, shortcode) => { itemStatus = { ...itemStatus, sent_shortcode: shortcode }; },
@@ -2809,7 +2844,7 @@ async function test(name, fn) {
           markReplySent: (id) => sentReplyIds.push(id),
           getArtistAssignModes: () => ({ mention: true, react: false }),
         },
-        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: (reply) => reply ? { text: "field" } : null,
+        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {}, replyToPost: (reply) => reply ? { text: "field" } : null,
         reconcileItemStatusState: async () => {},
         slack: {
           ensureRoot: async ({ threadKey: key }) => {
@@ -2875,7 +2910,7 @@ async function test(name, fn) {
             listItemReactions: () => [],
             getArtistAssignModes: () => ({ mention: true, react: false }),
           },
-          currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, replyToPost: () => null,
+          currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {}, replyToPost: () => null,
           reconcileItemStatusState: async () => {},
           slack: {
             ensureRoot: async ({ threadKey: key }) => ({ threadTs: `${key}.ts`, isNew: true }),
@@ -2928,7 +2963,7 @@ async function test(name, fn) {
           getArtistAssignModes: () => ({ mention: false, react: false }),
           markReplySent: () => {},
         },
-        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {},
+        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {},
         reconcileItemStatusState: async () => {},
         replyToPost: (reply) => (reply.text_value ? { text: reply.text_value } : null),
         slack: {
@@ -2953,7 +2988,7 @@ async function test(name, fn) {
       assert.equal(sendRepliesCalls[0].posts.length, 1);
       assert.equal(sendRepliesCalls[0].posts[0].text, "field baru");
     });
-    await test("send:start fase post (poin revisi, bug dilaporkan: merge >10 file misahin field jadi 2, field HASIL PECAHAN gak kekirim) — field yang gagal TETAP dicoba (gak ke-skip gara-gara field lain), field yang sukses TETAP di-lock walau field tetangganya gagal", async () => {
+    await test("send:start fase post mempertahankan urutan dan tidak mengirim field setelah field yang gagal", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/handle\("send:start",[\s\S]*?\n\}\);/)[0];
       const sendRepliesCalls = [];
@@ -2972,6 +3007,7 @@ async function test(name, fn) {
               replies: [
                 { id: "R-1", title: "Referensi", text_value: null, sort_order: 0, files: [], sent: false },
                 { id: "R-2", title: "Referensi", text_value: null, sort_order: 1, files: [], sent: false },
+                { id: "R-3", title: "Referensi", text_value: null, sort_order: 2, files: [], sent: false },
               ],
             }],
           }),
@@ -2982,7 +3018,7 @@ async function test(name, fn) {
           getArtistAssignModes: () => ({ mention: false, react: false }),
           markReplySent: (id) => markedSent.push(id),
         },
-        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {},
+        currentToken: () => "MOCK", threadKey: (_p, id) => id, confirmLegacyThread: async () => {}, openSlack: () => {}, autoOpenSlack: () => {},
         reconcileItemStatusState: async () => {},
         replyToPost: (reply) => ({ text: reply.title }),
         slack: {
@@ -3019,6 +3055,7 @@ async function test(name, fn) {
       // state-nya kepisah, field-2 yang gagal gak nyangkut ngeblok field-1 ATAU field lain.
       assert.ok(sendRepliesCalls.some((c) => c.threadKey === "A#reply:R-1"));
       assert.ok(sendRepliesCalls.some((c) => c.threadKey === "A#reply:R-2"));
+      assert.ok(!sendRepliesCalls.some((c) => c.threadKey === "A#reply:R-3"));
       // Cuma field yang BENERAN sukses (R-1) yang di-lock -- field yang gagal (R-2) TETAP
       // kebuka, bisa dicoba lagi lewat Instant Intake tanpa perlu "buka gembok" dulu (belum
       // pernah ke-gembok dari awal, konsisten sama "field yang digembok = benar-benar terkirim").
@@ -3331,7 +3368,7 @@ async function test(name, fn) {
         require: nativeRequire,
         handle: (_name, fn) => { handler = fn; },
         currentToken: () => "MOCK",
-        openSlack: (args) => openSlackCalls.push(args),
+        openSlack: (args) => openSlackCalls.push(args), autoOpenSlack: (args) => openSlackCalls.push(args),
         hbStatus: {
           postStatus: async (_slack, token, text) => { postStatusCalls.push({ token, text }); },
           findStatusChannel: async () => "C-HBAPPS",

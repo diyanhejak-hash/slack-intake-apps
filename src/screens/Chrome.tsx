@@ -173,6 +173,8 @@ export interface MenuBarActions {
    * tombol "Add React" (ItemReactionBar). */
   instantIntakeEnabled: boolean;
   onToggleInstantIntake: () => void;
+  autoOpenSlackEnabled: boolean;
+  onToggleAutoOpenSlack: () => void;
   /** Poin revisi — buka modal "Kelola Otomasi Kata Kunci" (berdiri sendiri, punya toggle
    * enable/disable sendiri di dalamnya), dari sub menu Settings. */
   onKeywordAutomation: () => void;
@@ -316,14 +318,24 @@ export function MenuBar(a: MenuBarActions) {
                 </div>
               )}
               {m === "Settings" && (
-                <button
-                  className="btn"
-                  style={{ width: "100%", justifyContent: "space-between", border: "none", padding: "6px 8px" }}
-                  onClick={() => a.onToggleInstantIntake()}
-                >
-                  <span>Instant Intake</span>
-                  {a.instantIntakeEnabled ? <CheckSquare size={14} /> : <Square size={14} />}
-                </button>
+                <>
+                  <button
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "space-between", border: "none", padding: "6px 8px" }}
+                    onClick={() => a.onToggleInstantIntake()}
+                  >
+                    <span>Instant Intake</span>
+                    {a.instantIntakeEnabled ? <CheckSquare size={14} /> : <Square size={14} />}
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "space-between", border: "none", padding: "6px 8px" }}
+                    onClick={() => a.onToggleAutoOpenSlack()}
+                  >
+                    <span>Auto Pop-up Slack</span>
+                    {a.autoOpenSlackEnabled ? <CheckSquare size={14} /> : <Square size={14} />}
+                  </button>
+                </>
               )}
               {contents[m].map((item) => (
                 <button

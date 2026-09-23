@@ -6,7 +6,6 @@ import BatchFileModal from "./BatchFileModal";
 import MessageLogPanel from "./MessageLogPanel";
 import { Sidebar, MenuBar, SyncControls, type MenuName } from "./Chrome";
 import PromptModal from "./PromptModal";
-import SendRecovery from "./SendRecovery";
 import ChannelPicker from "./ChannelPicker";
 import QuickSendButton from "./QuickSendButton";
 import ArtistPresetModal from "./ArtistPresetModal";
@@ -73,6 +72,17 @@ export default function MainTable({
     setInstantIntakeEnabledState(next);
     await window.api.instantIntake.set(next);
   }
+  const [autoOpenSlackEnabled, setAutoOpenSlackEnabled] = useState(true);
+  async function toggleAutoOpenSlack() {
+    const next = !autoOpenSlackEnabled;
+    setAutoOpenSlackEnabled(next);
+    try {
+      await window.api.autoOpenSlack.set(next);
+    } catch (err) {
+      setAutoOpenSlackEnabled(!next);
+      showToast(err instanceof Error ? err.message : "Gagal menyimpan pengaturan Auto Pop-up Slack.", "error");
+    }
+  }
   // Toggle "sesi assign artis realtime" (poin revisi, multi-artist) — GLOBAL, shared sama Tab
   // Table (header kolom Artis) DAN Tab Reply (section Artis), state SATU sumber di sini.
   const [realtimeAssignEnabled, setRealtimeAssignEnabledState] = useState(false);
@@ -138,6 +148,7 @@ export default function MainTable({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [progress, setProgress] = useState<{ index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post"; counts?: { items: number; assigns: number; replies: number; files: number; total: number } } | null>(null);
   const [results, setResults] = useState<SendResult[] | null>(null);
+  const [retryingItemIds, setRetryingItemIds] = useState<Set<string>>(new Set());
   const [sending, setSending] = useState(false);
   const [activeTab, setActiveTab] = useState<"table" | "reply">("table");
   const [activeItemId, setActiveItemId] = useState<string | null>(null);
@@ -228,6 +239,7 @@ export default function MainTable({
     window.api.artistAssignMode.get().then((modes) => setMultiAssignment(modes.multi));
     window.api.statusPreset.list().then(setStatusPresets);
     window.api.instantIntake.get().then(setInstantIntakeEnabledState);
+    window.api.autoOpenSlack.get().then(setAutoOpenSlackEnabled);
     window.api.artistRealtimeAssign.get().then(setRealtimeAssignEnabledState);
     // Cache preset custom emoji (poin revisi) — di-load sedini mungkin biar pas Tab Reply
     // dibuka, EmojiImageNode udah bisa langsung parse ":nama:" tersimpan jadi gambar (bukan
@@ -767,15 +779,21 @@ export default function MainTable({
     onBackToStartMenu();
   }
 
-  function doSend(itemIds: string[], channelId: string, scope?: "item" | "artist" | "replies") {
+  async function doSend(itemIds: string[], channelId: string, scope?: "item" | "artist" | "replies", channelName?: string) {
     setShowPreview(false);
     setSending(true);
     setResults(null);
-    window.api.send.start({ projectId, itemIds, channelId, scope }).catch((err) => {
+    try {
+      if (channelName) {
+        const updated = await window.api.project.setChannel(projectId, channelId, channelName);
+        setProject(updated);
+      }
+      await window.api.send.start({ projectId, itemIds, channelId, scope });
+    } catch (err) {
       setSending(false);
       setProgress(null);
       setResults(itemIds.map((itemId) => ({ itemId, itemName: project?.items.find((i) => i.id === itemId)?.name || itemId, status: "gagal", reason: err instanceof Error ? err.message : "Gagal mengirim." })));
-    });
+    }
   }
 
   // Instant Intake per-KOLOM (poin revisi: overlay di header tabel, bukan cuma per-row) — kirim
@@ -885,6 +903,30 @@ export default function MainTable({
       setResults([{ itemId, itemName: project?.items.find((i) => i.id === itemId)?.name || itemId, status: "gagal", reason: err.message }]);
       throw err;
     });
+  }
+
+  async function retryFailedReplies(itemId: string) {
+    if (retryingItemIds.has(itemId)) return;
+    setRetryingItemIds((prev) => new Set(prev).add(itemId));
+    try {
+      const sent = await window.api.send.quick({ projectId, itemId, scope: "replies" });
+      setResults((prev) => prev?.map((result) => result.itemId === itemId
+        ? { ...result, ...sent, status: "berhasil", reason: undefined }
+        : result) || null);
+      await refresh();
+      setReactionTick((value) => value + 1);
+      showToast("Field yang belum terkirim berhasil dikirim.", "success");
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : "Gagal mengirim ulang field.";
+      setResults((prev) => prev?.map((result) => result.itemId === itemId ? { ...result, status: "gagal", reason } : result) || null);
+      showToast(reason, "error");
+    } finally {
+      setRetryingItemIds((prev) => {
+        const next = new Set(prev);
+        next.delete(itemId);
+        return next;
+      });
+    }
   }
 
   // Poin revisi (diminta user) — overlay "Instant Intake" per-item sekarang 2 prilaku beda:
@@ -1025,6 +1067,8 @@ export default function MainTable({
         onHelp={() => setShowHelp(true)}
         instantIntakeEnabled={instantIntakeEnabled}
         onToggleInstantIntake={toggleInstantIntake}
+        autoOpenSlackEnabled={autoOpenSlackEnabled}
+        onToggleAutoOpenSlack={toggleAutoOpenSlack}
         onKeywordAutomation={() => setShowKeywordAutomation(true)}
         isAdminMember={isAdminMember}
       />
@@ -1429,7 +1473,17 @@ export default function MainTable({
                   {r.status === "berhasil" ? "✓" : r.status === "gagal" ? "✗" : "–"} {r.itemName}
                   {r.reason && <span style={{ color: "var(--danger)" }}> — {r.reason}</span>}
                 </span>
-                {r.status === "gagal" && <SendRecovery projectId={projectId} itemId={r.itemId} channelId={r.channelId} />}
+                {r.status === "gagal" && (
+                  <button
+                    className="btn"
+                    style={{ padding: "2px 6px", fontSize: 11, flexShrink: 0 }}
+                    disabled={retryingItemIds.has(r.itemId)}
+                    onClick={() => retryFailedReplies(r.itemId)}
+                  >
+                    {retryingItemIds.has(r.itemId) ? <Loader2 size={11} className="spin" /> : null}
+                    Instant Intake
+                  </button>
+                )}
                 {r.permalink && (
                   <>
                     <button
@@ -1631,7 +1685,13 @@ export default function MainTable({
       )}
 
       {showPreview && (
-        <SlackViewPreview project={project} itemIds={effectiveItemIds} onClose={() => setShowPreview(false)} onConfirm={(channelId) => doSend(effectiveItemIds, channelId)} />
+        <SlackViewPreview
+          project={project}
+          itemIds={effectiveItemIds}
+          onClose={() => setShowPreview(false)}
+          onChannelChanged={(channelId, channelName) => setProject((prev) => prev ? { ...prev, channel_id: channelId, channel_name: channelName } : prev)}
+          onConfirm={(channelId, channelName) => doSend(effectiveItemIds, channelId, undefined, channelName)}
+        />
       )}
 
       {showHelp && <ShortcutsHelp onClose={() => setShowHelp(false)} />}
@@ -1762,18 +1822,21 @@ function SlackViewPreview({
   itemIds,
   onClose,
   onConfirm,
+  onChannelChanged,
 }: {
   project: Project;
   itemIds: string[];
   onClose: () => void;
   onConfirm: (channelId: string, channelName: string) => void;
+  onChannelChanged: (channelId: string, channelName: string) => void;
 }) {
   const items = project.items.filter((i) => itemIds.includes(i.id));
-  // Default = channel yang di-set pas project dibuat, tapi bisa diganti khusus buat kiriman ini
-  // (gak nimpa channel default project-nya).
+  // Default mengikuti channel terakhir project. Pilihan baru langsung menjadi default project
+  // ini sehingga kiriman parsial berikutnya tetap menuju channel yang sama.
   const [channels, setChannels] = useState<SlackChannel[]>([{ id: project.channel_id, name: project.channel_name, isPrivate: false }]);
   const [channelId, setChannelId] = useState(project.channel_id);
   const [loadingChannels, setLoadingChannels] = useState(true);
+  const [savingChannel, setSavingChannel] = useState(false);
 
   useEffect(() => {
     window.api.slack
@@ -1791,6 +1854,21 @@ function SlackViewPreview({
 
   const selectedChannel = channels.find((c) => c.id === channelId);
 
+  async function selectChannel(channel: SlackChannel) {
+    const previousId = channelId;
+    setChannelId(channel.id);
+    setSavingChannel(true);
+    try {
+      await window.api.project.setChannel(project.id, channel.id, channel.name);
+      onChannelChanged(channel.id, channel.name);
+    } catch (err) {
+      setChannelId(previousId);
+      showToast(err instanceof Error ? err.message : "Gagal menyimpan channel project.", "error");
+    } finally {
+      setSavingChannel(false);
+    }
+  }
+
   return (
     <div role="dialog" aria-modal="true" style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.4)", zIndex: 25, display: "flex", alignItems: "center", justifyContent: "center" }}>
       <div className="card" style={{ padding: 16, width: 480, maxHeight: "80vh", display: "flex", flexDirection: "column", background: "var(--surface)" }}>
@@ -1806,7 +1884,7 @@ function SlackViewPreview({
           <div className="label" style={{ marginBottom: 4 }}>
             Kirim ke channel
           </div>
-          <ChannelPicker channels={channels} value={channelId} loading={loadingChannels} onChange={(c) => setChannelId(c.id)} />
+          <ChannelPicker channels={channels} value={channelId} loading={loadingChannels || savingChannel} onChange={selectChannel} />
         </div>
         <p className="caption" style={{ marginBottom: 8 }}>
           Preview kasar tampilan di channel # {selectedChannel?.name || project.channel_name}. Ini bukan render Slack asli, cuma gambaran struktur pesan.
@@ -1830,7 +1908,7 @@ function SlackViewPreview({
           <button className="btn" onClick={onClose}>
             Batal
           </button>
-          <button className="btn btn-primary" onClick={() => onConfirm(channelId, selectedChannel?.name || project.channel_name)}>
+          <button className="btn btn-primary" disabled={savingChannel} onClick={() => onConfirm(channelId, selectedChannel?.name || project.channel_name)}>
             <Send size={14} /> Kirim Sekarang
           </button>
         </div>

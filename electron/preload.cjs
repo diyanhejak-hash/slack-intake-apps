@@ -38,6 +38,7 @@ contextBridge.exposeInMainWorld("api", {
     listChannelMemberIds: (id) => ipcRenderer.invoke("project:listChannelMemberIds", id),
     refreshChannelMembers: (id) => ipcRenderer.invoke("project:refreshChannelMembers", id),
     rename: (id, name) => ipcRenderer.invoke("project:rename", id, name),
+    setChannel: (id, channelId, channelName) => ipcRenderer.invoke("project:setChannel", id, channelId, channelName),
     setPhase: (id, phase) => ipcRenderer.invoke("project:setPhase", id, phase),
     delete: (id) => ipcRenderer.invoke("project:delete", id),
     duplicate: (id, newName) => ipcRenderer.invoke("project:duplicate", id, newName),
@@ -72,6 +73,7 @@ contextBridge.exposeInMainWorld("api", {
   reply: {
     add: (payload) => ipcRenderer.invoke("reply:add", payload),
     update: (replyId, patch) => ipcRenderer.invoke("reply:update", replyId, patch),
+    lock: (replyId) => ipcRenderer.invoke("reply:lock", replyId),
     unlock: (replyId) => ipcRenderer.invoke("reply:unlock", replyId),
     remove: (replyId) => ipcRenderer.invoke("reply:remove", replyId),
     removeMany: (replyIds) => ipcRenderer.invoke("reply:removeMany", replyIds),
@@ -119,6 +121,10 @@ contextBridge.exposeInMainWorld("api", {
   instantIntake: {
     get: () => ipcRenderer.invoke("instantIntake:get"),
     set: (enabled) => ipcRenderer.invoke("instantIntake:set", enabled),
+  },
+  autoOpenSlack: {
+    get: () => ipcRenderer.invoke("autoOpenSlack:get"),
+    set: (enabled) => ipcRenderer.invoke("autoOpenSlack:set", enabled),
   },
   artistRealtimeAssign: {
     get: () => ipcRenderer.invoke("artistRealtimeAssign:get"),

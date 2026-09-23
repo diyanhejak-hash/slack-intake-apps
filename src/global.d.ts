@@ -270,6 +270,7 @@ declare global {
         listChannelMemberIds: (id: string) => Promise<string[]>;
         refreshChannelMembers: (id: string) => Promise<{ refreshed: boolean; memberIds: string[] }>;
         rename: (id: string, name: string) => Promise<void>;
+        setChannel: (id: string, channelId: string, channelName: string) => Promise<Project>;
         setPhase: (id: string, phase: "setup" | "input") => Promise<void>;
         delete: (id: string) => Promise<void>;
         duplicate: (id: string, newName: string) => Promise<string>;
@@ -308,6 +309,7 @@ declare global {
         // ke-match reply tanpa judul lain di Broadcast/Merge).
         add: (payload: { itemId: string; title: string; textValue?: string; filePaths?: string[] }) => Promise<string>;
         update: (replyId: string, patch: { title?: string; textValue?: string }) => Promise<void>;
+        lock: (replyId: string) => Promise<void>;
         /** "Buka gembok" (poin revisi) — override manual field yang ke-lock (sent_at) padahal
          * gagal terkirim, biar bisa dikirim ulang lewat Instant Intake per-field. */
         unlock: (replyId: string) => Promise<void>;
@@ -367,6 +369,10 @@ declare global {
       };
       /** Toggle global Instant Intake + Instant Reaction (poin revisi) — gak sentuh "Add React". */
       instantIntake: {
+        get: () => Promise<boolean>;
+        set: (enabled: boolean) => Promise<boolean>;
+      };
+      autoOpenSlack: {
         get: () => Promise<boolean>;
         set: (enabled: boolean) => Promise<boolean>;
       };

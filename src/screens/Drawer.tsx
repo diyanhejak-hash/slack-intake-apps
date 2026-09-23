@@ -26,6 +26,7 @@ import {
   ChevronDown,
   ChevronUp,
   Lock,
+  Unlock,
   CircleUserRound,
 } from "lucide-react";
 import type { ArtistPreset, HyperlinkPreset, ItemFile, ProjectItem, Reply, SlackUser, StatusPreset, Template, TemplateField } from "../global";
@@ -916,23 +917,21 @@ function ReplyRow({
         />
         )}
         <div className="reply-actions" style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          {/* Satu ikon switch lock/open (poin revisi, diminta user) — gabungan indikator + tombol
-              buka gembok yang tadinya 2 elemen terpisah. Tampil Lock (terkirim) selama locked,
-              klik langsung buka gembok -- begitu kebuka, blok `{locked && ...}` ini otomatis
-              ilang (state balik jadi field biasa/editable), gak perlu icon "Open" nempel terus. */}
-          {locked && (
-            <button
-              className="icon-btn"
-              title="Udah kekirim ke Slack — klik buat buka gembok (pakai HANYA kalau field ini SEBENARNYA gagal terkirim, mis. field lain di kiriman yang sama gagal, biar bisa dikirim ulang lewat Instant Intake)"
-              onClick={() => {
+          <button
+            className="icon-btn"
+            title={locked ? "Buka kunci field" : "Kunci field sebagai sudah terkirim"}
+            onClick={() => {
+              if (locked) {
                 if (confirm("Buka gembok field ini? Cuma lakuin ini kalau field ini BENERAN belum/gagal terkirim ke Slack — kalau ternyata udah kekirim, kirim ulang bisa bikin pesan dobel di Slack.")) {
                   window.api.reply.unlock(reply.id).then(onChanged);
                 }
-              }}
-            >
-              <Lock size={12} />
-            </button>
-          )}
+              } else {
+                window.api.reply.lock(reply.id).then(onChanged);
+              }
+            }}
+          >
+            {locked ? <Unlock size={12} /> : <Lock size={12} />}
+          </button>
           <input type="checkbox" checked={selected} onChange={onToggleSelected} aria-label={`Pilih field ${reply.title || "tanpa judul"}`} />
           {!locked && (
             <>

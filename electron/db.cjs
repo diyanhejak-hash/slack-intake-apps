@@ -154,6 +154,15 @@ CREATE TABLE IF NOT EXISTS instant_intake_setting (
 );
 INSERT OR IGNORE INTO instant_intake_setting (id, enabled) VALUES (1, 0);
 
+-- Kontrol apakah aksi kirim/push/realtime otomatis membuka Slack Desktop. Default ON supaya
+-- instalasi lama mempertahankan perilaku sebelumnya; tombol "Buka di Slack" manual tidak
+-- dipengaruhi setting ini.
+CREATE TABLE IF NOT EXISTS auto_open_slack_setting (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  enabled INTEGER NOT NULL DEFAULT 1
+);
+INSERT OR IGNORE INTO auto_open_slack_setting (id, enabled) VALUES (1, 1);
+
 -- Otomasi Kata Kunci (poin revisi — awalnya hardcode "@WIP" -> status "Working on it" doang,
 -- digeneralisasi jadi preset bebas: user tentuin sendiri kata kunci apa aja + target-nya (Status
 -- ATAU Artis)). Kata kunci diketik SIAPA PUN sebagai reply di thread item -- otomatis set status

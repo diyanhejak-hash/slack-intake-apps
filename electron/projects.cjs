@@ -129,6 +129,17 @@ function createProject({ name, channelId, channelName }) {
   return getProject(id);
 }
 
+function setProjectChannel(id, channelId, channelName) {
+  const project = getProject(id);
+  if (!project) throw new Error("Project tidak ditemukan.");
+  const cleanId = String(channelId || "").trim();
+  const cleanName = String(channelName || "").trim();
+  if (!cleanId || !cleanName) throw new Error("Channel project tidak valid.");
+  db.prepare(`UPDATE projects SET channel_id = ?, channel_name = ?, updated_at = ? WHERE id = ? AND owner_user_id=? AND owner_team_id=?`)
+    .run(cleanId, cleanName, now(), id, activeScope.userId, activeScope.teamId);
+  return getProject(id);
+}
+
 // Tahapan gak boleh dilewatin (poin revisi, diminta user) -- Setup->Input digate: SEMUA item
 // harus udah punya thread (nama item-nya kekirim ke Slack) dulu, reply/field boleh nyusul di
 // tahap Input. Input->Setup (poin revisi lanjutan, diminta user) SEKARANG diblok total -- SEKALI
@@ -391,6 +402,16 @@ function snapshotItemDeep(row) {
 // SAMA di item yang digabung ikut dikonsolidasi jadi 1 (teks disambung baris baru, file
 // digabung 1 list) — bukan cuma dipindah gitu aja. Snapshot pre-merge disimpan dalam-dalam
 // (termasuk isi reply sebelum konsolidasi) biar Undo bisa balikin persis, bukan cuma id.
+function numberSplitReplies(itemId, category, baseTitle) {
+  const replies = db.prepare(`SELECT id, sent_at FROM replies WHERE item_id=? AND category=? ORDER BY sort_order, rowid`).all(itemId, category);
+  if (replies.length < 2) return;
+  replies.forEach((reply, index) => {
+    // Jangan ubah judul field yang sudah tampil di Slack. Field pending tetap diberi nomor
+    // berdasarkan posisi sebenarnya sehingga pecahan baru melanjutkan sebagai "... 2", dst.
+    if (!reply.sent_at) db.prepare(`UPDATE replies SET title=? WHERE id=?`).run(`${baseTitle} ${index + 1}`, reply.id);
+  });
+}
+
 function mergeItems(itemIds, separator = ", ") {
   if (!Array.isArray(itemIds) || new Set(itemIds).size !== itemIds.length || !itemIds.every(ownsItem) || new Set(itemIds.map(projectIdForItem)).size !== 1) throw new Error("Merge hanya boleh untuk item berbeda dalam satu project.");
   if (itemIds.length < 2) return { keepId: itemIds[0], snapshot: null };
@@ -503,6 +524,10 @@ function mergeItems(itemIds, separator = ", ") {
     for (const overflowId of overflowsByPrimary.get(r.id) || []) {
       db.prepare(`UPDATE replies SET sort_order = ? WHERE id = ?`).run(order++, overflowId);
     }
+  }
+  for (const group of byCategory.values()) {
+    const primary = group[0];
+    numberSplitReplies(keep.id, primary.category, primary.category || primary.title);
   }
 
   mergedItems.set(snapshot.undoId, snapshot);
@@ -697,6 +722,14 @@ function assertReplyEditable(replyId) {
 }
 function markReplySent(replyId, sentByUserId = activeScope.userId) {
   db.prepare(`UPDATE replies SET sent_at = ?, sent_by_user_id = ? WHERE id = ?`).run(now(), sentByUserId || null, replyId);
+}
+
+function lockReply(replyId) {
+  if (!ownsReply(replyId)) throw new Error("Field tidak ditemukan.");
+  markReplySent(replyId);
+  const row = db.prepare(`SELECT item_id FROM replies WHERE id=?`).get(replyId);
+  const projectId = row && projectIdForItem(row.item_id);
+  if (projectId) touchProject(projectId);
 }
 
 // "Buka gembok" (poin revisi, diminta user) — override manual field yang kelanjur ke-lock
@@ -959,6 +992,13 @@ function applyBatchSections(projectId) {
         db.prepare(`INSERT INTO reply_files(id,reply_id,stored_path,original_name) VALUES(?,?,?,?)`).run(replyFileId, replyId, entry.storedPath, entry.file.filename);
         db.prepare(`INSERT INTO batch_applications(file_id,item_id,reply_file_id) VALUES(?,?,?)`).run(entry.file.id, entry.itemId, replyFileId);
       }
+      const numbered = new Set();
+      for (const entry of staged) {
+        const key = JSON.stringify([entry.itemId, entry.section.name]);
+        if (numbered.has(key)) continue;
+        numbered.add(key);
+        numberSplitReplies(entry.itemId, entry.section.name, entry.section.name);
+      }
       touchProject(projectId);
     });
     return { added: staged.length };
@@ -1143,6 +1183,15 @@ function getInstantIntakeEnabled() {
 
 function setInstantIntakeEnabled(enabled) {
   db.prepare(`UPDATE instant_intake_setting SET enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
+  return !!enabled;
+}
+
+function getAutoOpenSlackEnabled() {
+  return !!db.prepare(`SELECT enabled FROM auto_open_slack_setting WHERE id = 1`).get()?.enabled;
+}
+
+function setAutoOpenSlackEnabled(enabled) {
+  db.prepare(`UPDATE auto_open_slack_setting SET enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
   return !!enabled;
 }
 
@@ -1682,6 +1731,7 @@ module.exports = {
   ownsFile,
   projectIdForItem,
   createProject,
+  setProjectChannel,
   setProjectPhase,
   listProjects,
   getProject,
@@ -1713,6 +1763,7 @@ module.exports = {
   addReplyWithFiles,
   updateReply,
   markReplySent,
+  lockReply,
   unlockReply,
   removeReply,
   removeReplies,
@@ -1749,6 +1800,8 @@ module.exports = {
   setMultiAssignEnabled,
   getInstantIntakeEnabled,
   setInstantIntakeEnabled,
+  getAutoOpenSlackEnabled,
+  setAutoOpenSlackEnabled,
   getKeywordAutomationEnabled,
   setKeywordAutomationEnabled,
   listKeywordAutomations,

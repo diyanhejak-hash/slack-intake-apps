@@ -164,6 +164,10 @@ function openSlack({ channelId, ts }) {
   shell.openExternal(`slack://channel?${params.toString()}`).catch(() => shell.openExternal(webUrl));
 }
 
+function autoOpenSlack(target) {
+  if (projects.getAutoOpenSlackEnabled()) openSlack(target);
+}
+
 // Wrapper terpusat ganti ipcMain.handle biasa: error apa pun dari handler manapun otomatis
 // kecatet ke Message Log (poin baru), gak perlu try/catch manual di tiap handler satu-satu.
 function handle(channel, fn) {
@@ -222,12 +226,12 @@ function validateAccess(channel, args) {
     }
   }
   let valid = true;
-  if (["project:load", "project:rename", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "project:listChannelMemberIds", "project:refreshChannelMembers", "batchFile:listSections", "batchFile:saveSections", "batchFile:apply", "artistAssign:syncProject", "slackPull:syncProject"].includes(channel)) valid = projects.ownsProject(args[0]);
+  if (["project:load", "project:rename", "project:setChannel", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "project:listChannelMemberIds", "project:refreshChannelMembers", "batchFile:listSections", "batchFile:saveSections", "batchFile:apply", "artistAssign:syncProject", "slackPull:syncProject"].includes(channel)) valid = projects.ownsProject(args[0]);
   else if (channel === "item:addManual") valid = projects.ownsProject(args[0]?.projectId);
   else if (["item:update", "item:remove", "item:attachFiles"].includes(channel)) valid = projects.ownsItem(args[0]);
   else if (["item:addArtist", "item:removeArtist", "item:setStatus", "item:pushRootName", "artistAssign:syncItem", "slackPull:syncItem"].includes(channel)) valid = projects.ownsProject(args[0]?.projectId) && projects.ownsItem(args[0]?.itemId);
   else if (channel === "item:merge") valid = Array.isArray(args[0]) && args[0].every(projects.ownsItem);
-  else if (["reply:update", "reply:unlock", "reply:remove", "reply:broadcast", "reply:addFiles", "reply:addCapturedToReply"].includes(channel)) valid = projects.ownsReply(args[0]);
+  else if (["reply:update", "reply:lock", "reply:unlock", "reply:remove", "reply:broadcast", "reply:addFiles", "reply:addCapturedToReply"].includes(channel)) valid = projects.ownsReply(args[0]);
   else if (channel === "reply:add") valid = projects.ownsItem(args[0]?.itemId);
   else if (channel === "reply:addCaptured") valid = projects.ownsItem(args[0]);
   else if (["item:removeFile", "project:removeFile", "reply:removeFile"].includes(channel)) valid = projects.ownsFile(args[0]);
@@ -571,6 +575,7 @@ handle("project:refreshChannelMembers", async (_e, id) => {
   return refresh;
 });
 handle("project:rename", (_e, id, name) => projects.renameProject(id, name));
+handle("project:setChannel", (_e, id, channelId, channelName) => projects.setProjectChannel(id, channelId, channelName));
 // Tahap alur kerja Setup/Assign (poin revisi, diminta user) -- toggle manual, bukan otomatis.
 handle("project:setPhase", (_e, id, phase) => projects.setProjectPhase(id, phase));
 handle("project:delete", (_e, id) => projects.deleteProject(id));
@@ -628,6 +633,7 @@ handle("item:removeFile", (_e, fileId) => projects.removeItemFile(fileId));
 
 handle("reply:add", (_e, payload) => projects.addReplyWithFiles(payload.itemId, payload));
 handle("reply:update", (_e, replyId, patch) => projects.updateReply(replyId, patch));
+handle("reply:lock", (_e, replyId) => projects.lockReply(replyId));
 handle("reply:unlock", (_e, replyId) => projects.unlockReply(replyId));
 handle("reply:remove", (_e, replyId) => projects.removeReply(replyId));
 handle("reply:removeMany", (_e, replyIds) => projects.removeReplies(replyIds));
@@ -674,6 +680,8 @@ handle("artistAssignMode:setMulti", (_e, enabled) => projects.setMultiAssignEnab
 // Toggle global Instant Intake + Instant Reaction (poin revisi) — gak sentuh "Add React".
 handle("instantIntake:get", () => projects.getInstantIntakeEnabled());
 handle("instantIntake:set", (_e, enabled) => projects.setInstantIntakeEnabled(enabled));
+handle("autoOpenSlack:get", () => projects.getAutoOpenSlackEnabled());
+handle("autoOpenSlack:set", (_e, enabled) => projects.setAutoOpenSlackEnabled(enabled));
 
 // Toggle global "sesi assign artis realtime" (poin revisi, multi-artist) — dipakai bareng
 // ArtistPicker Tab Table & Tab Reply, lihat item:addArtist/item:removeArtist buat sinkronnya.
@@ -787,7 +795,7 @@ async function reconcileItemAssignState({ projectId, itemId, force = false }) {
   // lewat) langsung buka thread-nya di Slack -- user liat hasilnya seketika tanpa nyari manual.
   // SENGAJA cuma buat realtime, BUKAN bulk "Update" (force=true, artistAssign:syncProject) -- itu
   // bisa nyentuh puluhan item sekaligus, buka tab sebanyak itu jelas kacau.
-  if (!force) openSlack({ channelId: info.channelId, ts: info.threadTs });
+  if (!force) autoOpenSlack({ channelId: info.channelId, ts: info.threadTs });
 }
 
 // Fitur "Status" per item (poin revisi) — CUMA 1 status aktif per item (dropdown, bukan multi
@@ -828,7 +836,7 @@ async function reconcileItemStatusState({ projectId, itemId, force = false }) {
       projects.addLog("error", `Gagal kasih reaction status :${desiredShortcode}: ${err.message}`);
     }
   }
-  if (!force) openSlack({ channelId: info.channelId, ts: info.threadTs });
+  if (!force) autoOpenSlack({ channelId: info.channelId, ts: info.threadTs });
 }
 
 // Assign/lepas 1 artis ke/dari item (poin revisi, multi-artist — ArtistPicker sekarang
@@ -951,7 +959,7 @@ handle("item:pushRootName", async (_e, { projectId, itemId, openAfter = true }) 
   const info = slack.findThreadInfo(threadKey(projectId, itemId));
   if (!info) throw new Error(`"${item.name}" belum mempunyai thread Slack.`);
   await slack.syncRootMessageName({ token: currentToken(), channelId: info.channelId, threadTs: info.threadTs, itemName: item.name });
-  if (openAfter) openSlack({ channelId: info.channelId, ts: info.threadTs });
+  if (openAfter) autoOpenSlack({ channelId: info.channelId, ts: info.threadTs });
   return { itemName: item.name };
 });
 
@@ -990,7 +998,7 @@ handle("artistAssign:syncItem", async (_e, { projectId, itemId, openAfter = true
   // sengaja diem juga.
   if (openAfter) {
     const info = slack.findThreadInfo(threadKey(projectId, itemId));
-    if (info) openSlack({ channelId: info.channelId, ts: info.threadTs });
+    if (info) autoOpenSlack({ channelId: info.channelId, ts: info.threadTs });
   }
   return { itemName: item.name };
 });
@@ -1491,7 +1499,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     const targetChannelId = channelId || project.channel_id;
     const presetByMember = new Map(projects.listArtistPresets().map((p) => [p.member_id, p]));
 
-    openSlack({ channelId: targetChannelId });
+    autoOpenSlack({ channelId: targetChannelId });
 
     // Papan status HB Apps (poin revisi, himbauan MUTLAK — jalan terlepas dari user klik
     // "Mulai Sesi"/skip pas Start Menu) — kasih tau user lain kalau lagi ada job jalan, biar
@@ -1515,7 +1523,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
         const state = itemState.get(item.id);
         const itemUnits = units(itemWork.get(item.id));
         // Hanya kegagalan root yang membuat fase sesudahnya mustahil dijalankan. Kegagalan
-        // assign/status tidak boleh membuang Reply yang independen dan sudah siap dikirim.
+        // assignment/placeholder dicatat, tetapi field produksi tetap boleh diproses.
         if (state.blocked) { await stepDone(itemUnits); continue; }
         if (cancelRequested) { state.cancelled = true; await stepDone(itemUnits); continue; }
         if (!event.sender.isDestroyed()) event.sender.send("send:progress", { projectId, jobId, index: i, total: targets.length, itemName: item.name, phase, counts: workCounts });
@@ -1575,12 +1583,13 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
       // scope "artist" (poin revisi): TIDAK throw lagi kalau item belum ada artis -- sama
       // alasan kayak send:quick, placeholder assign message (mode mention) justru BUTUH ini
       // buat kejadian. Mode react: gak ada yang di-react, no-op aman.
-      const mentionArtistIds = item.artists.map((a) => a.artist_id);
-      if (projects.getArtistAssignModes().mention) {
-        await slack.syncAssignMessage({
-          token, channelId: targetChannelId, itemId: item.id, threadTs: state.threadTs, artistIds: mentionArtistIds,
-        });
-      }
+      const assignModes = projects.getArtistAssignModes();
+      const mentionArtistIds = assignModes.mention ? item.artists.map((a) => a.artist_id) : [];
+      // Pesan assignment selalu menjadi reply pertama. Saat Mention OFF, kirim/update menjadi
+      // placeholder supaya field produksi tidak naik ke posisi pertama di thread.
+      await slack.syncAssignMessage({
+        token, channelId: targetChannelId, itemId: item.id, threadTs: state.threadTs, artistIds: mentionArtistIds,
+      });
       // React artis (poin revisi multi-artist) — data-driven, gak digate scope (flush SEMUA
       // reaction pending yang "milik" salah satu artis di item ini, sama kayak sebelumnya cuma
       // sekarang loop per-artis bukan 1 doang).
@@ -1621,19 +1630,9 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     // scope "item"/"artist" gak butuh reply, di-skip seluruh fase-nya (posts selalu kosong).
     if (scope !== "item" && scope !== "artist") {
       await runPass("post", "kirim reply", async (item, state) => {
-        // posts (poin revisi, bug dilaporkan: merge >10 file misahin field jadi 2, field HASIL
-        // PECAHAN gak kekirim padahal field pertama sukses) — root cause versi lama: SEMUA field
-        // digabung 1 array, dikirim lewat SATU panggilan slack.sendReplies yang berhenti TOTAL
-        // begitu SATU field di tengah gagal (field-field SETELAHNYA gak sempat dicoba sama
-        // sekali), dan markReplySent cuma jalan abis SELURUH array sukses -- field yang SEBENARNYA
-        // udah kekirim ke Slack pun gak ke-lock, attempt row (send_attempts, key SATU per item)
-        // nyangkut "pending" nge-block field LAIN yang gak ada hubungannya biar bisa dicoba lagi.
-        // Fix: tiap field (attach langsung + tiap reply) dikirim lewat panggilan sendReplies
-        // TERPISAH, `key` DI-NAMESPACE per-field (bukan cuma threadKey polos punya item) biar
-        // attempt/resume state-nya sendiri-sendiri -- gagal di 1 field gak nyangkut ke field lain:
-        // yang sukses TETAP di-lock (markReplySent langsung abis field itu SENDIRI kelar), yang
-        // gagal TETAP dicoba (gak ke-skip diam-diam gara-gara urutan array) dan bisa dicoba lagi
-        // manual (Instant Intake per-field) tanpa keblok status field tetangganya.
+        // Tiap field memakai attempt key sendiri dan dikirim satu per satu sesuai sort_order.
+        // Field yang sukses langsung dikunci; begitu satu gagal, loop berhenti agar field setelahnya
+        // tidak mendahului urutan di Slack dan dapat dilanjutkan lewat Instant Intake.
         const baseKey = threadKey(projectId, item.id);
         const posts = [];
         // reply.sent (poin revisi, bug ditemukan lewat audit D10) — field yang UDAH kekirim
@@ -1658,18 +1657,17 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
           await slack.sendReplies({ token, channelId: targetChannelId, threadKey: baseKey, threadTs: state.threadTs, posts: [] });
           return;
         }
-        let firstError = null;
         for (const { key, replyId, post } of posts) {
           try {
             const { permalink } = await slack.sendReplies({ token, channelId: targetChannelId, threadKey: key, threadTs: state.threadTs, posts: [post] });
             if (permalink) state.permalink = permalink;
             if (replyId) projects.markReplySent(replyId);
           } catch (err) {
-            firstError = firstError || err;
             projects.addLog("error", `Gagal kirim field pada "${item.name}": ${err.message}`);
+            // Pertahankan urutan field: field sesudah yang gagal tidak boleh mendahului di Slack.
+            throw err;
           }
         }
-        if (firstError) throw firstError;
       }, { units: (counts) => counts.replies + counts.files });
     }
 
@@ -1729,60 +1727,61 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
   // kesenjangan lama. Buat Instant Intake (aksi SEKALI klik, sengaja gak ada modal recovery),
   // user maunya app SELALU nurut isi TERKINI, gak nolak/minta "Pulihkan Kiriman" dulu — jadi
   // bersihin bookkeeping percobaan lama (kalau ada) SEBELUM manggil sendItem, restart bersih.
-  function restart() {
-    slack.resolveAttempt({ threadKey: itemThreadKey, channelId: targetChannelId, action: "restart" });
+  function restart(key = itemThreadKey) {
+    slack.resolveAttempt({ threadKey: key, channelId: targetChannelId, action: "restart" });
   }
   let threadTs, isNew, permalink;
+  // Root selalu diselesaikan sendiri, lalu assignment/placeholder dipastikan menjadi reply
+  // pertama sebelum satu pun field dikirim.
+  restart();
+  ({ threadTs, isNew, permalink } = await slack.sendItem({
+    token, channelId: targetChannelId, itemName: item.name, threadKey: itemThreadKey, artistIds: [], posts: [],
+  }));
+  const assignModes = projects.getArtistAssignModes();
+  const mentionArtistIds = assignModes.mention ? item.artists.map((a) => a.artist_id) : [];
+  try {
+    await slack.syncAssignMessage({
+      token,
+      channelId: targetChannelId,
+      itemId: item.id,
+      threadTs,
+      artistIds: mentionArtistIds,
+    });
+  } catch (err) {
+    // Placeholder kosong menjaga urutan, tetapi kegagalannya tidak boleh menahan field produksi.
+    // Assignment nyata tetap dianggap gagal supaya mention artis tidak hilang diam-diam.
+    if (mentionArtistIds.length) throw err;
+    projects.addLog("error", `Placeholder assignment gagal pada "${item.name}": ${err.message}`);
+  }
+
+  async function sendReply(reply) {
+    const post = reply.sent ? null : replyToPost(reply);
+    if (!post) return;
+    const replyKey = `${itemThreadKey}#reply:${reply.id}`;
+    restart(replyKey);
+    const result = await slack.sendReplies({
+      token, channelId: targetChannelId, threadKey: replyKey, threadTs, posts: [post],
+    });
+    if (result.permalink) permalink = result.permalink;
+    projects.markReplySent(reply.id);
+  }
+
   if (scope === "replies") {
-    // Root dulu (posts kosong) — sendItem bikin/pakai ulang thread yang udah ada, idempoten.
-    restart();
-    ({ threadTs, isNew, permalink } = await slack.sendItem({ token, channelId: targetChannelId, itemName: item.name, threadKey: itemThreadKey, artistIds: [], posts: [] }));
-    // Poin revisi (bug dilaporkan: field hasil pecahan Merge >10 file — mis. field ke-2 "Animatic"
-    // berisi banyak file mp4 gede — kadang gagal upload, field lain yang independen ikut gak
-    // kekirim/gak ke-lock gara-gara dulu SEMUA field digabung 1 panggilan sendItem) — sama kayak
-    // fix di send:start fase "post": tiap field sekarang dikirim TERPISAH, gagal 1 field gak
-    // ngeblok field lain, yang sukses TETAP ke-lock walau field tetangganya gagal.
-    let firstError = null;
     for (const reply of item.replies) {
       if (reply.sent) continue;
-      const post = replyToPost(reply);
-      if (!post) continue;
       try {
-        restart();
-        const result = await slack.sendItem({ token, channelId: targetChannelId, itemName: item.name, threadKey: itemThreadKey, artistIds: [], posts: [post] });
-        if (result.permalink) permalink = result.permalink;
-        projects.markReplySent(reply.id);
+        await sendReply(reply);
       } catch (err) {
-        firstError = firstError || err;
         projects.addLog("error", `Instant Intake gagal kirim field pada "${item.name}": ${err.message}`);
+        // Jangan lompat ke field sesudahnya. Retry berikutnya dimulai dari field pertama yang
+        // masih belum terkirim sehingga urutan tampilan Slack tetap sama dengan urutan aplikasi.
+        throw err;
       }
     }
-    if (firstError) throw firstError;
-  } else {
-    let posts = [];
-    if (scope === "field") {
-      const reply = item.replies.find((r) => r.id === replyId);
-      if (!reply) throw new Error("Field tidak ditemukan.");
-      const post = reply.sent ? null : replyToPost(reply); // udah kekirim -- no-op, bukan resend
-      posts = post ? [post] : [];
-    }
-    // scope === "item" (default): posts kosong.
-    restart();
-    // artistIds SELALU kosong ke sendItem (poin revisi) -- mention-nya sekarang lewat
-    // syncAssignMessage di bawah (SATU pesan assignment yang di-edit, konsisten sama batch),
-    // bukan sendItem nge-post mention sendiri lagi.
-    ({ threadTs, isNew, permalink } = await slack.sendItem({ token, channelId: targetChannelId, itemName: item.name, threadKey: itemThreadKey, artistIds: [], posts }));
-    if (scope === "field" && replyToPost(item.replies.find((r) => r.id === replyId))) {
-      projects.markReplySent(replyId);
-    }
-  }
-  // Poin revisi: assign message (mode mention) disinkron di SINI juga, buat SEMUA scope Instant
-  // Intake (item/artist/replies/field) -- bukan cuma pas "Kirim ke Slack" batch. Placeholder
-  // (lihat syncAssignMessage) ke-post walau item ini belum ada artis-nya sama sekali.
-  if (projects.getArtistAssignModes().mention) {
-    await slack.syncAssignMessage({
-      token, channelId: targetChannelId, itemId: item.id, threadTs, artistIds: item.artists.map((a) => a.artist_id),
-    });
+  } else if (scope === "field") {
+    const reply = item.replies.find((r) => r.id === replyId);
+    if (!reply) throw new Error("Field tidak ditemukan.");
+    await sendReply(reply);
   }
   projects.addLog("info", `Instant Intake (${scope}) "${item.name}": berhasil.`);
 
@@ -1806,7 +1805,7 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
   // Buka LANGSUNG ke thread pesan yang baru/di-update (bukan cuma channel-nya doang kayak
   // send:start) — instant-send 1 aksi, jadi hasilnya juga langsung ketauan, gak perlu scroll
   // nyari sendiri (poin revisi: "sama seperti kirim ke slack dan langsung new window").
-  openSlack({ channelId: targetChannelId, ts: threadTs });
+  autoOpenSlack({ channelId: targetChannelId, ts: threadTs });
   return { itemId: item.id, itemName: item.name, threadTs, isNew, permalink, channelId: targetChannelId };
   } finally { activeSend = null; }
 });
@@ -1841,7 +1840,7 @@ handle("hbStatus:goOnline", async () => {
   // Poin revisi (diminta user) — "Mulai Sesi" langsung buka Slack ke channel status (hb-apps),
   // biar user langsung liat siapa lagi online, gak perlu nyari channel-nya manual sendiri.
   const channelId = await hbStatus.findStatusChannel(slack, token);
-  if (channelId) openSlack({ channelId });
+  if (channelId) autoOpenSlack({ channelId });
 });
 handle("hbStatus:skip", () => { sessionModalShown = true; });
 
