@@ -152,8 +152,8 @@ async function refreshAccessToken({ clientId, refreshToken }) {
 // panjang lewat parameter kedua.
 const DEFAULT_TIMEOUT_MS = 60 * 1000;
 const UPLOAD_TIMEOUT_MS = 30 * 60 * 1000;
-function client(token, { timeout = DEFAULT_TIMEOUT_MS } = {}) {
-  return new WebClient(token, { retryConfig: { retries: 0 }, rejectRateLimitedCalls: true, timeout });
+function client(token, { timeout = DEFAULT_TIMEOUT_MS, maxRequestConcurrency = 100 } = {}) {
+  return new WebClient(token, { retryConfig: { retries: 0 }, rejectRateLimitedCalls: true, timeout, maxRequestConcurrency });
 }
 
 // Throttle POSTING MESSAGE per channel (poin revisi, stress-test nemu "we are not displaying
@@ -224,13 +224,39 @@ async function withRetry(fn, maxAttempts = 4) {
   }
 }
 
-function assertUploadedFileCount(result, expected) {
+function uploadedFileIds(result) {
   const responses = Array.isArray(result?.files) ? result.files : [];
   const nested = responses.filter((entry) => Array.isArray(entry?.files));
-  const confirmed = nested.length
-    ? nested.reduce((total, entry) => total + entry.files.length, 0)
-    : responses.filter((entry) => entry?.id).length;
-  if (confirmed !== expected) throw new Error(`Slack mengonfirmasi ${confirmed} dari ${expected} file.`);
+  return (nested.length ? nested.flatMap((entry) => entry.files) : responses)
+    .map((entry) => entry?.id)
+    .filter(Boolean);
+}
+
+function assertUploadedFileCount(result, expected) {
+  const ids = uploadedFileIds(result);
+  if (ids.length !== expected) throw new Error(`Slack mengonfirmasi ${ids.length} dari ${expected} file.`);
+  return ids;
+}
+
+// files.uploadV2 dapat mengembalikan ok:true + seluruh file ID walau file-share message belum
+// benar-benar terlihat di thread. Status lokal tidak boleh dikunci hanya berdasarkan respons
+// tahap completeUploadExternal. Baca thread kembali dan pastikan semua ID memang sudah muncul.
+let uploadVerificationDelaysMs = [0, 500, 1500, 3000];
+function setUploadVerificationDelaysForTests(delays) { uploadVerificationDelaysMs = delays; }
+async function verifyUploadedFilesInThread(c, { channelId, threadTs, fileIds }) {
+  const expected = new Set(fileIds);
+  for (const delay of uploadVerificationDelaysMs) {
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    const visible = new Set();
+    let cursor;
+    do {
+      const page = await withRetry(() => c.conversations.replies({ channel: channelId, ts: threadTs, limit: 200, cursor }));
+      for (const message of page.messages || []) for (const file of message.files || []) if (file?.id) visible.add(file.id);
+      cursor = page.response_metadata?.next_cursor || undefined;
+    } while (cursor);
+    if ([...expected].every((id) => visible.has(id))) return;
+  }
+  throw new Error(`Slack menerima upload tetapi belum menampilkan ${fileIds.length} file di thread. Field dibiarkan belum terkirim agar bisa dicoba ulang.`);
 }
 
 // wrapSlackError (poin revisi, bug ditemukan lewat audit D15) — sendItem/sendReplies/
@@ -453,7 +479,10 @@ async function sendItem({ token, channelId, itemName, threadKey, artistIds = [],
     let artistSent = previous?.artist_sent || existing?.artist_sent || 0;
     let nextPost = previous?.next_post || 0;
     let isNew = false;
-    const c = client(token, { timeout: UPLOAD_TIMEOUT_MS }); // fase "post" bisa upload file gede, lihat catatan di client()
+    // Serialkan request internal uploadV2. SDK biasanya menyiapkan/mengunggah seluruh file
+    // secara paralel; pada field tepat 10 file Slack pernah membalas sukses tetapi message-nya
+    // tidak muncul. Satu request pada satu waktu lebih lambat, tetapi menjaga satu field utuh.
+    const c = client(token, { timeout: UPLOAD_TIMEOUT_MS, maxRequestConcurrency: 1 });
     const save = () => saveAttempt.run({ itemName: key, channelId, fingerprint, threadTs, artistSent, nextPost, updatedAt: new Date().toISOString() });
     save();
     async function request(phase, fn) {
@@ -507,7 +536,8 @@ async function sendItem({ token, channelId, itemName, threadKey, artistIds = [],
               channel_id: channelId, thread_ts: threadTs, initial_comment: post.text || undefined,
               file_uploads: post.files.map((f, i) => ({ file: streams[i], filename: f.filename })),
             });
-            assertUploadedFileCount(result, post.files.length);
+            const fileIds = assertUploadedFileCount(result, post.files.length);
+            await verifyUploadedFilesInThread(c, { channelId, threadTs, fileIds });
             return result;
           } finally { streams.forEach((stream) => stream.destroy()); }
         });
@@ -646,7 +676,7 @@ async function sendReplies({ token, channelId, threadKey, threadTs, posts = [] }
     // parsial. Fingerprint mismatch cuma relevan kalau MEMANG udah ada reply yang kekirim.
     if (previous && previous.next_post > 0 && previous.fingerprint !== fingerprint) throw new Error("Isi berubah sejak kiriman parsial. Pulihkan kiriman sebelum mencoba lagi.");
     let nextPost = previous?.next_post || 0;
-    const c = client(token, { timeout: UPLOAD_TIMEOUT_MS }); // reply bisa upload file gede, lihat catatan di client()
+    const c = client(token, { timeout: UPLOAD_TIMEOUT_MS, maxRequestConcurrency: 1 });
     const save = () => saveAttempt.run({ itemName: key, channelId, fingerprint, threadTs, artistSent: previous?.artist_sent || 0, nextPost, updatedAt: new Date().toISOString() });
     save();
     async function request(fn) {
@@ -671,7 +701,8 @@ async function sendReplies({ token, channelId, threadKey, threadTs, posts = [] }
               channel_id: channelId, thread_ts: threadTs, initial_comment: post.text || undefined,
               file_uploads: post.files.map((f, i) => ({ file: streams[i], filename: f.filename })),
             });
-            assertUploadedFileCount(result, post.files.length);
+            const fileIds = assertUploadedFileCount(result, post.files.length);
+            await verifyUploadedFilesInThread(c, { channelId, threadTs, fileIds });
             return result;
           } finally { streams.forEach((stream) => stream.destroy()); }
         });
@@ -788,4 +819,4 @@ async function getChannelMembers({ token, channelId }) {
   return members;
 }
 
-module.exports = { loginWithBrowser, completeLoginFromUrl, refreshAccessToken, client, listChannels, listUsers, listCustomEmojis, sendItem, ensureRoot, syncAssignMessage, syncRootMessageName, sendReplies, postSimpleMessage, updateSimpleMessage, createPrivateChannel, inviteToChannel, removeFromChannel, getChannelMembers, findThreadChannel, findThreadInfo, findItemByThread, addReaction, removeReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests, setReactionIntervalForTests, fetchThreadReplies };
+module.exports = { loginWithBrowser, completeLoginFromUrl, refreshAccessToken, client, listChannels, listUsers, listCustomEmojis, sendItem, ensureRoot, syncAssignMessage, syncRootMessageName, sendReplies, postSimpleMessage, updateSimpleMessage, createPrivateChannel, inviteToChannel, removeFromChannel, getChannelMembers, findThreadChannel, findThreadInfo, findItemByThread, addReaction, removeReaction, pendingAttempt, resolveAttempt, legacyThread, bindLegacyThread, setMinPostIntervalForTests, setReactionIntervalForTests, setUploadVerificationDelaysForTests, fetchThreadReplies };

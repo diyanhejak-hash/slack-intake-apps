@@ -45,6 +45,9 @@ const reactionRemoveCalls = [];
 const oauthAccessCalls = [];
 let failUpload = false;
 let confirmedUploadCount = null;
+let hideCompletedUploadsFromThread = false;
+let uploadedFileSerial = 0;
+const visibleUploadedFileIds = new Set();
 let failPermalink = false;
 // Simulasi 429 SEKALI doang (poin revisi, test auto-retry) -- angka = retryAfter (detik) yang
 // dikasih ke error, flag auto-reset ke false abis 1x throw (jadi panggilan berikutnya sukses,
@@ -92,7 +95,9 @@ class MockSlack {
       if (failUpload) throw Error("mock upload failure");
       const count = confirmedUploadCount ?? (args.file_uploads || []).length;
       confirmedUploadCount = null;
-      return { ok: true, files: [{ ok: true, files: Array.from({ length: count }, (_, i) => ({ id: `F${i}` })) }] };
+      const files = Array.from({ length: count }, () => ({ id: `F${++uploadedFileSerial}` }));
+      if (!hideCompletedUploadsFromThread) for (const file of files) visibleUploadedFileIds.add(file.id);
+      return { ok: true, files: [{ ok: true, files }] };
     },
   };
   reactions = {
@@ -145,6 +150,10 @@ class MockSlack {
     members: async () => (++this.memberPage === 1
       ? { members: ["U1"], response_metadata: { next_cursor: "next" } }
       : { members: ["U2"], response_metadata: { next_cursor: "" } }),
+    replies: async () => ({
+      messages: [{ files: [...visibleUploadedFileIds].map((id) => ({ id })) }],
+      response_metadata: { next_cursor: "" },
+    }),
   };
 }
 const slack = load("electron/slack.cjs", { "./db.cjs": dbModule, "@slack/web-api": { WebClient: MockSlack } });
@@ -154,6 +163,7 @@ const send = (itemName, channelId, posts = []) => slack.sendItem({ token: "MOCK"
 // sini, diaktifkan lagi sesaat buat test pacing-nya sendiri di bawah.
 slack.setMinPostIntervalForTests(0);
 slack.setReactionIntervalForTests(0);
+slack.setUploadVerificationDelaysForTests([0]);
 
 async function test(name, fn) {
   await fn();
@@ -221,6 +231,18 @@ async function test(name, fn) {
         send("upload-count", "CA", [{ files: [{ path: file, filename: "upload-count.txt" }] }]),
         /Slack mengonfirmasi 0 dari 1 file/
       );
+    });
+    await test("upload tidak ditandai sukses kalau Slack memberi file ID tetapi file-share tidak muncul di thread", async () => {
+      const file = path.join(temp, "upload-hidden.txt"); fs.writeFileSync(file, "x");
+      hideCompletedUploadsFromThread = true;
+      try {
+        await assert.rejects(
+          send("upload-hidden", "CA", [{ files: [{ path: file, filename: "upload-hidden.txt" }] }]),
+          /belum menampilkan 1 file di thread/
+        );
+      } finally {
+        hideCompletedUploadsFromThread = false;
+      }
     });
     await test("sendItem/ensureRoot/syncAssignMessage/sendReplies (poin revisi, bug ditemukan lewat audit D15) — error token_expired TETAP bawa .data abis dibungkus jadi pesan actionable, biar auto-refresh token di main.cjs bisa ke-deteksi", async () => {
       // sendItem
