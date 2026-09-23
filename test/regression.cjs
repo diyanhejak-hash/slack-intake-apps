@@ -321,6 +321,8 @@ async function test(name, fn) {
           },
           hbStatus: {
             estimateSendMinutes: () => 1, postStatus: async () => {},
+            countSendWork: ({ targets }) => ({ items: targets.length, assigns: 0, replies: 0, files: 0, total: targets.length }),
+            countItemWork: () => ({ items: 1, assigns: 0, replies: 0, files: 0 }),
             postJobStatus: async () => ({ channelId: "C", ts: "1" }), updateJobStatus: async () => {},
             formatJobStart: () => "start", formatJobHeader: () => "header", formatJobDone: () => "done", createProgressEditor: () => async () => {},
           },
@@ -2826,6 +2828,8 @@ async function test(name, fn) {
         // test terpisah buat estimateSendMinutes/progress message), cukup no-op biar send:start jalan.
         hbStatus: {
           estimateSendMinutes: () => 1, postStatus: async () => {},
+          countSendWork: ({ targets }) => ({ items: targets.length, assigns: 0, replies: 0, files: 0, total: targets.length }),
+          countItemWork: () => ({ items: 1, assigns: 0, replies: 0, files: 0 }),
           postJobStatus: async () => ({ channelId: "C", ts: "1" }), updateJobStatus: async () => {},
           formatJobStart: () => "start", formatJobHeader: () => "header", formatJobDone: () => "done", createProgressEditor: () => async () => {},
         },
@@ -2881,6 +2885,8 @@ async function test(name, fn) {
           },
           hbStatus: {
             estimateSendMinutes: () => 1, postStatus: async () => {},
+            countSendWork: ({ targets }) => ({ items: targets.length, assigns: 0, replies: 0, files: 0, total: targets.length }),
+            countItemWork: () => ({ items: 1, assigns: 0, replies: 0, files: 0 }),
             postJobStatus: async () => ({ channelId: "C", ts: "1" }), updateJobStatus: async () => {},
             formatJobStart: () => "start", formatJobHeader: () => "header", formatJobDone: () => "done", createProgressEditor: () => async () => {},
           },
@@ -2933,6 +2939,8 @@ async function test(name, fn) {
         },
         hbStatus: {
           estimateSendMinutes: () => 1, postStatus: async () => {},
+          countSendWork: ({ targets }) => ({ items: targets.length, assigns: 0, replies: 0, files: 0, total: targets.length }),
+          countItemWork: () => ({ items: 1, assigns: 0, replies: 0, files: 0 }),
           postJobStatus: async () => ({ channelId: "C", ts: "1" }), updateJobStatus: async () => {},
           formatJobStart: () => "start", formatJobHeader: () => "header", formatJobDone: () => "done", createProgressEditor: () => async () => {},
         },
@@ -2994,6 +3002,8 @@ async function test(name, fn) {
         },
         hbStatus: {
           estimateSendMinutes: () => 1, postStatus: async () => {},
+          countSendWork: ({ targets }) => ({ items: targets.length, assigns: 0, replies: 0, files: 0, total: targets.length }),
+          countItemWork: () => ({ items: 1, assigns: 0, replies: 0, files: 0 }),
           postJobStatus: async () => ({ channelId: "C", ts: "1" }), updateJobStatus: async () => {},
           formatJobStart: () => "start", formatJobHeader: () => "header", formatJobDone: () => "done", createProgressEditor: () => async () => {},
         },
@@ -3356,13 +3366,31 @@ async function test(name, fn) {
       const targets = Array.from({ length: 60 }, (_, i) => ({ id: `I${i}`, artists: [{ artist_id: "U1" }], files: [], replies: [] }));
       assert.equal(hb.estimateSendMinutes({ targets, scope: undefined, assignModes: { mention: true, react: false }, presetByMember, projects: mockProjects }), 3);
     });
+    await test("hbStatus.countSendWork menghitung item, artis nyata, reply pending, dan setiap file fisik", () => {
+      const hb = load("electron/hbStatus.cjs", {});
+      const targets = [{
+        id: "A",
+        artists: [{ artist_id: "U1" }, { artist_id: "U2" }],
+        files: [{ id: "direct" }],
+        replies: [
+          { title: "Animatic", text_value: "", sent: false, files: Array.from({ length: 10 }, (_, i) => ({ id: `F${i}` })) },
+          { title: "Catatan", text_value: "Revisi", sent: false, files: [] },
+          { title: "Sudah", text_value: "", sent: true, files: [{ id: "OLD" }] },
+          { title: "", text_value: "", sent: false, files: [] },
+        ],
+      }];
+      assert.equal(JSON.stringify(hb.countSendWork({ targets, scope: undefined })), JSON.stringify({ items: 1, assigns: 2, replies: 2, files: 11, total: 16 }));
+      assert.equal(JSON.stringify(hb.countSendWork({ targets, scope: "replies" })), JSON.stringify({ items: 1, assigns: 2, replies: 2, files: 10, total: 15 }));
+      assert.equal(JSON.stringify(hb.countSendWork({ targets, scope: "item" })), JSON.stringify({ items: 1, assigns: 2, replies: 0, files: 0, total: 3 }));
+    });
     await test("hbStatus.createProgressEditor (poin revisi, 1 pesan diedit berkala) — cuma ngedit di threshold 10/30/50/70/90/95, bukan tiap step", async () => {
       const hb = load("electron/hbStatus.cjs", {});
       const updateCalls = [];
       const mockSlack = { updateSimpleMessage: async (args) => updateCalls.push(args) };
       const handle = { channelId: "C-STATUS", ts: "1.000" };
       // 20 step total -- threshold 10% = step 2, 30% = step 6, 50% = step 10, dst.
-      const step = hb.createProgressEditor({ slack: mockSlack, token: "TOKEN", handle, totalJobs: 5, totalSteps: 20, estimateMinutes: 4 });
+      const counts = { items: 5, assigns: 3, replies: 4, files: 8, total: 20 };
+      const step = hb.createProgressEditor({ slack: mockSlack, token: "TOKEN", handle, counts, estimateMinutes: 4 });
       for (let i = 0; i < 20; i++) await step();
       // Threshold [10,30,50,70,90,95] -- 6 kali edit TOTAL walau step-nya 20 kali, bukan 20 kali.
       assert.equal(updateCalls.length, 6);
@@ -3373,22 +3401,23 @@ async function test(name, fn) {
     });
     await test("hbStatus.createProgressEditor best-effort kalau handle null (post awal gagal) — gak throw", async () => {
       const hb = load("electron/hbStatus.cjs", {});
-      const step = hb.createProgressEditor({ slack: { updateSimpleMessage: async () => { throw new Error("harusnya gak sampai sini"); } }, token: "TOKEN", handle: null, totalJobs: 1, totalSteps: 1, estimateMinutes: 1 });
+      const step = hb.createProgressEditor({ slack: { updateSimpleMessage: async () => { throw new Error("harusnya gak sampai sini"); } }, token: "TOKEN", handle: null, counts: { items: 1, assigns: 0, replies: 0, files: 0, total: 1 }, estimateMinutes: 1 });
       await step(); // gak boleh throw walau handle null (channelId/ts kosong)
     });
     await test("hbStatus.formatJobDone (poin revisi) nampilin nama item gagal dalam rangkuman kalau ada", () => {
       const hb = load("electron/hbStatus.cjs", {});
-      const clean = hb.formatJobDone({ totalJobs: 3, okCount: 3, failedNames: [] });
-      assert.ok(clean.includes("3 job"));
-      assert.ok(clean.includes("Berhasil terkirim"));
+      const counts = { items: 3, assigns: 2, replies: 4, files: 25, total: 34 };
+      const clean = hb.formatJobDone({ counts, okCount: 3, failedNames: [] });
+      assert.ok(clean.includes("3/3 item berhasil"));
+      assert.ok(clean.includes("File: 25"));
       assert.ok(!clean.includes("Gagal"));
-      const withErrors = hb.formatJobDone({ totalJobs: 3, okCount: 2, failedNames: ["Item C"] });
+      const withErrors = hb.formatJobDone({ counts, okCount: 2, failedNames: ["Item C"] });
       assert.ok(withErrors.includes("Gagal (1): Item C"));
     });
     await test("hbStatus.formatJobStart (poin revisi) — pesan paling awal cuma total job, gak ada pecahan \"0/N\"", () => {
       const hb = load("electron/hbStatus.cjs", {});
-      const start = hb.formatJobStart({ totalJobs: 81, estimateMinutes: 4 });
-      assert.equal(start, ":arrow_forward: Eksekusi 81 job, estimasi 4 menit");
+      const start = hb.formatJobStart({ counts: { items: 35, assigns: 18, replies: 3, files: 25, total: 81 }, estimateMinutes: 4 });
+      assert.equal(start, ":arrow_forward: Eksekusi 81 job, estimasi 4 menit\nItem: 35 | Assign: 18 | Reply: 3 | File: 25");
     });
     await test("hbStatus.progressBar (poin revisi, bug: 95% keliatan sama kayak 100%) — presisi setengah blok (▌) buat persen yang gak abis dibagi 10", () => {
       const hb = load("electron/hbStatus.cjs", {});

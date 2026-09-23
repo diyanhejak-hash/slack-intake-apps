@@ -455,7 +455,7 @@ declare global {
         cancel: () => Promise<boolean>;
         /** `phase` (poin revisi, send:start 4-fase) — cuma ada pas dari send:start (batch),
          * gak ada pas dari send:quick (Instant Intake, 1 panggilan doang gak ada fase). */
-        onProgress: (cb: (data: { projectId: string; jobId: string; index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post" }) => void) => () => void;
+        onProgress: (cb: (data: { projectId: string; jobId: string; index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post"; counts?: { items: number; assigns: number; replies: number; files: number; total: number } }) => void) => () => void;
         onDone: (cb: (data: { projectId: string; jobId: string; results: SendResult[] }) => void) => () => void;
       };
       update: {

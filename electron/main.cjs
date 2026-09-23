@@ -1499,24 +1499,26 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     // Poin revisi: SATU pesan yang di-edit berkala (mulai -> progress -> selesai), bukan post
     // pesan baru tiap tahap lagi — lihat hbStatus.createProgressEditor.
     const estimateMinutes = hbStatus.estimateSendMinutes({ targets, scope, assignModes: projects.getArtistAssignModes(), presetByMember, projects });
-    const statusHandle = await hbStatus.postJobStatus(slack, token, hbStatus.formatJobStart({ totalJobs: targets.length, estimateMinutes }));
-    // Fase 4 (post/reply) di-skip buat scope "item"/"artist" (lihat di bawah) — totalSteps ikutan
-    // ngurang biar persentase progress-nya tetap presisi nyampe 100% pas job kelar.
-    const numPhases = scope === "item" || scope === "artist" ? 3 : 4;
+    const workCounts = hbStatus.countSendWork({ targets, scope });
+    const itemWork = new Map(targets.map((item) => [item.id, hbStatus.countItemWork(item, scope)]));
+    const statusHandle = await hbStatus.postJobStatus(slack, token, hbStatus.formatJobStart({ counts: workCounts, estimateMinutes }));
+    // Jumlah kerja dibekukan sebelum proses dimulai supaya angka Item/Assign/Reply/File dan
+    // persentase progress tetap konsisten sampai job selesai.
     const stepDone = hbStatus.createProgressEditor({
-      slack, token, handle: statusHandle, totalJobs: targets.length, totalSteps: targets.length * numPhases, estimateMinutes,
+      slack, token, handle: statusHandle, counts: workCounts, estimateMinutes,
     });
 
     const itemState = new Map(targets.map((item) => [item.id, {}]));
-    async function runPass(phase, label, fn, { blockLater = false } = {}) {
+    async function runPass(phase, label, fn, { blockLater = false, units = () => 0 } = {}) {
       for (let i = 0; i < targets.length; i++) {
         const item = targets[i];
         const state = itemState.get(item.id);
+        const itemUnits = units(itemWork.get(item.id));
         // Hanya kegagalan root yang membuat fase sesudahnya mustahil dijalankan. Kegagalan
         // assign/status tidak boleh membuang Reply yang independen dan sudah siap dikirim.
-        if (state.blocked) { await stepDone(); continue; }
-        if (cancelRequested) { state.cancelled = true; await stepDone(); continue; }
-        if (!event.sender.isDestroyed()) event.sender.send("send:progress", { projectId, jobId, index: i, total: targets.length, itemName: item.name, phase });
+        if (state.blocked) { await stepDone(itemUnits); continue; }
+        if (cancelRequested) { state.cancelled = true; await stepDone(itemUnits); continue; }
+        if (!event.sender.isDestroyed()) event.sender.send("send:progress", { projectId, jobId, index: i, total: targets.length, itemName: item.name, phase, counts: workCounts });
         try {
           await fn(item, state);
         } catch (err) {
@@ -1532,7 +1534,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
               token = currentToken();
               try {
                 await fn(item, state);
-                await stepDone();
+                await stepDone(itemUnits);
                 continue;
               } catch (retryErr) {
                 err = retryErr;
@@ -1547,7 +1549,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
           if (blockLater || cancelRequested) state.blocked = true;
           projects.addLog("error", `Gagal (${label}) "${item.name}": ${err.message}`);
         }
-        await stepDone();
+        await stepDone(itemUnits);
       }
     }
 
@@ -1559,7 +1561,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
       });
       state.threadTs = threadTs;
       state.isNew = isNew;
-    }, { blockLater: true });
+    }, { blockLater: true, units: (counts) => counts.items });
 
     // Fase 2 — assign: mention @artis (kalau scope & mode global ngizinin) DAN/ATAU react
     // pakai code_name artis (data-driven, gak digate scope/mode — sama kayak reaction flush
@@ -1599,7 +1601,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
       // Status (poin revisi) — data-driven sama kayak artis di atas, force:true biar tetap
       // kesinkron walau toggle realtime OFF (thread-nya UDAH ADA dari fase 1 di atas).
       await reconcileItemStatusState({ projectId, itemId: item.id, force: true });
-    });
+    }, { units: (counts) => counts.assigns });
 
     // Fase 3 — react lain (di luar react artis, misal ditambah manual lewat "Add React"). Gagal
     // per-reaction SENGAJA gak nggagalin seluruh item — dicatat log doang, tetap pending (gak
@@ -1613,7 +1615,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
           projects.addLog("error", `Gagal kasih reaction :${reaction.slack_shortcode}: ke "${item.name}": ${err.message}`);
         }
       }
-    });
+    }, { units: () => 0 });
 
     // Fase 4 — reply/file lain di dalam thread (attach langsung + tiap Reply sesuai sort_order).
     // scope "item"/"artist" gak butuh reply, di-skip seluruh fase-nya (posts selalu kosong).
@@ -1668,7 +1670,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
           }
         }
         if (firstError) throw firstError;
-      });
+      }, { units: (counts) => counts.replies + counts.files });
     }
 
     const results = targets.map((item) => {
@@ -1681,7 +1683,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
     const okCount = results.filter((r) => r.status === "berhasil").length;
   projects.addLog("info", `Kirim selesai (${project.name}): ${okCount}/${results.length} berhasil.`);
   const failedNames = results.filter((r) => r.status === "gagal").map((r) => r.itemName);
-  await hbStatus.updateJobStatus(slack, token, statusHandle, hbStatus.formatJobDone({ totalJobs: results.length, okCount, failedNames }));
+  await hbStatus.updateJobStatus(slack, token, statusHandle, hbStatus.formatJobDone({ counts: workCounts, okCount, failedNames }));
   if (Notification.isSupported()) {
     new Notification({
       title: "Slack Intake Apps",

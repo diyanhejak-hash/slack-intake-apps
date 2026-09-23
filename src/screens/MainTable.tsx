@@ -136,7 +136,7 @@ export default function MainTable({
     }
   }
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [progress, setProgress] = useState<{ index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post" } | null>(null);
+  const [progress, setProgress] = useState<{ index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post"; counts?: { items: number; assigns: number; replies: number; files: number; total: number } } | null>(null);
   const [results, setResults] = useState<SendResult[] | null>(null);
   const [sending, setSending] = useState(false);
   const [activeTab, setActiveTab] = useState<"table" | "reply">("table");
@@ -1391,12 +1391,15 @@ export default function MainTable({
             {sending && (
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                 {progress && (
-                  <span className="caption">
-                    <Loader2 size={12} className="spin" style={{ display: "inline", verticalAlign: "-2px", marginRight: 4 }} />
-                    {/* Label per-fase (poin revisi, send:start sekarang 4-fase lintas semua item) —
-                        biar progress "1/10" yang restart tiap fase gak keliatan kayak nyangkut/ngulang. */}
-                    {PHASE_LABEL[progress.phase || "post"]} {progress.index + 1}/{progress.total}: {progress.itemName}
-                  </span>
+                  <div className="caption" style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 2 }}>
+                    {progress.counts && (
+                      <span>Item {progress.counts.items} · Assign {progress.counts.assigns} · Reply {progress.counts.replies} · File {progress.counts.files} · Total {progress.counts.total}</span>
+                    )}
+                    <span>
+                      <Loader2 size={12} className="spin" style={{ display: "inline", verticalAlign: "-2px", marginRight: 4 }} />
+                      {PHASE_LABEL[progress.phase || "post"]} {progress.index + 1}/{progress.total}: {progress.itemName}
+                    </span>
+                  </div>
                 )}
                 <button className="btn btn-danger" onClick={handleCancel}>
                   Cancel

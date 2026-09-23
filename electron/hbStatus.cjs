@@ -60,12 +60,21 @@ async function updateJobStatus(slack, token, handle, text) {
 // Poin revisi (diminta user) — pesan PALING AWAL (sebelum progress apa pun) beda format dari
 // pesan progress: cuma "Eksekusi N job..." (total doang, gak ada pecahan "0/N" yang keliatan
 // aneh soalnya belum ada satu pun yang kelar).
-function formatJobStart({ totalJobs, estimateMinutes }) {
-  return `:arrow_forward: Eksekusi ${totalJobs} job, estimasi ${estimateMinutes} menit`;
+function formatCounts(counts) {
+  return [
+    `Item: ${counts.items}`,
+    `Assign: ${counts.assigns}`,
+    `Reply: ${counts.replies}`,
+    `File: ${counts.files}`,
+  ].join(" | ");
 }
 
-function formatJobHeader({ doneJobs, totalJobs, estimateMinutes }) {
-  return `:arrow_forward: Eksekusi ${doneJobs}/${totalJobs} job, estimasi ${estimateMinutes} menit`;
+function formatJobStart({ counts, estimateMinutes }) {
+  return `:arrow_forward: Eksekusi ${counts.total} job, estimasi ${estimateMinutes} menit\n${formatCounts(counts)}`;
+}
+
+function formatJobHeader({ doneJobs, counts, estimateMinutes }) {
+  return `:arrow_forward: Eksekusi ${doneJobs}/${counts.total} job, estimasi ${estimateMinutes} menit\n${formatCounts(counts)}`;
 }
 
 // Poin revisi (diminta user) — presisi setengah blok (▌) buat persentase yang gak abis dibagi 10
@@ -79,35 +88,59 @@ function progressBar(percent) {
   return "█".repeat(full) + (half ? "▌" : "") + "░".repeat(Math.max(0, empty));
 }
 
-function formatJobProgress({ doneJobs, totalJobs, percent, estimateMinutes }) {
-  return `${formatJobHeader({ doneJobs, totalJobs, estimateMinutes })}\nProgress.. ${progressBar(percent)} ${percent}%`;
+function formatJobProgress({ doneJobs, counts, percent, estimateMinutes }) {
+  return `${formatJobHeader({ doneJobs, counts, estimateMinutes })}\nProgress.. ${progressBar(percent)} ${percent}%`;
 }
 
-function formatJobDone({ totalJobs, okCount, failedNames = [] }) {
-  const lines = [`:white_check_mark: Eksekusi Selesai, ${okCount} job Berhasil terkirim.`];
+function formatJobDone({ counts, okCount, failedNames = [] }) {
+  const lines = [`:white_check_mark: Eksekusi Selesai, ${okCount}/${counts.items} item berhasil.`, formatCounts(counts)];
   if (failedNames.length) lines.push(`Gagal (${failedNames.length}): ${failedNames.join(", ")}`);
   return lines.join("\n");
 }
 
 // Ngedit pesan job cuma pas progress nyentuh threshold (poin revisi: "10%, lalu kelipatan 20,
 // lalu 95%") -- BUKAN tiap step selesai, biar gak nge-flood chat.update (rate-limit channel
-// status dipakai bareng SEMUA user app ini). `step()` dipanggil 1x tiap 1 slot kerja (item x fase)
-// kelar, gak peduli sukses/gagal/dibatalkan -- totalSteps FIXED dari awal (targets.length x
-// jumlah fase scope ini), jadi persentase SELALU nyampe 100% pas job kelar apa pun hasilnya.
+// status dipakai bareng SEMUA user app ini). `step(units)` menerima jumlah unit kerja yang
+// selesai pada tiap fase. Totalnya dibekukan dari awal, jadi persentase tetap nyampe 100%
+// ketika job selesai walau ada item yang gagal atau dibatalkan.
 const PROGRESS_THRESHOLDS = [10, 30, 50, 70, 90, 95];
-function createProgressEditor({ slack, token, handle, totalJobs, totalSteps, estimateMinutes }) {
+function createProgressEditor({ slack, token, handle, counts, estimateMinutes }) {
   let completedSteps = 0;
   let firedUpTo = 0;
-  return async function step() {
-    completedSteps++;
-    if (!totalSteps) return;
-    const percent = Math.min(100, Math.round((completedSteps / totalSteps) * 100));
-    const next = PROGRESS_THRESHOLDS.find((t) => t > firedUpTo && percent >= t);
+  return async function step(units = 1) {
+    completedSteps = Math.min(counts.total, completedSteps + Math.max(0, units));
+    if (!counts.total || !units) return;
+    const percent = Math.min(100, Math.round((completedSteps / counts.total) * 100));
+    const crossed = PROGRESS_THRESHOLDS.filter((t) => t > firedUpTo && percent >= t);
+    const next = crossed[crossed.length - 1];
     if (!next) return;
     firedUpTo = next;
-    const doneJobs = Math.min(totalJobs, Math.round((completedSteps / totalSteps) * totalJobs));
-    await updateJobStatus(slack, token, handle, formatJobProgress({ doneJobs, totalJobs, percent, estimateMinutes }));
+    await updateJobStatus(slack, token, handle, formatJobProgress({ doneJobs: completedSteps, counts, percent, estimateMinutes }));
   };
+}
+
+function countItemWork(item, scope) {
+  const includePosts = scope !== "item" && scope !== "artist";
+  const replies = includePosts
+    ? (item.replies || []).filter((reply) => !reply.sent && ((reply.title || "").trim() || (reply.text_value || "").trim() || (reply.files || []).length))
+    : [];
+  return {
+    items: 1,
+    assigns: (item.artists || []).length,
+    replies: replies.length,
+    files: includePosts
+      ? replies.reduce((total, reply) => total + (reply.files || []).length, 0) + (scope === "replies" ? 0 : (item.files || []).length)
+      : 0,
+  };
+}
+
+function countSendWork({ targets, scope }) {
+  const counts = { items: 0, assigns: 0, replies: 0, files: 0 };
+  for (const item of targets) {
+    const itemCounts = countItemWork(item, scope);
+    for (const key of Object.keys(counts)) counts[key] += itemCounts[key];
+  }
+  return { ...counts, total: counts.items + counts.assigns + counts.replies + counts.files };
 }
 
 // Estimasi waktu kirim (poin revisi) — REAL, bukan tebakan kasar, ngikutin persis pacing 4-fase
@@ -137,9 +170,9 @@ function estimateSendMinutes({ targets, scope, assignModes, presetByMember, proj
 
     // Reply jadi post CUMA kalau title/text_value/files-nya gak kosong -- persis logika
     // composeReplyText+replyToPost (main.cjs), biar hitungannya akurat sama alur beneran.
-    const nonEmptyReplyCount = item.replies.filter((r) => (r.title || "").trim() || (r.text_value || "").trim() || r.files.length).length;
+    const nonEmptyReplyCount = (item.replies || []).filter((r) => !r.sent && ((r.title || "").trim() || (r.text_value || "").trim() || (r.files || []).length)).length;
     if (scope !== "item" && scope !== "artist") {
-      const postCount = scope === "replies" ? nonEmptyReplyCount : (item.files.length ? 1 : 0) + nonEmptyReplyCount;
+      const postCount = scope === "replies" ? nonEmptyReplyCount : ((item.files || []).length ? 1 : 0) + nonEmptyReplyCount;
       seconds += postCount * MSG_SEC;
     }
   }
@@ -148,6 +181,7 @@ function estimateSendMinutes({ targets, scope, assignModes, presetByMember, proj
 
 module.exports = {
   STATUS_CHANNEL_NAME, findStatusChannel, postStatus, estimateSendMinutes,
-  postJobStatus, updateJobStatus, formatJobStart, formatJobHeader, formatJobProgress, formatJobDone, progressBar,
+  postJobStatus, updateJobStatus, formatCounts, formatJobStart, formatJobHeader, formatJobProgress, formatJobDone, progressBar,
+  countItemWork, countSendWork,
   createProgressEditor, PROGRESS_THRESHOLDS,
 };
