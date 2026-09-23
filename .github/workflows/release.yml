@@ -1,9 +1,7 @@
 name: Build & Release
 
 # Jalan pas tag versi (v0.2.0, dst) di-push, ATAU manual lewat tab Actions ("Run workflow").
-# Build Windows, macOS, DAN Linux sekaligus (paralel, matrix) — macOS/Linux gak praktis
-# di-build dari mesin Windows lokal, jadi ini satu-satunya jalur buat dapetin ketiga installer
-# sekaligus dari 1 commit/tag yang sama.
+# Build Windows dan macOS sekaligus (paralel, matrix). Build Linux dinonaktifkan sementara.
 on:
   push:
     tags:
@@ -32,8 +30,6 @@ jobs:
             target: win
           - os: macos-latest
             target: mac
-          - os: ubuntu-latest
-            target: linux
     runs-on: ${{ matrix.os }}
     env:
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
@@ -46,37 +42,10 @@ jobs:
         with:
           node-version: "24"
       - run: npm ci
-      # test:smoke jalanin Electron sungguhan (walau window-nya disembunyikan, show:false) --
-      # runner Linux gak punya display sama sekali (headless), Electron/Chromium tetap butuh
-      # server X buat init walau gak nampilin apa-apa. Xvfb = display virtual, cuma buat Linux.
-      - name: Install Xvfb (Linux headless display, dibutuhin Electron walau window disembunyikan)
-        if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y xvfb
-      # Binary Electron didownload LAZY (pas pertama kali cli.js dipanggil), bukan langsung abis
-      # `npm ci` -- chown di bawah butuh dist/chrome-sandbox udah ADA duluan, jadi dipaksa
-      # download eksplisit di sini dulu.
-      - name: Download binary Electron (Linux, biar chown sandbox di bawah gak "No such file")
-        if: matrix.target == 'linux'
-        run: node node_modules/electron/install.js
-      # chrome-sandbox Electron WAJIB owned root + setuid (mode 4755) di Linux -- npm install
-      # biasa naruhnya owned user CI biasa, Electron nolak jalan sama sekali (SIGTRAP) tanpa
-      # ini kalau gak dikasih --no-sandbox (sengaja DIHINDARIN, --no-sandbox matiin fitur
-      # keamanan yang mestinya ikut ke-test juga).
-      - name: Fix permission sandbox Electron (wajib buat Linux CI)
-        if: matrix.target == 'linux'
-        run: |
-          sudo chown root:root node_modules/electron/dist/chrome-sandbox
-          sudo chmod 4755 node_modules/electron/dist/chrome-sandbox
-      # typecheck + 113 test regresi + smoke test Electron sungguhan + build renderer -- pipeline
+      # typecheck + test regresi + smoke test Electron sungguhan + build renderer -- pipeline
       # verifikasi yang sama kayak dipakai lokal (npm run check), gagal di sini = gak lanjut build.
       - name: Run checks
-        shell: bash
-        run: |
-          if [ "${{ matrix.target }}" = "linux" ]; then
-            xvfb-run -a npm run check
-          else
-            npm run check
-          fi
+        run: npm run check
       - name: Build installer (publish belakangan, lihat job "release")
         run: npx electron-builder --${{ matrix.target }} --publish never
       - uses: actions/upload-artifact@v4
@@ -85,7 +54,6 @@ jobs:
           path: |
             release/*.exe
             release/*.dmg
-            release/*.AppImage
           if-no-files-found: ignore
 
   # Jalan SEKALI hanya kalau SEMUA build/check platform sukses. Rilis resmi tidak boleh terbit
