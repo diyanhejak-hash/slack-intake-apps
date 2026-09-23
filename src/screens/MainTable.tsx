@@ -731,12 +731,21 @@ export default function MainTable({
   }
 
   async function handleExport() {
-    await window.api.project.export(projectId);
+    try {
+      const res = await window.api.project.export(projectId);
+      if (!res.canceled) showToast("Project berhasil diekspor.", "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal mengekspor project.", "error");
+    }
   }
 
   async function handleImportProject() {
-    const res = await window.api.project.import();
-    if (!res.canceled) showToast("Project berhasil di-import. Buka dari Start Menu.", "success");
+    try {
+      const res = await window.api.project.import();
+      if (!res.canceled) showToast("Project berhasil di-import. Buka dari Start Menu.", "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal mengimpor project.", "error");
+    }
   }
 
   // window.prompt() TIDAK didukung Electron (beda dari alert()/confirm() yang jalan normal) —

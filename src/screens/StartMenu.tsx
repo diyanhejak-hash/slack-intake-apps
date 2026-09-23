@@ -128,8 +128,13 @@ export default function StartMenu({
   }
 
   async function handleImport() {
-    const res = await window.api.project.import();
-    if (!res.canceled && res.projectId) onOpenProject(res.projectId);
+    setError("");
+    try {
+      const res = await window.api.project.import();
+      if (!res.canceled && res.projectId) onOpenProject(res.projectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal mengimpor project.");
+    }
   }
 
   const canSubmit = newName.trim() && (mode === "existing" ? !!newChannelId : newChannelName.trim());

@@ -5,6 +5,9 @@ const { db, dataDir } = require("./db.cjs");
 
 const now = () => new Date().toISOString();
 const uuid = () => crypto.randomUUID();
+const ARCHIVE_MAGIC = Buffer.from("SLACKINTAKE2\n", "ascii");
+const ARCHIVE_HEADER_BYTES = ARCHIVE_MAGIC.length + 8;
+const MAX_ARCHIVE_MANIFEST_BYTES = 256 * 1024 * 1024;
 let activeScope = { userId: null, teamId: null };
 const deletedItems = new Map();
 const mergedItems = new Map();
@@ -582,6 +585,33 @@ function stageWrite(ownerId, buffer, filename) {
   const storedPath = path.join(uniqueAttachmentDir(ownerId), filename);
   fileTransaction?.created.push(storedPath);
   fs.writeFileSync(storedPath, buffer);
+  return storedPath;
+}
+
+function stageCopyRange(ownerId, sourcePath, offset, length, filename) {
+  safeFilename(filename);
+  if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 0) {
+    throw new Error("Lokasi attachment dalam arsip tidak valid.");
+  }
+  const storedPath = path.join(uniqueAttachmentDir(ownerId), filename);
+  fileTransaction?.created.push(storedPath);
+  const input = fs.openSync(sourcePath, "r");
+  const output = fs.openSync(storedPath, "wx");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let remaining = length;
+  let position = offset;
+  try {
+    while (remaining > 0) {
+      const bytesRead = fs.readSync(input, buffer, 0, Math.min(buffer.length, remaining), position);
+      if (!bytesRead) throw new Error("Attachment dalam arsip terpotong.");
+      fs.writeSync(output, buffer, 0, bytesRead);
+      position += bytesRead;
+      remaining -= bytesRead;
+    }
+  } finally {
+    fs.closeSync(input);
+    fs.closeSync(output);
+  }
   return storedPath;
 }
 
@@ -1243,9 +1273,15 @@ function deleteTemplate(id) {
 
 // Save As: duplikat project + semua item/file/reply-nya jadi project baru terpisah.
 function duplicateProject(projectId, newName) {
-  const id = importProject(exportProject(projectId));
-  renameProject(id, newName);
-  return id;
+  const tempPath = path.join(dataDir, `.duplicate-${uuid()}.slackintake`);
+  try {
+    exportProjectToFile(projectId, tempPath);
+    const id = importProjectFile(tempPath);
+    renameProject(id, newName);
+    return id;
+  } finally {
+    try { fs.rmSync(tempPath, { force: true }); } catch { /* best effort */ }
+  }
 }
 
 function addLog(level, message) {
@@ -1326,10 +1362,9 @@ function saveTemplate({ id, name, fields }) {
   return tid;
 }
 
-// Export: 1 file JSON self-contained (attachment di-embed base64) — ponytail: hindari nambah
-// dependency zip cuma buat ini, cukup stdlib fs + JSON. Bisa membengkak untuk file besar,
-// upgrade ke format zip kalau ternyata jadi masalah nyata.
-function exportProject(projectId) {
+// Data dan urutan attachment untuk export. File yang dipilih user ditulis sebagai arsip biner
+// v2; JSON Base64 v1 hanya dipertahankan agar backup lama dan API internal tetap kompatibel.
+function projectForExport(projectId) {
   const project = getProject(projectId);
   if (!project) throw new Error("Project tidak ditemukan.");
   // project.files (General Display), item.files (attach langsung) DAN reply.files (Drawer)
@@ -1344,6 +1379,27 @@ function exportProject(projectId) {
   }
   const files = [...project.files, ...project.items.flatMap((i) => [...i.files, ...i.replies.flatMap((r) => r.files)])];
   if (!files.every((file) => isManagedFile(file.stored_path))) throw new Error("Attachment berada di luar penyimpanan aplikasi. Pilih ulang file tersebut.");
+  for (const section of project.batchSections) for (const file of section.files) {
+    if (!fs.existsSync(file.path)) throw new Error(`File sumber batch tidak ditemukan: ${file.filename}`);
+  }
+  return project;
+}
+
+function exportFileEntries(project) {
+  return [
+    ...project.files.map((file) => ({ file, sourcePath: file.stored_path })),
+    ...project.items.flatMap((item) => [
+      ...item.files.map((file) => ({ file, sourcePath: file.stored_path })),
+      ...item.replies.flatMap((reply) => reply.files.map((file) => ({ file, sourcePath: file.stored_path }))),
+    ]),
+    ...project.batchSections.flatMap((section) => section.files.map((file) => ({ file, sourcePath: file.path }))),
+  ];
+}
+
+// JSON v1 dipertahankan untuk API internal dan file backup lama. Export ke disk menggunakan
+// arsip v2 supaya lampiran besar tidak dikumpulkan sebagai satu string Base64 di memori.
+function exportProject(projectId) {
+  const project = projectForExport(projectId);
   for (const file of project.files) {
     file.dataBase64 = fs.readFileSync(file.stored_path).toString("base64");
   }
@@ -1359,15 +1415,131 @@ function exportProject(projectId) {
   }
   for (const section of project.batchSections) {
     for (const file of section.files) {
-      if (!fs.existsSync(file.path)) throw new Error(`File sumber batch tidak ditemukan: ${file.filename}`);
       file.dataBase64 = fs.readFileSync(file.path).toString("base64");
     }
   }
   return { formatVersion: 1, exportedAt: now(), project };
 }
 
-function importProject(payload) {
-  if (!payload || payload.formatVersion !== 1 || !payload.project || !Array.isArray(payload.project.items) || !Array.isArray(payload.project.files || [])) {
+function writeAllSync(fd, buffer) {
+  let written = 0;
+  while (written < buffer.length) written += fs.writeSync(fd, buffer, written, buffer.length - written);
+}
+
+function exportProjectToFile(projectId, filePath) {
+  const project = projectForExport(projectId);
+  const entries = exportFileEntries(project);
+  entries.forEach(({ file, sourcePath }, index) => {
+    const stat = fs.statSync(sourcePath);
+    if (!stat.isFile()) throw new Error("Attachment harus berupa file.");
+    file.archiveIndex = index;
+    file.archiveSize = stat.size;
+  });
+  const manifest = Buffer.from(JSON.stringify({ formatVersion: 2, exportedAt: now(), project }), "utf8");
+  if (manifest.length > MAX_ARCHIVE_MANIFEST_BYTES) throw new Error("Data teks project terlalu besar untuk diekspor.");
+
+  const tempPath = `${filePath}.partial-${uuid()}`;
+  let output;
+  try {
+    output = fs.openSync(tempPath, "wx");
+    writeAllSync(output, ARCHIVE_MAGIC);
+    const length = Buffer.allocUnsafe(8);
+    length.writeBigUInt64LE(BigInt(manifest.length));
+    writeAllSync(output, length);
+    writeAllSync(output, manifest);
+    const chunk = Buffer.allocUnsafe(1024 * 1024);
+    for (const { sourcePath } of entries) {
+      const input = fs.openSync(sourcePath, "r");
+      try {
+        let bytesRead;
+        while ((bytesRead = fs.readSync(input, chunk, 0, chunk.length, null)) > 0) {
+          writeAllSync(output, chunk.subarray(0, bytesRead));
+        }
+      } finally {
+        fs.closeSync(input);
+      }
+    }
+    fs.closeSync(output);
+    output = undefined;
+    fs.rmSync(filePath, { force: true });
+    fs.renameSync(tempPath, filePath);
+    return filePath;
+  } catch (error) {
+    if (output !== undefined) fs.closeSync(output);
+    try { fs.rmSync(tempPath, { force: true }); } catch { /* best effort */ }
+    throw error;
+  }
+}
+
+function readExactSync(fd, length, position) {
+  const buffer = Buffer.allocUnsafe(length);
+  let read = 0;
+  while (read < length) {
+    const count = fs.readSync(fd, buffer, read, length - read, position + read);
+    if (!count) throw new Error("File export terpotong atau rusak.");
+    read += count;
+  }
+  return buffer;
+}
+
+function readArchive(filePath) {
+  const fd = fs.openSync(filePath, "r");
+  try {
+    const stat = fs.fstatSync(fd);
+    if (stat.size < ARCHIVE_HEADER_BYTES) return null;
+    const magic = readExactSync(fd, ARCHIVE_MAGIC.length, 0);
+    if (!magic.equals(ARCHIVE_MAGIC)) return null;
+    const manifestLengthBig = readExactSync(fd, 8, ARCHIVE_MAGIC.length).readBigUInt64LE();
+    if (manifestLengthBig > BigInt(MAX_ARCHIVE_MANIFEST_BYTES)) throw new Error("Metadata file export terlalu besar atau rusak.");
+    const manifestLength = Number(manifestLengthBig);
+    const dataOffset = ARCHIVE_HEADER_BYTES + manifestLength;
+    if (dataOffset > stat.size) throw new Error("File export terpotong atau rusak.");
+    let payload;
+    try {
+      payload = JSON.parse(readExactSync(fd, manifestLength, ARCHIVE_HEADER_BYTES).toString("utf8"));
+    } catch (error) {
+      throw new Error(`Metadata file export tidak valid: ${error.message}`);
+    }
+    if (payload?.formatVersion !== 2) throw new Error("Versi file export belum didukung.");
+    const allFiles = [
+      ...(payload.project?.files || []),
+      ...(payload.project?.items || []).flatMap((item) => [...(item.files || []), ...(item.replies || []).flatMap((reply) => reply.files || [])]),
+      ...(payload.project?.batchSections || []).flatMap((section) => section.files || []),
+    ];
+    const locations = new Map();
+    let offset = dataOffset;
+    for (let index = 0; index < allFiles.length; index++) {
+      const file = allFiles[index];
+      if (file.archiveIndex !== index || !Number.isSafeInteger(file.archiveSize) || file.archiveSize < 0) {
+        throw new Error("Daftar attachment dalam arsip tidak valid.");
+      }
+      locations.set(index, { offset, length: file.archiveSize });
+      offset += file.archiveSize;
+      if (!Number.isSafeInteger(offset) || offset > stat.size) throw new Error("Attachment dalam arsip terpotong.");
+    }
+    if (offset !== stat.size) throw new Error("Ukuran file export tidak sesuai metadata.");
+    return { payload, archive: { filePath, locations } };
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+function importProjectFile(filePath) {
+  const archive = readArchive(filePath);
+  if (archive) return importProject(archive.payload, archive.archive);
+  return importProject(JSON.parse(fs.readFileSync(filePath, "utf8")));
+}
+
+function stageImportedFile(ownerId, file, filename, archive) {
+  if (!archive) return stageWrite(ownerId, Buffer.from(file.dataBase64, "base64"), filename);
+  const location = archive.locations.get(file.archiveIndex);
+  if (!location || location.length !== file.archiveSize) throw new Error("Referensi attachment dalam arsip tidak valid.");
+  return stageCopyRange(ownerId, archive.filePath, location.offset, location.length, filename);
+}
+
+function importProject(payload, archive = null) {
+  const expectedVersion = archive ? 2 : 1;
+  if (!payload || payload.formatVersion !== expectedVersion || !payload.project || !Array.isArray(payload.project.items) || !Array.isArray(payload.project.files || [])) {
     throw new Error("Format file export tidak valid.");
   }
   const src = payload.project;
@@ -1380,7 +1552,11 @@ function importProject(payload) {
   ];
   for (const file of allFiles) {
     safeFilename(file?.original_name || file?.filename);
-    if (typeof file.dataBase64 !== "string" || !/^[a-zA-Z0-9+/]*={0,2}$/.test(file.dataBase64)) throw new Error("Isi attachment tidak valid.");
+    if (archive) {
+      if (!Number.isSafeInteger(file.archiveIndex) || !Number.isSafeInteger(file.archiveSize) || !archive.locations.has(file.archiveIndex)) throw new Error("Referensi attachment dalam arsip tidak valid.");
+    } else if (typeof file.dataBase64 !== "string" || !/^[a-zA-Z0-9+/]*={0,2}$/.test(file.dataBase64)) {
+      throw new Error("Isi attachment tidak valid.");
+    }
   }
   const staged = [];
   let newProjectId;
@@ -1389,7 +1565,7 @@ function importProject(payload) {
       const newProject = createProject({ name: `${src.name} (import)`, channelId: src.channel_id, channelName: src.channel_name });
       newProjectId = newProject.id;
       for (const file of src.files || []) {
-        const storedPath = stageWrite(newProject.id, Buffer.from(file.dataBase64, "base64"), file.original_name); staged.push(storedPath);
+        const storedPath = stageImportedFile(newProject.id, file, file.original_name, archive); staged.push(storedPath);
         db.prepare(`INSERT INTO project_files (id, project_id, stored_path, original_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(uuid(), newProject.id, storedPath, file.original_name, file.sort_order || 0);
       }
       const itemMap = new Map();
@@ -1412,7 +1588,7 @@ function importProject(payload) {
           db.prepare(`INSERT INTO item_status (item_id, status_id, sent_shortcode, updated_at) VALUES (?, ?, ?, ?)`).run(newItemId, item.status_id, item.status_sent_shortcode || null, now());
         }
         for (const file of item.files || []) {
-          const storedPath = stageWrite(newItemId, Buffer.from(file.dataBase64, "base64"), file.original_name); staged.push(storedPath);
+          const storedPath = stageImportedFile(newItemId, file, file.original_name, archive); staged.push(storedPath);
           db.prepare(`INSERT INTO item_files (id, item_id, stored_path, original_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(uuid(), newItemId, storedPath, file.original_name, file.sort_order || 0);
         }
         for (const reply of item.replies || []) {
@@ -1421,7 +1597,7 @@ function importProject(payload) {
           db.prepare(`INSERT INTO replies (id, item_id, category, type, title, text_value, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?)`)
             .run(newReplyId, newItemId, reply.category || newReplyId, reply.type || "text", reply.title || "", reply.text_value || null, reply.sort_order || 0);
           for (const file of reply.files || []) {
-            const storedPath = stageWrite(newItemId, Buffer.from(file.dataBase64, "base64"), file.original_name); staged.push(storedPath);
+            const storedPath = stageImportedFile(newItemId, file, file.original_name, archive); staged.push(storedPath);
             const newFileId = uuid();
             replyFileMap.set(file.id, { id: newFileId, replyId: newReplyId, itemId: newItemId });
             db.prepare(`INSERT INTO reply_files (id, reply_id, stored_path, original_name) VALUES (?, ?, ?, ?)`).run(newFileId, newReplyId, storedPath, file.original_name);
@@ -1433,7 +1609,7 @@ function importProject(payload) {
           ...section,
           id: uuid(),
           files: (section.files || []).map((file) => {
-            const importedPath = stageWrite(newProject.id, Buffer.from(file.dataBase64, "base64"), file.filename); staged.push(importedPath);
+            const importedPath = stageImportedFile(newProject.id, file, file.filename, archive); staged.push(importedPath);
             return { ...file, id: uuid(), path: importedPath, connectedItemIds: (file.connectedItemIds || []).map((id) => itemMap.get(id)).filter(Boolean) };
           }),
         }));
@@ -1591,7 +1767,9 @@ module.exports = {
   removeItemReaction,
   ownsItemReaction,
   exportProject,
+  exportProjectToFile,
   importProject,
+  importProjectFile,
 };
 
 // Synchronous nested mutations share their outer transaction and staged files.
@@ -1599,7 +1777,7 @@ for (const name of [
   "addItemFiles", "addProjectFiles", "addReplyWithFiles", "addFilesToReply",
   "addCapturedFile", "addCapturedFileToReply", "restoreItem", "mergeItems", "unmergeItems",
   "removeItem", "deleteProject", "removeReply", "removeReplies", "removeRepliesByCategory",
-  "broadcastReply", "saveBatchSections", "applyBatchSections", "importProject", "duplicateProject",
+  "broadcastReply", "saveBatchSections", "applyBatchSections", "importProject", "importProjectFile", "duplicateProject",
   "saveArtistPreset", "removeArtistPreset",
   "saveStatusPreset", "removeStatusPreset",
   "replaceCachedSlackUsers", "replaceCachedChannelMemberIds"

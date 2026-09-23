@@ -581,28 +581,28 @@ handle("project:attachFiles", (_e, projectId, filePaths) => projects.addProjectF
 handle("project:removeFile", (_e, fileId) => projects.removeProjectFile(fileId));
 
 handle("project:export", async (_e, id) => {
-  const data = projects.exportProject(id);
+  const project = projects.getProject(id);
+  if (!project) throw new Error("Project tidak ditemukan.");
   const { canceled, filePath } = await dialog.showSaveDialog(win, {
     title: "Export Project",
-    defaultPath: `${data.project.name}.slackintake.json`,
-    filters: [{ name: "Slack Intake Project", extensions: ["json"] }],
+    defaultPath: `${project.name}.slackintake`,
+    filters: [{ name: "Slack Intake Project", extensions: ["slackintake"] }],
   });
   if (canceled || !filePath) return { canceled: true };
-  await fs.promises.writeFile(filePath, JSON.stringify(data));
+  projects.exportProjectToFile(id, filePath);
   return { canceled: false, filePath };
 });
 
 handle("project:import", async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
     title: "Import Project",
-    filters: [{ name: "Slack Intake Project", extensions: ["json"] }],
+    filters: [{ name: "Slack Intake Project", extensions: ["slackintake", "json"] }],
     properties: ["openFile"],
   });
   if (canceled || !filePaths.length) return { canceled: true };
   // Gak ada batas ukuran sendiri lagi (poin revisi, "ikuti aturan slack, tidak ada batasan") —
   // sama kayak attachment/export lain, biarin aja gede sesuai isi project-nya.
-  const payload = JSON.parse(await fs.promises.readFile(filePaths[0], "utf8"));
-  const newId = projects.importProject(payload);
+  const newId = projects.importProjectFile(filePaths[0]);
   return { canceled: false, projectId: newId };
 });
 

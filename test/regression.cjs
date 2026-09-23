@@ -418,6 +418,23 @@ async function test(name, fn) {
 
       projects.removeStatusPreset(preset); // status_presets GLOBAL -- jangan nyisa buat test lain
     });
+    await test("export file v2 menyimpan attachment sebagai biner dan import tetap utuh", () => {
+      const source = path.join(temp, "archive-v2.bin");
+      const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0x5a);
+      fs.writeFileSync(source, bytes);
+      const project = projects.createProject({ name: "archive-v2", channelId: "CA", channelName: "test" });
+      const itemId = projects.addItem(project.id, { name: "archive-item" });
+      projects.addItemFiles(itemId, [source]);
+
+      const archive = path.join(temp, "archive-v2.slackintake");
+      projects.exportProjectToFile(project.id, archive);
+      assert.equal(fs.readFileSync(archive).subarray(0, 13).toString("ascii"), "SLACKINTAKE2\n");
+      assert.ok(fs.statSync(archive).size < bytes.length + 100_000, "attachment tidak boleh membengkak 33% seperti Base64");
+
+      const importedId = projects.importProjectFile(archive);
+      const importedFile = projects.getProject(importedId).items[0].files[0];
+      assert.deepEqual(fs.readFileSync(importedFile.stored_path), bytes);
+    });
     await test("malformed import leaves no partial project", () => {
       const before = projects.listProjects().length;
       assert.throws(() => projects.importProject({ formatVersion: 1, project: { name: "broken", channel_id: "CA", channel_name: "a", items: null } }));
