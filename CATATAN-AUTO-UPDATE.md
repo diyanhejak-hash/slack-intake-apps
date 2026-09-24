@@ -2,6 +2,9 @@
 
 Status: ditunda untuk dipertimbangkan pada versi setelah `v0.3.11`.
 
+Keputusan distribusi: auto-update akan memakai **repository GitHub public khusus installer**.
+Repository source direncanakan tetap private.
+
 ## Perilaku Saat Ini
 
 - Aplikasi memeriksa GitHub Release terbaru ketika Start Menu dibuka.
@@ -11,7 +14,10 @@ Status: ditunda untuk dipertimbangkan pada versi setelah `v0.3.11`.
 
 ## Keputusan Arsitektur
 
-- Windows dan macOS tetap memakai satu repository, satu source project, dan satu pipeline CI.
+- Windows dan macOS tetap memakai satu source project dan satu pipeline CI.
+- Repository source menyimpan kode dan dapat dibuat private.
+- Repository distribusi public hanya menyimpan GitHub Release, installer, dan metadata updater;
+  repository ini tidak menyimpan source aplikasi.
 - Pipeline menghasilkan artefak berbeda: installer Windows, macOS Intel, dan macOS Apple Silicon.
 - File hasil Export/Import project tetap satu format lintas platform.
 - Database `userData` mentah tidak dipindahkan manual antar-OS; perpindahan memakai Export/Import.
@@ -28,9 +34,14 @@ Status: ditunda untuk dipertimbangkan pada versi setelah `v0.3.11`.
 
 ## Kebutuhan GitHub Release
 
+- Buat repository GitHub public terpisah khusus distribusi installer.
+- Workflow dari repository source mengunggah artefak ke repository distribusi memakai credential
+  CI yang disimpan sebagai GitHub Actions Secret. Credential tersebut tidak boleh dipaketkan ke aplikasi.
+- Aplikasi membaca Release public tanpa `GITHUB_RELEASES_TOKEN`.
 - Windows: unggah installer NSIS, `latest.yml`, dan `.blockmap`.
 - macOS: build `dmg` dan `zip`, lalu unggah `latest-mac.yml` beserta artefak yang diperlukan updater.
 - Rilis hanya diterbitkan setelah checks dan build semua platform berhasil.
+- Halaman Release public tetap menjadi jalur download manual jika auto-update gagal.
 
 ## Code Signing
 
@@ -51,4 +62,3 @@ Status: ditunda untuk dipertimbangkan pada versi setelah `v0.3.11`.
 ## Catatan Transisi
 
 Versi pertama yang mengandung auto-updater masih harus dipasang manual oleh pengguna versi lama. Setelah versi tersebut terpasang, update berikutnya dapat dilakukan dari dalam aplikasi.
-
