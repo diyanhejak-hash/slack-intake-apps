@@ -954,6 +954,61 @@ function saveBatchSections(projectId, sections) {
   });
 }
 
+function batchFileKey(filename) {
+  return String(filename || "").replace(/\.[^.]+$/, "").trim();
+}
+
+function batchFileMatchesItem(fileKey, itemName) {
+  const parts = String(itemName || "").includes(", ") ? String(itemName).split(", ") : [String(itemName || "")];
+  return parts.some((part) => {
+    const name = part.trim();
+    if (name.toLowerCase() === fileKey.toLowerCase()) return true;
+    const range = name.match(/^(.*?)(\d+)-(\d+)$/);
+    const file = fileKey.match(/^(.*?)(\d+)$/);
+    if (!range || !file || range[2].length !== range[3].length || file[2].length !== range[2].length) return false;
+    const min = Number.parseInt(range[2], 10);
+    const max = Number.parseInt(range[3], 10);
+    const value = Number.parseInt(file[2], 10);
+    return range[1].toLowerCase() === file[1].toLowerCase() && min <= max && value >= min && value <= max;
+  });
+}
+
+// Buat satu item per nama file unik yang belum tersambung dan belum cocok dengan item mana pun.
+// Seluruh perubahan dibungkus transaction wrapper di bawah, jadi item dan koneksi file tidak
+// mungkin tersimpan setengah-setengah kalau salah satu operasi gagal.
+function generateBatchItems(projectId) {
+  if (!ownsProject(projectId)) throw new Error("Project tidak ditemukan.");
+  const project = getProject(projectId);
+  if (project.phase !== "setup") throw new Error("Generate Item dari Batch File hanya tersedia pada tahap Setup.");
+  const sections = listBatchSections(projectId);
+  const candidates = new Map();
+
+  for (const section of sections) {
+    for (const file of section.files) {
+      if (file.connectedItemIds.length) continue;
+      const name = batchFileKey(file.filename);
+      if (!name || project.items.some((item) => batchFileMatchesItem(name, item.name))) continue;
+      const key = name.toLowerCase();
+      if (!candidates.has(key)) candidates.set(key, name);
+    }
+  }
+
+  const createdByKey = new Map();
+  for (const [key, name] of candidates) {
+    createdByKey.set(key, addItem(projectId, { name, source: "manual" }));
+  }
+
+  for (const section of sections) {
+    for (const file of section.files) {
+      if (file.connectedItemIds.length) continue;
+      const itemId = createdByKey.get(batchFileKey(file.filename).toLowerCase());
+      if (itemId) db.prepare(`UPDATE batch_files SET connected_item_ids_json=? WHERE id=?`).run(JSON.stringify([itemId]), file.id);
+    }
+  }
+
+  return { created: createdByKey.size, itemIds: Array.from(createdByKey.values()) };
+}
+
 function applyBatchSections(projectId) {
   const sections = listBatchSections(projectId);
   const staged = [];
@@ -1754,6 +1809,7 @@ module.exports = {
   replaceCachedChannelMemberIds,
   listBatchSections,
   saveBatchSections,
+  generateBatchItems,
   applyBatchSections,
   addItemFiles,
   removeItemFile,
@@ -1830,7 +1886,7 @@ for (const name of [
   "addItemFiles", "addProjectFiles", "addReplyWithFiles", "addFilesToReply",
   "addCapturedFile", "addCapturedFileToReply", "restoreItem", "mergeItems", "unmergeItems",
   "removeItem", "deleteProject", "removeReply", "removeReplies", "removeRepliesByCategory",
-  "broadcastReply", "saveBatchSections", "applyBatchSections", "importProject", "importProjectFile", "duplicateProject",
+  "broadcastReply", "saveBatchSections", "generateBatchItems", "applyBatchSections", "importProject", "importProjectFile", "duplicateProject",
   "saveArtistPreset", "removeArtistPreset",
   "saveStatusPreset", "removeStatusPreset",
   "replaceCachedSlackUsers", "replaceCachedChannelMemberIds"

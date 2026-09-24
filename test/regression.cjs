@@ -945,6 +945,44 @@ async function test(name, fn) {
       assert.equal(projects.getAutoOpenSlackEnabled(), false);
       assert.equal(projects.setAutoOpenSlackEnabled(true), true);
     });
+    await test("Batch File Generate Item membuat nama unik, menghubungkan file, dan hanya berjalan saat Setup", () => {
+      const bp = projects.createProject({ name: "batch-generate", channelId: "CA", channelName: "test" });
+      const existingId = projects.addItem(bp.id, { name: "BF44_001" });
+      projects.addItem(bp.id, { name: "BF44_010-020" });
+      projects.addItem(bp.id, { name: "BF44_030, BF44_040" });
+      const make = (name) => { const p = path.join(temp, name); fs.writeFileSync(p, name); return p; };
+      const paths = {
+        existing: make("BF44_001.mp4"), range: make("BF44_015.mp4"), comma: make("BF44_040.mp4"),
+        newMp4: make("BF44_050.mp4"), newMov: make("BF44_050.mov"), another: make("BF44_060.png"), manual: make("custom-name.txt"),
+      };
+      projects.saveBatchSections(bp.id, [
+        { id: "generate-a", name: "Animatic", files: [
+          { id: "generate-existing", path: paths.existing, filename: "BF44_001.mp4", connectedItemIds: [] },
+          { id: "generate-range", path: paths.range, filename: "BF44_015.mp4", connectedItemIds: [] },
+          { id: "generate-comma", path: paths.comma, filename: "BF44_040.mp4", connectedItemIds: [] },
+          { id: "generate-new-mp4", path: paths.newMp4, filename: "BF44_050.mp4", connectedItemIds: [] },
+          { id: "generate-manual", path: paths.manual, filename: "custom-name.txt", connectedItemIds: [existingId] },
+        ] },
+        { id: "generate-b", name: "Preview", files: [
+          { id: "generate-new-mov", path: paths.newMov, filename: "BF44_050.mov", connectedItemIds: [] },
+          { id: "generate-another", path: paths.another, filename: "BF44_060.png", connectedItemIds: [] },
+        ] },
+      ]);
+
+      const result = projects.generateBatchItems(bp.id);
+      assert.equal(result.created, 2); // BF44_050 dobel lintas kategori tetap satu item + BF44_060
+      const generated = projects.getProject(bp.id).items.filter((item) => ["BF44_050", "BF44_060"].includes(item.name));
+      assert.deepEqual(generated.map((item) => item.name).sort(), ["BF44_050", "BF44_060"]);
+      const generatedByName = new Map(generated.map((item) => [item.name, item.id]));
+      const savedFiles = projects.listBatchSections(bp.id).flatMap((section) => section.files);
+      assert.equal(savedFiles.find((file) => file.id === "generate-new-mp4").connectedItemIds[0], generatedByName.get("BF44_050"));
+      assert.equal(savedFiles.find((file) => file.id === "generate-new-mov").connectedItemIds[0], generatedByName.get("BF44_050"));
+      assert.equal(savedFiles.find((file) => file.id === "generate-another").connectedItemIds[0], generatedByName.get("BF44_060"));
+      assert.equal(savedFiles.find((file) => file.id === "generate-existing").connectedItemIds.length, 0); // item sudah ada: jangan buat duplikat
+      assert.equal(projects.generateBatchItems(bp.id).created, 0); // aman dipanggil ulang
+      db.prepare('UPDATE projects SET phase=? WHERE id=?').run("input", bp.id);
+      assert.throws(() => projects.generateBatchItems(bp.id), /hanya tersedia pada tahap Setup/);
+    });
     await test("batch survives source removal, import, duplicate, deletion and resync", () => {
       const bp = projects.createProject({ name: "roundtrip", channelId: "CA", channelName: "audit" });
       const bi = projects.addItem(bp.id, { name: "batch" });

@@ -212,6 +212,7 @@ contextBridge.exposeInMainWorld("api", {
     pickFiles: () => ipcRenderer.invoke("batchFile:pickFiles"),
     listSections: (projectId) => ipcRenderer.invoke("batchFile:listSections", projectId),
     saveSections: (projectId, sections) => ipcRenderer.invoke("batchFile:saveSections", projectId, sections),
+    generateItems: (projectId) => ipcRenderer.invoke("batchFile:generateItems", projectId),
     apply: (projectId) => ipcRenderer.invoke("batchFile:apply", projectId),
   },
   // Drag-drop file native dari OS (File Explorer) — Electron 32+ udah gak nempelin `.path`

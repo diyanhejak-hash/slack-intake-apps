@@ -505,6 +505,7 @@ declare global {
         pickFiles: () => Promise<string[]>;
         listSections: (projectId: string) => Promise<BatchSection[]>;
         saveSections: (projectId: string, sections: BatchSection[]) => Promise<void>;
+        generateItems: (projectId: string) => Promise<{ created: number; itemIds: string[] }>;
         apply: (projectId: string) => Promise<{ added: number }>;
       };
       file: {

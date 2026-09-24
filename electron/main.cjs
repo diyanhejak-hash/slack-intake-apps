@@ -226,7 +226,7 @@ function validateAccess(channel, args) {
     }
   }
   let valid = true;
-  if (["project:load", "project:rename", "project:setChannel", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "project:listChannelMemberIds", "project:refreshChannelMembers", "batchFile:listSections", "batchFile:saveSections", "batchFile:apply", "artistAssign:syncProject", "slackPull:syncProject"].includes(channel)) valid = projects.ownsProject(args[0]);
+  if (["project:load", "project:rename", "project:setChannel", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "project:listChannelMemberIds", "project:refreshChannelMembers", "batchFile:listSections", "batchFile:saveSections", "batchFile:generateItems", "batchFile:apply", "artistAssign:syncProject", "slackPull:syncProject"].includes(channel)) valid = projects.ownsProject(args[0]);
   else if (channel === "item:addManual") valid = projects.ownsProject(args[0]?.projectId);
   else if (["item:update", "item:remove", "item:attachFiles"].includes(channel)) valid = projects.ownsItem(args[0]);
   else if (["item:addArtist", "item:removeArtist", "item:setStatus", "item:pushRootName", "artistAssign:syncItem", "slackPull:syncItem"].includes(channel)) valid = projects.ownsProject(args[0]?.projectId) && projects.ownsItem(args[0]?.itemId);
@@ -1428,6 +1428,7 @@ handle("batchFile:pickFiles", async () => {
 });
 handle("batchFile:listSections", (_e, projectId) => projects.listBatchSections(projectId));
 handle("batchFile:saveSections", (_e, projectId, sections) => projects.saveBatchSections(projectId, sections));
+handle("batchFile:generateItems", (_e, projectId) => projects.generateBatchItems(projectId));
 handle("batchFile:apply", (_e, projectId) => projects.applyBatchSections(projectId));
 
 // Baca bytes file lewat main process (bukan fetch(file://) di renderer) — port dari Hej

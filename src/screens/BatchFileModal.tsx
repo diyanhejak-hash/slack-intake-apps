@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { X, Plus, Check, FileWarning, UploadCloud } from "lucide-react";
 import type { Project, BatchSection as Section, BatchFileEntry as BatchFile } from "../global";
 
@@ -53,7 +53,7 @@ function matchesItemName(fileKey: string, itemName: string): boolean {
   });
 }
 
-export default function BatchFileModal({ project, onClose, onApplied }: { project: Project; onClose: () => void; onApplied: () => void }) {
+export default function BatchFileModal({ project, onClose, onApplied, onProjectChanged }: { project: Project; onClose: () => void; onApplied: () => void; onProjectChanged: () => void | Promise<void> }) {
   const [sections, setSections] = useState<Section[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [activeIdx, setActiveIdx] = useState(0);
@@ -61,6 +61,7 @@ export default function BatchFileModal({ project, onClose, onApplied }: { projec
   const [showNewCategory, setShowNewCategory] = useState(false);
   const [categoryTouched, setCategoryTouched] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function submitNewCategory() {
@@ -169,6 +170,34 @@ export default function BatchFileModal({ project, onClose, onApplied }: { projec
   }
 
   const totalConnections = sections.reduce((sum, s) => sum + s.files.reduce((s2, f) => s2 + f.connectedItemIds.length, 0), 0);
+  const generatableItemCount = useMemo(() => {
+    const names = new Set<string>();
+    for (const section of sections) {
+      for (const file of section.files) {
+        if (file.connectedItemIds.length) continue;
+        const name = stripExt(file.filename).trim();
+        if (!name || project.items.some((item) => matchesItemName(name.toLowerCase(), item.name))) continue;
+        names.add(name.toLowerCase());
+      }
+    }
+    return names.size;
+  }, [project.items, sections]);
+
+  async function generateItems() {
+    if (!generatableItemCount || project.phase !== "setup" || generating) return;
+    setGenerating(true);
+    setError(null);
+    try {
+      await window.api.batchFile.saveSections(project.id, sections);
+      await window.api.batchFile.generateItems(project.id);
+      setSections(await window.api.batchFile.listSections(project.id));
+      await onProjectChanged();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal membuat item dari Batch File.");
+    } finally {
+      setGenerating(false);
+    }
+  }
 
   async function finish() {
     setBusy(true);
@@ -251,7 +280,16 @@ export default function BatchFileModal({ project, onClose, onApplied }: { projec
                 Drop file di sini, atau klik buat pilih file untuk "{active.name}" (boleh banyak sekaligus)
               </span>
             </div>
-            <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 6 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginBottom: 6 }}>
+              <button
+                className="btn"
+                style={{ padding: "3px 10px", fontSize: 12 }}
+                onClick={generateItems}
+                disabled={!generatableItemCount || project.phase !== "setup" || generating}
+                title={project.phase !== "setup" ? "Generate Item hanya tersedia pada tahap Setup" : "Buat item dari seluruh nama file Batch yang belum menemukan pasangan"}
+              >
+                {generating ? "Membuat item..." : generatableItemCount ? `Generate ${generatableItemCount} Item` : "Generate Item"}
+              </button>
               <button
                 className="btn"
                 style={{ padding: "3px 10px", fontSize: 12 }}

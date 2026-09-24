@@ -1739,7 +1739,7 @@ export default function MainTable({
         />
       )}
 
-      {showBatchFile && <BatchFileModal project={project} onClose={() => setShowBatchFile(false)} onApplied={() => (setShowBatchFile(false), refresh())} />}
+      {showBatchFile && <BatchFileModal project={project} onClose={() => setShowBatchFile(false)} onApplied={() => (setShowBatchFile(false), refresh())} onProjectChanged={refresh} />}
 
       {showLog && <MessageLogPanel onClose={() => setShowLog(false)} />}
 
