@@ -442,6 +442,32 @@ async function test(name, fn) {
 
       projects.removeStatusPreset(preset); // status_presets GLOBAL -- jangan nyisa buat test lain
     });
+    await test("custom header per-project: CRUD, single-select, urutan, dan duplicate membawa definisi+nilai", () => {
+      const hp = projects.createProject({ name: "custom-header", channelId: "CA", channelName: "test" });
+      const itemId = projects.addItem(hp.id, { name: "shot-1" });
+      const gradeId = projects.saveCustomHeader({ projectId: hp.id, name: "Grade" });
+      const priorityId = projects.saveCustomHeader({ projectId: hp.id, name: "Priority" });
+      const optionA = projects.saveCustomHeaderOption({ projectId: hp.id, headerId: gradeId, name: "A", codeName: "grade-a-test", unicodeValue: "🅰️" });
+      const optionB = projects.saveCustomHeaderOption({ projectId: hp.id, headerId: gradeId, name: "B", codeName: "grade-b-test", unicodeValue: "🅱️" });
+      assert.deepEqual(projects.listCustomHeaders(hp.id).map((header) => header.name), ["Grade", "Priority"]);
+      projects.reorderCustomHeaders(hp.id, [priorityId, gradeId]);
+      assert.deepEqual(projects.listCustomHeaders(hp.id).map((header) => header.name), ["Priority", "Grade"]);
+      projects.setItemCustomValue(itemId, gradeId, optionA);
+      projects.setItemCustomValueSentShortcode(itemId, gradeId, "grade-a-test");
+      projects.setItemCustomValue(itemId, gradeId, optionB);
+      const value = projects.getProject(hp.id).items[0].custom_values[0];
+      assert.equal(value.option_id, optionB);
+      assert.equal(value.sent_shortcode, "grade-a-test");
+      assert.throws(() => projects.saveCustomHeaderOption({ projectId: hp.id, headerId: priorityId, name: "Bentrok", codeName: "grade-b-test" }), /sudah dipakai/);
+
+      const duplicateId = projects.duplicateProject(hp.id, "custom-header-copy");
+      const duplicateHeaders = projects.listCustomHeaders(duplicateId);
+      assert.deepEqual(duplicateHeaders.map((header) => header.name), ["Priority", "Grade"]);
+      const duplicateGrade = duplicateHeaders.find((header) => header.name === "Grade");
+      const duplicateItem = projects.getProject(duplicateId).items[0];
+      assert.equal(duplicateGrade.options.find((option) => option.name === "B").id, duplicateItem.custom_values[0].option_id);
+      assert.equal(duplicateItem.custom_values[0].sent_shortcode, null);
+    });
     await test("export file v2 menyimpan attachment sebagai biner dan import tetap utuh", () => {
       const source = path.join(temp, "archive-v2.bin");
       const bytes = Buffer.alloc(2 * 1024 * 1024 + 17, 0x5a);
@@ -2487,6 +2513,47 @@ async function test(name, fn) {
       await context.reconcileItemStatusState({ projectId: "P", itemId: "I", force: true });
       assert.equal(removeCalls.length, 2);
       assert.equal(itemStatus.sent_shortcode, null); // sekarang beneran bersih
+    });
+    await test("custom header reconcile menjaga urutan Status lalu urutan header dan menyimpan reaction live", async () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
+      const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("item:setStatus",[\s\S]*?\n\}\)\);/)[0];
+      let status = { status_id: "S", sent_shortcode: "status-old" };
+      let values = [
+        { header_id: "H1", option_id: "O1", sent_shortcode: "grade-old" },
+        { header_id: "H2", option_id: "O2", sent_shortcode: "priority-high" },
+      ];
+      const operations = [];
+      const context = {
+        require: nativeRequire,
+        handle: () => {}, openSlack: () => {}, autoOpenSlack: () => {},
+        projects: {
+          getRealtimeAssignEnabled: () => true,
+          getItemStatus: () => status,
+          listStatusPresets: () => [{ id: "S", code_name: "status-new" }],
+          listCustomHeaders: () => [
+            { id: "H1", options: [{ id: "O1", code_name: "grade-a" }] },
+            { id: "H2", options: [{ id: "O2", code_name: "priority-high" }] },
+          ],
+          listItemCustomValues: () => values,
+          setItemStatusSentShortcode: (_itemId, code) => { status = { ...status, sent_shortcode: code }; },
+          setItemCustomValueSentShortcode: (_itemId, headerId, code) => { values = values.map((value) => value.header_id === headerId ? { ...value, sent_shortcode: code } : value); },
+          addLog: () => {},
+        },
+        currentToken: () => "MOCK", threadKey: (_projectId, itemId) => itemId,
+        slack: {
+          findThreadInfo: () => ({ channelId: "CA", threadTs: "1.000" }),
+          removeReaction: async ({ name }) => { operations.push(["remove", name]); },
+          addReaction: async ({ name }) => { operations.push(["add", name]); },
+        },
+      };
+      vm.runInNewContext(block, context);
+      await context.reconcileItemStatusState({ projectId: "P", itemId: "I", force: true });
+      assert.deepEqual(operations, [
+        ["remove", "status-old"], ["remove", "grade-old"], ["remove", "priority-high"],
+        ["add", "status-new"], ["add", "grade-a"], ["add", "priority-high"],
+      ]);
+      assert.equal(status.sent_shortcode, "status-new");
+      assert.deepEqual(values.map((value) => value.sent_shortcode), ["grade-a", "priority-high"]);
     });
     await test("handleIncomingReaction (poin revisi, sync 2 arah reaction Slack->App) — cocok artis/status auto-assign/lepas TANPA nembak reactions.add/remove lagi (udah ada di Slack), abaikan thread/reaction yang gak dikenal", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");

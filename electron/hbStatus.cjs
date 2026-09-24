@@ -188,6 +188,12 @@ function estimateSendMinutes({ targets, scope, assignModes: _assignModes, preset
     const artistReactionCount = reactions.filter((r) => codeNames.has(r.slack_shortcode)).length;
     seconds += artistReactionCount * REACT_SEC;
     seconds += (reactions.length - artistReactionCount) * REACT_SEC;
+    // Status/custom header direkonsiliasi berurutan. Nilai yang sudah live perlu remove+add
+    // supaya urutannya tetap mengikuti Status lalu urutan custom header.
+    if (item.status_id || item.status_sent_shortcode) seconds += (item.status_sent_shortcode ? 2 : 1) * REACT_SEC;
+    for (const value of item.custom_values || []) {
+      if (value.option_id || value.sent_shortcode) seconds += (value.sent_shortcode ? 2 : 1) * REACT_SEC;
+    }
 
     const nonEmptyReplies = (item.replies || []).filter((reply) => !reply.sent && ((reply.title || "").trim() || (reply.text_value || "").trim() || (reply.files || []).length));
     if (scope !== "item" && scope !== "artist") {

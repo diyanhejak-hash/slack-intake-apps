@@ -62,6 +62,7 @@ contextBridge.exposeInMainWorld("api", {
     removeArtist: (payload) => ipcRenderer.invoke("item:removeArtist", payload),
     setArtists: (payload) => ipcRenderer.invoke("item:setArtists", payload),
     setStatus: (payload) => ipcRenderer.invoke("item:setStatus", payload),
+    setCustomValue: (payload) => ipcRenderer.invoke("item:setCustomValue", payload),
     // Push dari sync 2 arah reaction Slack->App (poin revisi) — item berubah di BACKGROUND (bukan
     // hasil aksi user di renderer ini), renderer perlu tau biar auto-refresh.
     onChanged: (cb) => {
@@ -111,6 +112,15 @@ contextBridge.exposeInMainWorld("api", {
     save: (payload) => ipcRenderer.invoke("statusPreset:save", payload),
     remove: (id) => ipcRenderer.invoke("statusPreset:remove", id),
     reorder: (orderedIds) => ipcRenderer.invoke("statusPreset:reorder", orderedIds),
+  },
+  customHeader: {
+    list: (projectId) => ipcRenderer.invoke("customHeader:list", projectId),
+    save: (payload) => ipcRenderer.invoke("customHeader:save", payload),
+    remove: (projectId, headerId) => ipcRenderer.invoke("customHeader:remove", projectId, headerId),
+    reorder: (projectId, orderedIds) => ipcRenderer.invoke("customHeader:reorder", projectId, orderedIds),
+    saveOption: (payload) => ipcRenderer.invoke("customHeaderOption:save", payload),
+    removeOption: (projectId, optionId) => ipcRenderer.invoke("customHeaderOption:remove", projectId, optionId),
+    reorderOptions: (projectId, headerId, orderedIds) => ipcRenderer.invoke("customHeaderOption:reorder", projectId, headerId, orderedIds),
   },
   artistAssignMode: {
     get: () => ipcRenderer.invoke("artistAssignMode:get"),

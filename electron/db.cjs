@@ -226,6 +226,33 @@ CREATE TABLE IF NOT EXISTS item_status (
   updated_at TEXT NOT NULL
 );
 
+-- Header reaction tambahan per-project. Setiap header adalah kolom single-select seperti Status;
+-- nilainya dikirim sebagai reaction root dan disimpan terpisah agar Status lama tetap kompatibel.
+CREATE TABLE IF NOT EXISTS custom_headers (
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0
+);
+CREATE TABLE IF NOT EXISTS custom_header_options (
+  id TEXT PRIMARY KEY,
+  header_id TEXT NOT NULL REFERENCES custom_headers(id) ON DELETE CASCADE,
+  name TEXT NOT NULL,
+  code_name TEXT NOT NULL,
+  image_path TEXT,
+  unicode_value TEXT,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  UNIQUE(header_id, code_name)
+);
+CREATE TABLE IF NOT EXISTS item_custom_values (
+  item_id TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+  header_id TEXT NOT NULL REFERENCES custom_headers(id) ON DELETE CASCADE,
+  option_id TEXT REFERENCES custom_header_options(id) ON DELETE SET NULL,
+  sent_shortcode TEXT,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(item_id, header_id)
+);
+
 -- Toggle global "sesi assign artis realtime" (poin revisi) — pas ON, tiap tambah/hapus artis di
 -- ArtistPicker (Tab Table MAUPUN Tab Reply, satu state yang sama) langsung sinkron ke Slack:
 -- mode react -> reactions.add/remove LANGSUNG ke pesan root; mode mention -> chat.postMessage

@@ -1,6 +1,6 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowLeft, Send, Square, CheckSquare, X, Loader2, MessageSquare, Eye, Plus, ClipboardPaste, ExternalLink, Link as LinkIcon, LayoutTemplate, Settings, Search } from "lucide-react";
-import type { ArtistGroup, ArtistPreset, HyperlinkPreset, Project, ProjectItem, SendResult, SlackChannel, SlackUser, StatusPreset, Template } from "../global";
+import type { ArtistGroup, ArtistPreset, CustomHeader, HyperlinkPreset, Project, ProjectItem, SendResult, SlackChannel, SlackUser, StatusPreset, Template } from "../global";
 const Drawer = lazy(() => import("./Drawer"));
 import BatchFileModal from "./BatchFileModal";
 import MessageLogPanel from "./MessageLogPanel";
@@ -10,6 +10,7 @@ import ChannelPicker from "./ChannelPicker";
 import QuickSendButton from "./QuickSendButton";
 import ArtistPresetModal from "./ArtistPresetModal";
 import StatusPresetModal from "./StatusPresetModal";
+import CustomHeaderModal from "./CustomHeaderModal";
 import KeywordAutomationModal from "./KeywordAutomationModal";
 import StatusDropdown from "./StatusDropdown";
 import ArtistPicker from "./ArtistPicker";
@@ -62,6 +63,8 @@ export default function MainTable({
   // Fitur Status (poin revisi) — daftar preset GLOBAL, sama pola fetch/refresh kayak artistPresets.
   const [statusPresets, setStatusPresets] = useState<StatusPreset[]>([]);
   const [showStatusPresetManager, setShowStatusPresetManager] = useState(false);
+  const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([]);
+  const [showCustomHeaderManager, setShowCustomHeaderManager] = useState(false);
   // Otomasi Kata Kunci (poin revisi) — dipindah jadi modal berdiri sendiri, trigger-nya di Main
   // menu > Settings (bukan lagi nested di dalam modal "Sync & Otomasi Slack" di Start Menu).
   const [showKeywordAutomation, setShowKeywordAutomation] = useState(false);
@@ -149,8 +152,9 @@ export default function MainTable({
   const [tableQuery, setTableQuery] = useState("");
   const [tableArtistId, setTableArtistId] = useState("");
   const [tableStatusId, setTableStatusId] = useState("");
+  const [tableCustomFilters, setTableCustomFilters] = useState<Record<string, string>>({});
   const [tableDelivery, setTableDelivery] = useState<"" | "unsent" | "sent" | "pending">("");
-  const [tableSort, setTableSort] = useState<"original" | "name-asc" | "name-desc" | "artist" | "status" | "work-desc">("original");
+  const [tableSort, setTableSort] = useState<string>("original");
   const [progress, setProgress] = useState<{ index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post"; counts?: { items: number; assigns: number; replies: number; files: number; total: number } } | null>(null);
   const [results, setResults] = useState<SendResult[] | null>(null);
   const [retryingItemIds, setRetryingItemIds] = useState<Set<string>>(new Set());
@@ -173,7 +177,7 @@ export default function MainTable({
   // Overlay Instant Intake per-row DISABLE selama user lagi edit input/dropdown di cell itu (poin
   // revisi) — dropdown Artis kebuka misalnya, overlay yang numpuk di pojok bisa ganggu klik opsi.
   // Cuma per (item, kolom) yang lagi fokus, bukan seluruh tabel.
-  const [editingCell, setEditingCell] = useState<{ itemId: string; col: "item" | "artist" | "status" } | null>(null);
+  const [editingCell, setEditingCell] = useState<{ itemId: string; col: string } | null>(null);
   // Poin revisi: Instant Intake sekarang JUGA ngirim reaction pending (lihat send:quick di
   // main.cjs) — chip di ItemReactionBar (state INTERNAL komponen itu sendiri, fetch sendiri lewat
   // itemId) gak otomatis tau reaction-nya udah kekirim/kehapus dari server abis quickSend selesai.
@@ -243,6 +247,7 @@ export default function MainTable({
     window.api.artistPreset.list().then(setArtistPresets);
     window.api.artistAssignMode.get().then((modes) => setMultiAssignment(modes.multi));
     window.api.statusPreset.list().then(setStatusPresets);
+    window.api.customHeader.list(projectId).then(setCustomHeaders);
     window.api.instantIntake.get().then(setInstantIntakeEnabledState);
     window.api.autoOpenSlack.get().then(setAutoOpenSlackEnabled);
     window.api.artistRealtimeAssign.get().then(setRealtimeAssignEnabledState);
@@ -335,7 +340,7 @@ export default function MainTable({
       if (e.defaultPrevented || document.querySelector('[aria-modal="true"]') ||
         showGenerate || showWorkload || showHelp || showPreview || showBatchFile ||
         showLog || showHyperlinkManager || showArtistPresetManager ||
-        showStatusPresetManager || showKeywordAutomation || showSaveAs || showTemplateAll || openMenu || bulkPasteCol) return;
+        showStatusPresetManager || showCustomHeaderManager || showKeywordAutomation || showSaveAs || showTemplateAll || openMenu || bulkPasteCol) return;
       const active = document.activeElement as HTMLElement | null;
       const tag = (active?.tagName || "").toLowerCase();
       const typing = tag === "input" || tag === "textarea" || !!active?.isContentEditable;
@@ -499,6 +504,11 @@ export default function MainTable({
         if (tableArtistId && tableArtistId !== "__none__" && !item.artists.some((artist) => artist.artist_id === tableArtistId)) return false;
         if (tableStatusId === "__none__" && item.status_id) return false;
         if (tableStatusId && tableStatusId !== "__none__" && item.status_id !== tableStatusId) return false;
+        for (const [headerId, optionId] of Object.entries(tableCustomFilters)) {
+          if (!optionId) continue;
+          const current = item.custom_values.find((value) => value.header_id === headerId)?.option_id || null;
+          if (optionId === "__none__" ? current : current !== optionId) return false;
+        }
         if (tableDelivery === "unsent" && item.has_thread) return false;
         if (tableDelivery === "sent" && !item.has_thread) return false;
         if (tableDelivery === "pending" && !item.replies.some((reply) => !reply.sent)) return false;
@@ -512,13 +522,18 @@ export default function MainTable({
       if (tableSort === "name-desc") return compareText(b.item.name, a.item.name) || a.sourceIndex - b.sourceIndex;
       if (tableSort === "artist") return compareText(a.item.artists.map((artist) => artist.artist_name || artist.artist_id).join(", "), b.item.artists.map((artist) => artist.artist_name || artist.artist_id).join(", ")) || a.sourceIndex - b.sourceIndex;
       if (tableSort === "status") return compareText(statusPresets.find((status) => status.id === a.item.status_id)?.name || "", statusPresets.find((status) => status.id === b.item.status_id)?.name || "") || a.sourceIndex - b.sourceIndex;
+      if (tableSort.startsWith("custom:")) {
+        const header = customHeaders.find((candidate) => candidate.id === tableSort.slice(7));
+        const label = (item: ProjectItem) => header?.options.find((option) => option.id === item.custom_values.find((value) => value.header_id === header.id)?.option_id)?.name || "";
+        return compareText(label(a.item), label(b.item)) || a.sourceIndex - b.sourceIndex;
+      }
       if (tableSort === "work-desc") return workCount(b.item) - workCount(a.item) || a.sourceIndex - b.sourceIndex;
       return a.sourceIndex - b.sourceIndex;
     });
     return rows;
-  }, [project, statusPresets, tableArtistId, tableDelivery, tableQuery, tableSort, tableStatusId]);
+  }, [project, statusPresets, customHeaders, tableArtistId, tableCustomFilters, tableDelivery, tableQuery, tableSort, tableStatusId]);
   const allDisplayedSelected = displayedItems.length > 0 && displayedItems.every(({ item }) => selected.has(item.id));
-  const tableFiltersActive = Boolean(tableQuery || tableArtistId || tableStatusId || tableDelivery || tableSort !== "original");
+  const tableFiltersActive = Boolean(tableQuery || tableArtistId || tableStatusId || Object.values(tableCustomFilters).some(Boolean) || tableDelivery || tableSort !== "original");
 
   // Shift+klik = pilih range dari checkbox terakhir diklik s.d. yang di-shift-klik (semua
   // di antaranya jadi checked). Klik-tahan-geser = "cat" checkbox yang disentuh mouse pas
@@ -529,7 +544,7 @@ export default function MainTable({
 
   useEffect(() => {
     lastClickedIndex.current = null;
-  }, [tableArtistId, tableDelivery, tableQuery, tableSort, tableStatusId]);
+  }, [tableArtistId, tableCustomFilters, tableDelivery, tableQuery, tableSort, tableStatusId]);
 
   useEffect(() => {
     function onMouseUp() {
@@ -804,6 +819,25 @@ export default function MainTable({
     } catch (err) {
       showToast(err instanceof Error ? err.message : "Gagal mengekspor project.", "error");
     }
+  }
+
+  async function handleSetCustomValue(item: ProjectItem, headerId: string, optionId: string | null) {
+    const previous = item.custom_values.find((value) => value.header_id === headerId)?.option_id || null;
+    pushUndo({
+      undo: () => window.api.item.setCustomValue({ projectId, itemId: item.id, headerId, optionId: previous }),
+      redo: () => window.api.item.setCustomValue({ projectId, itemId: item.id, headerId, optionId }),
+    });
+    updateItemLocally(item.id, (current) => ({
+      ...current,
+      custom_values: [
+        ...current.custom_values.filter((value) => value.header_id !== headerId),
+        { header_id: headerId, option_id: optionId, sent_shortcode: current.custom_values.find((value) => value.header_id === headerId)?.sent_shortcode || null },
+      ],
+    }));
+    markSyncing(item.id, true);
+    try { await window.api.item.setCustomValue({ projectId, itemId: item.id, headerId, optionId }); }
+    catch (error) { showToast(error instanceof Error ? error.message : "Gagal mengganti nilai header.", "error"); }
+    finally { markSyncing(item.id, false); refresh(); }
   }
 
   async function handleImportProject() {
@@ -1241,6 +1275,9 @@ export default function MainTable({
                   statusPresets={statusPresets}
                   onSetStatus={handleSetStatus}
                   onManageStatusPresets={() => setShowStatusPresetManager(true)}
+                  customHeaders={customHeaders}
+                  onSetCustomValue={handleSetCustomValue}
+                  onManageCustomHeaders={() => setShowCustomHeaderManager(true)}
                   syncing={syncingItemIds.has(activeItem.id)}
                   reactionTick={reactionTick}
                   instantIntakeEnabled={instantIntakeEnabled}
@@ -1270,6 +1307,13 @@ export default function MainTable({
                 <option value="__none__">Belum ada status</option>
                 {statusPresets.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}
               </select>
+              {customHeaders.map((header) => (
+                <select key={header.id} value={tableCustomFilters[header.id] || ""} onChange={(event) => setTableCustomFilters((current) => ({ ...current, [header.id]: event.target.value }))} aria-label={`Filter ${header.name}`}>
+                  <option value="">Semua {header.name}</option>
+                  <option value="__none__">Belum ada {header.name}</option>
+                  {header.options.map((option) => <option key={option.id} value={option.id}>{option.name}</option>)}
+                </select>
+              ))}
               <select value={tableDelivery} onChange={(event) => setTableDelivery(event.target.value as "" | "unsent" | "sent" | "pending")} aria-label="Filter pengiriman">
                 <option value="">Semua pengiriman</option>
                 <option value="unsent">Belum terkirim</option>
@@ -1282,11 +1326,12 @@ export default function MainTable({
                 <option value="name-desc">Nama Z-A</option>
                 <option value="artist">Artis A-Z</option>
                 <option value="status">Status A-Z</option>
+                {customHeaders.map((header) => <option key={header.id} value={`custom:${header.id}`}>{header.name} A-Z</option>)}
                 <option value="work-desc">Reply/file terbanyak</option>
               </select>
               <span className="table-result-count">{displayedItems.length} dari {project.items.length} item</span>
               {tableFiltersActive && (
-                <button className="btn table-reset" onClick={() => { setTableQuery(""); setTableArtistId(""); setTableStatusId(""); setTableDelivery(""); setTableSort("original"); }}>
+                <button className="btn table-reset" onClick={() => { setTableQuery(""); setTableArtistId(""); setTableStatusId(""); setTableCustomFilters({}); setTableDelivery(""); setTableSort("original"); }}>
                   Reset
                 </button>
               )}
@@ -1357,6 +1402,16 @@ export default function MainTable({
                           <Settings size={11} />
                         </button>
                         {instantIntakeEnabled && <QuickSendButton title="Instant Intake / Push — sinkron status SEMUA item" onClick={() => quickSendColumn("status", "Status")} />}
+                      </th>
+                      {customHeaders.map((header) => (
+                        <th key={header.id} style={{ width: 120 }} {...hoverDelayHandlers()}>
+                          {header.name}
+                          <button className="icon-btn" title={`Kelola ${header.name}`} onClick={(event) => { event.stopPropagation(); setShowCustomHeaderManager(true); }} style={{ marginLeft: 4, verticalAlign: "-3px", padding: 2 }}><Settings size={11} /></button>
+                          {instantIntakeEnabled && <QuickSendButton title={`Instant Intake / Push — sinkron ${header.name} SEMUA item`} onClick={() => quickSendColumn("status", header.name)} />}
+                        </th>
+                      ))}
+                      <th style={{ width: 76, textAlign: "center" }}>
+                        <button className="btn" style={{ padding: "3px 7px", fontSize: 11 }} onClick={() => setShowCustomHeaderManager(true)}><Plus size={11} /> Header</button>
                       </th>
                     </>
                   )}
@@ -1491,6 +1546,25 @@ export default function MainTable({
                               />
                             )}
                           </td>
+                          {customHeaders.map((header) => {
+                            const columnKey = `custom:${header.id}`;
+                            const optionId = item.custom_values.find((value) => value.header_id === header.id)?.option_id || null;
+                            return (
+                              <td key={header.id} style={{ position: "relative" }} {...hoverDelayHandlers()}>
+                                <StatusDropdown
+                                  statusId={optionId}
+                                  presets={header.options}
+                                  placeholder={header.name}
+                                  onChange={(nextOptionId) => handleSetCustomValue(item, header.id, nextOptionId)}
+                                  onOpenChange={(isOpen) => setEditingCell(isOpen ? { itemId: item.id, col: columnKey } : (current) => (current?.itemId === item.id && current.col === columnKey ? null : current))}
+                                />
+                                {instantIntakeEnabled && !(editingCell?.itemId === item.id && editingCell.col === columnKey) && (
+                                  <QuickSendButton title={item.has_thread ? `Push — sinkron ulang ${header.name}` : `Instant Intake — kirim ${header.name}`} action={item.has_thread ? "push" : "intake"} onClick={() => quickSendOrPush(item, "status")} />
+                                )}
+                              </td>
+                            );
+                          })}
+                          <td />
                         </>
                       )}
                       <td>
@@ -1502,7 +1576,7 @@ export default function MainTable({
                   );
                 })}
                 <tr>
-                  <td colSpan={project.phase === "input" ? 7 : 5} style={{ padding: 0 }}>
+                  <td colSpan={project.phase === "input" ? 8 + customHeaders.length : 5} style={{ padding: 0 }}>
                     <button
                       className="btn"
                       style={{ width: "100%", justifyContent: "flex-start", border: "none", borderRadius: 0, padding: "8px 10px", color: "var(--text-secondary)" }}
@@ -1767,6 +1841,13 @@ export default function MainTable({
             setShowStatusPresetManager(false);
             window.api.statusPreset.list().then(setStatusPresets);
           }}
+        />
+      )}
+      {showCustomHeaderManager && (
+        <CustomHeaderModal
+          projectId={projectId}
+          onClose={() => setShowCustomHeaderManager(false)}
+          onChanged={() => { window.api.customHeader.list(projectId).then(setCustomHeaders); refresh(); }}
         />
       )}
       {showKeywordAutomation && <KeywordAutomationModal onClose={() => setShowKeywordAutomation(false)} />}

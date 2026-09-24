@@ -72,7 +72,7 @@ function referencedFile(file) {
   for (const table of ["project_files", "item_files", "reply_files"]) {
     if (db.prepare(`SELECT 1 FROM ${table} WHERE stored_path=?`).get(file)) return true;
   }
-  if (db.prepare(`SELECT 1 FROM batch_files WHERE path=?`).get(file) || db.prepare(`SELECT 1 FROM artist_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM status_presets WHERE image_path=?`).get(file)) return true;
+  if (db.prepare(`SELECT 1 FROM batch_files WHERE path=?`).get(file) || db.prepare(`SELECT 1 FROM artist_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM status_presets WHERE image_path=?`).get(file) || db.prepare(`SELECT 1 FROM custom_header_options WHERE image_path=?`).get(file)) return true;
   return [...deletedItems.values(), ...mergedItems.values()].some((s) => JSON.stringify(s).includes(JSON.stringify(file)));
 }
 
@@ -95,6 +95,7 @@ function isManagedFile(filePath) {
     `SELECT 1 FROM project_files f JOIN projects p ON p.id=f.project_id WHERE f.stored_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
     `SELECT 1 FROM item_files f JOIN items i ON i.id=f.item_id JOIN projects p ON p.id=i.project_id WHERE f.stored_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
     `SELECT 1 FROM reply_files f JOIN replies r ON r.id=f.reply_id JOIN items i ON i.id=r.item_id JOIN projects p ON p.id=i.project_id WHERE f.stored_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
+    `SELECT 1 FROM custom_header_options o JOIN custom_headers h ON h.id=o.header_id JOIN projects p ON p.id=h.project_id WHERE o.image_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
   ].some((sql) => db.prepare(sql).get(resolved, activeScope.userId, activeScope.teamId));
   if (scoped) return true;
   // Preset artis/status bersifat global, jadi preview lokalnya tidak terikat project aktif.
@@ -192,6 +193,7 @@ function getProject(id) {
     const statusRow = getItemStatus(item.id);
     item.status_id = statusRow?.status_id || null;
     item.status_sent_shortcode = statusRow?.sent_shortcode || null;
+    item.custom_values = listItemCustomValues(item.id);
     item.files = db.prepare(`SELECT * FROM item_files WHERE item_id = ? ORDER BY sort_order ASC`).all(item.id);
     item.replies = db.prepare(`SELECT * FROM replies WHERE item_id = ? ORDER BY sort_order ASC`).all(item.id);
     for (const reply of item.replies) {
@@ -215,6 +217,7 @@ function deleteProject(id) {
   releaseUndo(id);
   const paths = [...project.files, ...project.items.flatMap((i) => [...i.files, ...i.replies.flatMap((r) => r.files)])].map((f) => f.stored_path);
   paths.push(...listBatchSections(id).flatMap((s) => s.files.map((f) => f.path)));
+  paths.push(...listCustomHeaders(id).flatMap((h) => h.options.map((o) => o.image_path)).filter(Boolean));
   db.prepare(`DELETE FROM projects WHERE id = ?`).run(id);
   for (const storedPath of paths) removeStoredFile(storedPath);
 }
@@ -302,6 +305,11 @@ function restoreItem(snapshot) {
   // item, bukan nested di field "status" -- baca dari situ, bukan snapshot.status.
   if (snapshot.status_id && db.prepare(`SELECT 1 FROM status_presets WHERE id = ?`).get(snapshot.status_id)) {
     db.prepare(`INSERT INTO item_status (item_id, status_id, sent_shortcode, updated_at) VALUES (?, ?, ?, ?)`).run(snapshot.id, snapshot.status_id, snapshot.status_sent_shortcode, new Date().toISOString());
+  }
+  for (const value of snapshot.custom_values || []) {
+    if (db.prepare(`SELECT 1 FROM custom_header_options WHERE id=? AND header_id=?`).get(value.option_id, value.header_id)) {
+      db.prepare(`INSERT INTO item_custom_values(item_id,header_id,option_id,sent_shortcode,updated_at) VALUES(?,?,?,?,?)`).run(snapshot.id, value.header_id, value.option_id, value.sent_shortcode || null, now());
+    }
   }
   for (const f of snapshot.files) {
     db.prepare(`INSERT INTO item_files (id, item_id, stored_path, original_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(f.id, snapshot.id, f.stored_path, f.original_name, f.sort_order);
@@ -1101,6 +1109,7 @@ function saveArtistPreset({ id, memberId, nickname, codeName, sourcePath, unicod
   const cleanNickname = nickname ? String(nickname).trim() : null;
   const existing = id ? db.prepare(`SELECT * FROM artist_presets WHERE id = ?`).get(id) : null;
   if (id && !existing) throw new Error("Preset artis tidak ditemukan.");
+  if (cleanCodeName && cleanCodeName !== existing?.code_name && db.prepare(`SELECT 1 FROM custom_header_options WHERE code_name=?`).get(cleanCodeName)) throw new Error(`Emoji :${cleanCodeName}: sudah dipakai Custom Header.`);
   let imagePath = existing?.image_path || null;
   let unicodeVal = existing?.unicode_value || null;
   if (sourcePath) {
@@ -1147,6 +1156,7 @@ function saveStatusPreset({ id, name, codeName, sourcePath, unicodeValue }) {
   if (!cleanCodeName) throw new Error("Emoji status wajib dipilih.");
   const existing = id ? db.prepare(`SELECT * FROM status_presets WHERE id = ?`).get(id) : null;
   if (id && !existing) throw new Error("Preset status tidak ditemukan.");
+  if (cleanCodeName !== existing?.code_name && db.prepare(`SELECT 1 FROM custom_header_options WHERE code_name=?`).get(cleanCodeName)) throw new Error(`Emoji :${cleanCodeName}: sudah dipakai Custom Header.`);
   let imagePath = existing?.image_path || null;
   let unicodeVal = existing?.unicode_value || null;
   if (sourcePath) {
@@ -1223,6 +1233,125 @@ function setMentionEnabled(enabled) {
 function setReactEnabled(enabled) {
   db.prepare(`UPDATE artist_assign_mode SET react_enabled = ? WHERE id = 1`).run(enabled ? 1 : 0);
   return !!enabled;
+}
+
+// Header reaction tambahan bersifat per-project. Nama header dan pilihan tetap terurut; tiap item
+// hanya dapat memilih satu option per header, sama seperti Status.
+function listCustomHeaders(projectId) {
+  if (!ownsProject(projectId)) return [];
+  const headers = db.prepare(`SELECT id, project_id, name, sort_order FROM custom_headers WHERE project_id=? ORDER BY sort_order`).all(projectId);
+  const options = db.prepare(`SELECT * FROM custom_header_options WHERE header_id=? ORDER BY sort_order`);
+  return headers.map((header) => ({ ...header, options: options.all(header.id) }));
+}
+
+function saveCustomHeader({ projectId, id, name }) {
+  const cleanName = String(name || "").trim();
+  if (!cleanName) throw new Error("Nama header wajib diisi.");
+  if (!ownsProject(projectId)) throw new Error("Project tidak ditemukan.");
+  if (id) {
+    const row = db.prepare(`SELECT 1 FROM custom_headers WHERE id=? AND project_id=?`).get(id, projectId);
+    if (!row) throw new Error("Header tidak ditemukan.");
+    db.prepare(`UPDATE custom_headers SET name=? WHERE id=?`).run(cleanName, id);
+    touchProject(projectId);
+    return id;
+  }
+  const maxOrder = db.prepare(`SELECT COALESCE(MAX(sort_order),-1) AS m FROM custom_headers WHERE project_id=?`).get(projectId).m;
+  const headerId = uuid();
+  db.prepare(`INSERT INTO custom_headers(id,project_id,name,sort_order) VALUES(?,?,?,?)`).run(headerId, projectId, cleanName, maxOrder + 1);
+  touchProject(projectId);
+  return headerId;
+}
+
+function removeCustomHeader(projectId, headerId) {
+  const header = db.prepare(`SELECT 1 FROM custom_headers WHERE id=? AND project_id=?`).get(headerId, projectId);
+  if (!header) throw new Error("Header tidak ditemukan.");
+  const paths = db.prepare(`SELECT image_path FROM custom_header_options WHERE header_id=? AND image_path IS NOT NULL`).all(headerId).map((row) => row.image_path);
+  db.prepare(`DELETE FROM custom_headers WHERE id=?`).run(headerId);
+  paths.forEach(removeStoredFile);
+  touchProject(projectId);
+}
+
+function reorderCustomHeaders(projectId, orderedIds) {
+  const current = listCustomHeaders(projectId).map((h) => h.id);
+  if (orderedIds.length !== current.length || orderedIds.some((id) => !current.includes(id))) throw new Error("Urutan header tidak valid.");
+  const stmt = db.prepare(`UPDATE custom_headers SET sort_order=? WHERE id=? AND project_id=?`);
+  orderedIds.forEach((id, index) => stmt.run(index, id, projectId));
+  touchProject(projectId);
+}
+
+function cleanReactionCode(codeName) {
+  return String(codeName || "").trim().toLowerCase().replace(/[^a-z0-9_+-]/g, "");
+}
+
+function assertCustomCodeUnique(projectId, codeName, optionId) {
+  if (db.prepare(`SELECT 1 FROM status_presets WHERE code_name=?`).get(codeName)
+    || db.prepare(`SELECT 1 FROM artist_presets WHERE code_name=?`).get(codeName)
+    || db.prepare(`SELECT 1 FROM custom_header_options o JOIN custom_headers h ON h.id=o.header_id WHERE h.project_id=? AND o.code_name=? AND o.id<>?`).get(projectId, codeName, optionId || "")) {
+    throw new Error(`Emoji :${codeName}: sudah dipakai Artis, Status, atau Header lain.`);
+  }
+}
+
+function saveCustomHeaderOption({ projectId, headerId, id, name, codeName, sourcePath, unicodeValue }) {
+  if (!ownsProject(projectId) || !db.prepare(`SELECT 1 FROM custom_headers WHERE id=? AND project_id=?`).get(headerId, projectId)) throw new Error("Header tidak ditemukan.");
+  const cleanName = String(name || "").trim();
+  const cleanCodeName = cleanReactionCode(codeName);
+  if (!cleanName) throw new Error("Nama pilihan wajib diisi.");
+  if (!cleanCodeName) throw new Error("Emoji pilihan wajib dipilih.");
+  assertCustomCodeUnique(projectId, cleanCodeName, id);
+  const existing = id ? db.prepare(`SELECT * FROM custom_header_options WHERE id=? AND header_id=?`).get(id, headerId) : null;
+  if (id && !existing) throw new Error("Pilihan header tidak ditemukan.");
+  let imagePath = existing?.image_path || null;
+  let unicodeVal = existing?.unicode_value || null;
+  if (sourcePath) {
+    const staged = stageFile(`custom-header-${projectId}`, sourcePath);
+    if (existing?.image_path) removeStoredFile(existing.image_path);
+    imagePath = staged.storedPath;
+    unicodeVal = null;
+  } else if (unicodeValue) {
+    if (existing?.image_path) removeStoredFile(existing.image_path);
+    imagePath = null;
+    unicodeVal = unicodeValue;
+  }
+  if (existing) {
+    db.prepare(`UPDATE custom_header_options SET name=?,code_name=?,image_path=?,unicode_value=? WHERE id=?`).run(cleanName, cleanCodeName, imagePath, unicodeVal, id);
+    return id;
+  }
+  const maxOrder = db.prepare(`SELECT COALESCE(MAX(sort_order),-1) AS m FROM custom_header_options WHERE header_id=?`).get(headerId).m;
+  const optionId = uuid();
+  db.prepare(`INSERT INTO custom_header_options(id,header_id,name,code_name,image_path,unicode_value,sort_order) VALUES(?,?,?,?,?,?,?)`).run(optionId, headerId, cleanName, cleanCodeName, imagePath, unicodeVal, maxOrder + 1);
+  return optionId;
+}
+
+function removeCustomHeaderOption(projectId, optionId) {
+  const row = db.prepare(`SELECT o.image_path FROM custom_header_options o JOIN custom_headers h ON h.id=o.header_id WHERE o.id=? AND h.project_id=?`).get(optionId, projectId);
+  if (!row) throw new Error("Pilihan header tidak ditemukan.");
+  db.prepare(`DELETE FROM custom_header_options WHERE id=?`).run(optionId);
+  if (row.image_path) removeStoredFile(row.image_path);
+  touchProject(projectId);
+}
+
+function reorderCustomHeaderOptions(projectId, headerId, orderedIds) {
+  if (!ownsProject(projectId) || !db.prepare(`SELECT 1 FROM custom_headers WHERE id=? AND project_id=?`).get(headerId, projectId)) throw new Error("Header tidak ditemukan.");
+  const current = db.prepare(`SELECT id FROM custom_header_options WHERE header_id=? ORDER BY sort_order`).all(headerId).map((r) => r.id);
+  if (orderedIds.length !== current.length || orderedIds.some((id) => !current.includes(id))) throw new Error("Urutan pilihan tidak valid.");
+  const stmt = db.prepare(`UPDATE custom_header_options SET sort_order=? WHERE id=? AND header_id=?`);
+  orderedIds.forEach((id, index) => stmt.run(index, id, headerId));
+}
+
+function listItemCustomValues(itemId) {
+  return db.prepare(`SELECT header_id,option_id,sent_shortcode FROM item_custom_values WHERE item_id=?`).all(itemId);
+}
+
+function setItemCustomValue(itemId, headerId, optionId) {
+  const projectId = projectIdForItem(itemId);
+  if (!projectId || !db.prepare(`SELECT 1 FROM custom_headers WHERE id=? AND project_id=?`).get(headerId, projectId)) throw new Error("Header tidak ditemukan.");
+  if (optionId && !db.prepare(`SELECT 1 FROM custom_header_options WHERE id=? AND header_id=?`).get(optionId, headerId)) throw new Error("Pilihan header tidak ditemukan.");
+  db.prepare(`INSERT INTO item_custom_values(item_id,header_id,option_id,sent_shortcode,updated_at) VALUES(?,?,?,NULL,?) ON CONFLICT(item_id,header_id) DO UPDATE SET option_id=excluded.option_id,updated_at=excluded.updated_at`).run(itemId, headerId, optionId || null, now());
+  touchProject(projectId);
+}
+
+function setItemCustomValueSentShortcode(itemId, headerId, shortcode) {
+  db.prepare(`INSERT INTO item_custom_values(item_id,header_id,option_id,sent_shortcode,updated_at) VALUES(?,?,NULL,?,?) ON CONFLICT(item_id,header_id) DO UPDATE SET sent_shortcode=excluded.sent_shortcode,updated_at=excluded.updated_at`).run(itemId, headerId, shortcode || null, now());
 }
 
 function setMultiAssignEnabled(enabled) {
@@ -1474,6 +1603,10 @@ function projectForExport(projectId) {
   // project.files (General Display), item.files (attach langsung) DAN reply.files (Drawer)
   // semuanya perlu di-embed.
   project.batchSections = listBatchSections(projectId);
+  project.customHeaders = listCustomHeaders(projectId);
+  for (const header of project.customHeaders) for (const option of header.options) {
+    if (option.image_path) option.original_name = path.basename(option.image_path);
+  }
   for (const section of project.batchSections) for (const file of section.files) {
     file.applied = db.prepare('SELECT item_id,reply_file_id FROM batch_applications WHERE file_id=? AND reply_file_id IS NOT NULL').all(file.id);
     if (!fs.existsSync(file.path)) {
@@ -1483,6 +1616,7 @@ function projectForExport(projectId) {
   }
   const files = [...project.files, ...project.items.flatMap((i) => [...i.files, ...i.replies.flatMap((r) => r.files)])];
   if (!files.every((file) => isManagedFile(file.stored_path))) throw new Error("Attachment berada di luar penyimpanan aplikasi. Pilih ulang file tersebut.");
+  if (!project.customHeaders.flatMap((header) => header.options).filter((option) => option.image_path).every((option) => isManagedFile(option.image_path))) throw new Error("Gambar custom header berada di luar penyimpanan aplikasi.");
   for (const section of project.batchSections) for (const file of section.files) {
     if (!fs.existsSync(file.path)) throw new Error(`File sumber batch tidak ditemukan: ${file.filename}`);
   }
@@ -1497,6 +1631,7 @@ function exportFileEntries(project) {
       ...item.replies.flatMap((reply) => reply.files.map((file) => ({ file, sourcePath: file.stored_path }))),
     ]),
     ...project.batchSections.flatMap((section) => section.files.map((file) => ({ file, sourcePath: file.path }))),
+    ...(project.customHeaders || []).flatMap((header) => header.options.filter((option) => option.image_path).map((option) => ({ file: option, sourcePath: option.image_path }))),
   ];
 }
 
@@ -1573,6 +1708,9 @@ function exportProjectToFile(projectId, filePath) {
     try { fs.rmSync(tempPath, { force: true }); } catch { /* best effort */ }
     throw error;
   }
+  for (const header of project.customHeaders || []) for (const option of header.options) {
+    if (option.image_path) option.dataBase64 = fs.readFileSync(option.image_path).toString("base64");
+  }
 }
 
 function readExactSync(fd, length, position) {
@@ -1609,6 +1747,7 @@ function readArchive(filePath) {
       ...(payload.project?.files || []),
       ...(payload.project?.items || []).flatMap((item) => [...(item.files || []), ...(item.replies || []).flatMap((reply) => reply.files || [])]),
       ...(payload.project?.batchSections || []).flatMap((section) => section.files || []),
+      ...(payload.project?.customHeaders || []).flatMap((header) => (header.options || []).filter((option) => option.image_path)),
     ];
     const locations = new Map();
     let offset = dataOffset;
@@ -1653,6 +1792,7 @@ function importProject(payload, archive = null) {
     ...(src.files || []),
     ...src.items.flatMap((item) => [...(item.files || []), ...(item.replies || []).flatMap((reply) => reply.files || [])]),
     ...(src.batchSections || []).flatMap((section) => section.files || []),
+    ...(src.customHeaders || []).flatMap((header) => (header.options || []).filter((option) => option.image_path)),
   ];
   for (const file of allFiles) {
     safeFilename(file?.original_name || file?.filename);
@@ -1668,6 +1808,23 @@ function importProject(payload, archive = null) {
     transaction(() => {
       const newProject = createProject({ name: `${src.name} (import)`, channelId: src.channel_id, channelName: src.channel_name });
       newProjectId = newProject.id;
+      const headerMap = new Map();
+      const optionMap = new Map();
+      for (const [headerIndex, header] of (src.customHeaders || []).entries()) {
+        if (!header || typeof header.name !== "string" || !Array.isArray(header.options || [])) throw new Error("Data custom header tidak valid.");
+        const newHeaderId = uuid();
+        headerMap.set(header.id, newHeaderId);
+        db.prepare(`INSERT INTO custom_headers(id,project_id,name,sort_order) VALUES(?,?,?,?)`).run(newHeaderId, newProject.id, header.name, headerIndex);
+        for (const [optionIndex, option] of header.options.entries()) {
+          if (!option || typeof option.name !== "string" || !cleanReactionCode(option.code_name)) throw new Error("Data pilihan custom header tidak valid.");
+          assertCustomCodeUnique(newProject.id, cleanReactionCode(option.code_name));
+          const newOptionId = uuid();
+          optionMap.set(option.id, newOptionId);
+          let imagePath = null;
+          if (option.image_path) { imagePath = stageImportedFile(newProject.id, option, option.original_name, archive); staged.push(imagePath); }
+          db.prepare(`INSERT INTO custom_header_options(id,header_id,name,code_name,image_path,unicode_value,sort_order) VALUES(?,?,?,?,?,?,?)`).run(newOptionId, newHeaderId, option.name, cleanReactionCode(option.code_name), imagePath, option.unicode_value || null, optionIndex);
+        }
+      }
       for (const file of src.files || []) {
         const storedPath = stageImportedFile(newProject.id, file, file.original_name, archive); staged.push(storedPath);
         db.prepare(`INSERT INTO project_files (id, project_id, stored_path, original_name, sort_order) VALUES (?, ?, ?, ?, ?)`).run(uuid(), newProject.id, storedPath, file.original_name, file.sort_order || 0);
@@ -1690,6 +1847,10 @@ function importProject(payload, archive = null) {
         // export, presetnya global bukan ikut export) sebelum di-restore.
         if (item.status_id && db.prepare(`SELECT 1 FROM status_presets WHERE id = ?`).get(item.status_id)) {
           db.prepare(`INSERT INTO item_status (item_id, status_id, sent_shortcode, updated_at) VALUES (?, ?, ?, ?)`).run(newItemId, item.status_id, item.status_sent_shortcode || null, now());
+        }
+        for (const value of item.custom_values || []) {
+          const headerId = headerMap.get(value.header_id), optionId = optionMap.get(value.option_id);
+          if (headerId && optionId) db.prepare(`INSERT INTO item_custom_values(item_id,header_id,option_id,sent_shortcode,updated_at) VALUES(?,?,?,?,?)`).run(newItemId, headerId, optionId, null, now());
         }
         for (const file of item.files || []) {
           const storedPath = stageImportedFile(newItemId, file, file.original_name, archive); staged.push(storedPath);
@@ -1850,6 +2011,16 @@ module.exports = {
   getItemStatus,
   setItemStatus,
   setItemStatusSentShortcode,
+  listCustomHeaders,
+  saveCustomHeader,
+  removeCustomHeader,
+  reorderCustomHeaders,
+  saveCustomHeaderOption,
+  removeCustomHeaderOption,
+  reorderCustomHeaderOptions,
+  listItemCustomValues,
+  setItemCustomValue,
+  setItemCustomValueSentShortcode,
   getArtistAssignModes,
   setMentionEnabled,
   setReactEnabled,
@@ -1889,6 +2060,7 @@ for (const name of [
   "broadcastReply", "saveBatchSections", "generateBatchItems", "applyBatchSections", "importProject", "importProjectFile", "duplicateProject",
   "saveArtistPreset", "removeArtistPreset",
   "saveStatusPreset", "removeStatusPreset",
+  "saveCustomHeader", "removeCustomHeader", "reorderCustomHeaders", "saveCustomHeaderOption", "removeCustomHeaderOption", "reorderCustomHeaderOptions",
   "replaceCachedSlackUsers", "replaceCachedChannelMemberIds"
 ]) {
   const mutate = module.exports[name];

@@ -15,11 +15,13 @@ export default function StatusDropdown({
   presets,
   onChange,
   onOpenChange,
+  placeholder = "Status",
 }: {
   statusId: string | null;
   presets: StatusPreset[];
   onChange: (statusId: string | null) => void;
   onOpenChange?: (open: boolean) => void;
+  placeholder?: string;
 }) {
   const [open, setOpenState] = useState(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
@@ -64,12 +66,12 @@ export default function StatusDropdown({
         tabIndex={0}
         aria-haspopup="listbox"
         aria-expanded={open}
-        aria-label={selected ? `Status: ${selected.name}` : "Pilih status"}
+        aria-label={selected ? `${placeholder}: ${selected.name}` : `Pilih ${placeholder}`}
         style={{ display: "flex", alignItems: "center", gap: 5, minHeight: 24, padding: "2px 6px", border: "1px solid var(--border)", borderRadius: 6, cursor: "pointer", fontSize: 12 }}
       >
         <StatusEmoji preset={selected} />
         <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-          {selected ? selected.name : <span className="muted">— Status —</span>}
+          {selected ? selected.name : <span className="muted">— {placeholder} —</span>}
         </span>
         <ChevronDown size={11} className="muted" style={{ flexShrink: 0 }} />
       </div>
@@ -83,7 +85,7 @@ export default function StatusDropdown({
               style={{ width: "100%", justifyContent: "flex-start", border: "none", fontSize: 12, ...(statusId === null ? { color: "var(--accent)" } : {}) }}
               onClick={() => pick(null)}
             >
-              — Status —
+              — {placeholder} —
             </button>
             {presets.map((p) => (
               <button

@@ -29,7 +29,7 @@ import {
   Unlock,
   CircleUserRound,
 } from "lucide-react";
-import type { ArtistPreset, HyperlinkPreset, ItemFile, ProjectItem, Reply, SlackUser, StatusPreset, Template, TemplateField } from "../global";
+import type { ArtistPreset, CustomHeader, HyperlinkPreset, ItemFile, ProjectItem, Reply, SlackUser, StatusPreset, Template, TemplateField } from "../global";
 import { useFileBlobUrl, fileKind } from "../lib/fileUrl";
 const PdfViewer = lazy(() => import("./PdfViewer"));
 const VideoPlayer = lazy(() => import("./VideoPlayer"));
@@ -91,6 +91,9 @@ export default function Drawer({
   statusPresets,
   onSetStatus,
   onManageStatusPresets,
+  customHeaders,
+  onSetCustomValue,
+  onManageCustomHeaders,
   instantIntakeEnabled,
   onToggleInstantIntake,
   syncing,
@@ -126,6 +129,9 @@ export default function Drawer({
   statusPresets: StatusPreset[];
   onSetStatus: (item: ProjectItem, statusId: string | null) => void;
   onManageStatusPresets: () => void;
+  customHeaders: CustomHeader[];
+  onSetCustomValue: (item: ProjectItem, headerId: string, optionId: string | null) => void;
+  onManageCustomHeaders: () => void;
   /** Toggle global Instant Intake + Instant Reaction (poin revisi) — matiin QuickSendButton DAN
    * InstantReactionOverlay di sini, "Add React" (ItemReactionBar) TETAP gak kesentuh. */
   instantIntakeEnabled: boolean;
@@ -382,6 +388,20 @@ export default function Drawer({
                 </button>
               </div>
               <StatusDropdown statusId={item.status_id} presets={statusPresets} onChange={(statusId) => onSetStatus(item, statusId)} />
+              {customHeaders.map((header) => (
+                <div key={header.id} style={{ marginTop: 8 }}>
+                  <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 4 }}>
+                    <span className="label" style={{ marginBottom: 0 }}>{header.name}</span>
+                    <button className="icon-btn" title="Kelola Header" onClick={onManageCustomHeaders}><Settings size={14} /></button>
+                  </div>
+                  <StatusDropdown
+                    statusId={item.custom_values.find((value) => value.header_id === header.id)?.option_id || null}
+                    presets={header.options}
+                    placeholder={header.name}
+                    onChange={(optionId) => onSetCustomValue(item, header.id, optionId)}
+                  />
+                </div>
+              ))}
             </div>
           )}
 

@@ -75,6 +75,7 @@ export interface ProjectItem {
   artists: ItemArtist[];
   /** Status aktif item ini (poin revisi, fitur Status) — null = belum ada status dipilih. */
   status_id: string | null;
+  custom_values: ItemCustomValue[];
   source: "manual" | "folder-import";
   sort_order: number;
   files: ItemFile[];
@@ -205,6 +206,30 @@ export interface StatusPreset {
   unicode_value: string | null;
 }
 
+export interface CustomHeaderOption {
+  id: string;
+  header_id: string;
+  name: string;
+  code_name: string;
+  image_path: string | null;
+  unicode_value: string | null;
+  sort_order: number;
+}
+
+export interface CustomHeader {
+  id: string;
+  project_id: string;
+  name: string;
+  sort_order: number;
+  options: CustomHeaderOption[];
+}
+
+export interface ItemCustomValue {
+  header_id: string;
+  option_id: string | null;
+  sent_shortcode: string | null;
+}
+
 /** Otomasi Kata Kunci (poin revisi) — mapping bebas "kata kunci di reply thread" -> "set status
  * ATAU assign artis". Daftar bebas, GLOBAL, 1 keyword boleh punya beberapa baris (target beda). */
 export interface KeywordAutomation {
@@ -299,6 +324,7 @@ declare global {
         /** Fitur Status (poin revisi) — single-select, beda dari artis (multi). `statusId` null =
          * lepas status. Sinkron realtime & precondition thread sama persis kayak addArtist. */
         setStatus: (payload: { projectId: string; itemId: string; statusId: string | null }) => Promise<void>;
+        setCustomValue: (payload: { projectId: string; itemId: string; headerId: string; optionId: string | null }) => Promise<void>;
         /** Push dari sync 2 arah reaction Slack->App (poin revisi) — item berubah di background,
          * renderer perlu tau biar auto-refresh (bukan hasil aksi user di jendela ini). */
         onChanged: (cb: (data: { projectId: string; itemId: string }) => void) => () => void;
@@ -371,6 +397,15 @@ declare global {
       instantIntake: {
         get: () => Promise<boolean>;
         set: (enabled: boolean) => Promise<boolean>;
+      };
+      customHeader: {
+        list: (projectId: string) => Promise<CustomHeader[]>;
+        save: (payload: { projectId: string; id?: string; name: string }) => Promise<string>;
+        remove: (projectId: string, headerId: string) => Promise<void>;
+        reorder: (projectId: string, orderedIds: string[]) => Promise<void>;
+        saveOption: (payload: { projectId: string; headerId: string; id?: string; name: string; codeName: string; sourcePath?: string; unicodeValue?: string }) => Promise<string>;
+        removeOption: (projectId: string, optionId: string) => Promise<void>;
+        reorderOptions: (projectId: string, headerId: string, orderedIds: string[]) => Promise<void>;
       };
       autoOpenSlack: {
         get: () => Promise<boolean>;

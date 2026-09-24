@@ -218,6 +218,7 @@ function validateAccess(channel, args) {
   if (channel === "reply:addFiles") args[2].forEach(validateFile);
   if (channel === "artistPreset:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
   if (channel === "statusPreset:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
+  if (channel === "customHeaderOption:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
   if (channel === "batchFile:saveSections") {
     const previous = projects.listBatchSections(args[0]);
     for (const section of args[1]) for (const file of section.files) {
@@ -226,7 +227,8 @@ function validateAccess(channel, args) {
     }
   }
   let valid = true;
-  if (["project:load", "project:rename", "project:setChannel", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "project:listChannelMemberIds", "project:refreshChannelMembers", "batchFile:listSections", "batchFile:saveSections", "batchFile:generateItems", "batchFile:apply", "artistAssign:syncProject", "slackPull:syncProject"].includes(channel)) valid = projects.ownsProject(args[0]);
+  if (["project:load", "project:rename", "project:setChannel", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "project:listChannelMemberIds", "project:refreshChannelMembers", "batchFile:listSections", "batchFile:saveSections", "batchFile:generateItems", "batchFile:apply", "artistAssign:syncProject", "slackPull:syncProject", "customHeader:list", "customHeader:remove", "customHeader:reorder", "customHeaderOption:remove", "customHeaderOption:reorder"].includes(channel)) valid = projects.ownsProject(args[0]);
+  else if (["customHeader:save", "customHeaderOption:save", "item:setCustomValue"].includes(channel)) valid = projects.ownsProject(args[0]?.projectId) && (channel !== "item:setCustomValue" || projects.ownsItem(args[0]?.itemId));
   else if (channel === "item:addManual") valid = projects.ownsProject(args[0]?.projectId);
   else if (["item:update", "item:remove", "item:attachFiles"].includes(channel)) valid = projects.ownsItem(args[0]);
   else if (["item:addArtist", "item:removeArtist", "item:setStatus", "item:pushRootName", "artistAssign:syncItem", "slackPull:syncItem"].includes(channel)) valid = projects.ownsProject(args[0]?.projectId) && projects.ownsItem(args[0]?.itemId);
@@ -670,6 +672,27 @@ handle("statusPreset:list", () => projects.listStatusPresets());
 handle("statusPreset:save", (_e, { id, name, codeName, sourcePath, unicodeValue }) => projects.saveStatusPreset({ id, name, codeName, sourcePath, unicodeValue }));
 handle("statusPreset:remove", (_e, id) => projects.removeStatusPreset(id));
 handle("statusPreset:reorder", (_e, orderedIds) => projects.reorderStatusPresets(orderedIds));
+
+handle("customHeader:list", (_e, projectId) => projects.listCustomHeaders(projectId));
+handle("customHeader:save", (_e, payload) => projects.saveCustomHeader(payload));
+handle("customHeader:remove", async (_e, projectId, headerId) => {
+  const project = projects.getProject(projectId);
+  if (!project) throw new Error("Project tidak ditemukan.");
+  for (const item of project.items) {
+    const value = item.custom_values.find((candidate) => candidate.header_id === headerId);
+    if (!value) continue;
+    projects.setItemCustomValue(item.id, headerId, null);
+    await withItemArtistLock(item.id, () => reconcileItemStatusState({ projectId, itemId: item.id, force: true }));
+    if (projects.listItemCustomValues(item.id).find((candidate) => candidate.header_id === headerId)?.sent_shortcode) {
+      throw new Error(`Reaction header pada "${item.name}" belum berhasil dihapus dari Slack. Coba lagi saat koneksi tersedia.`);
+    }
+  }
+  projects.removeCustomHeader(projectId, headerId);
+});
+handle("customHeader:reorder", (_e, projectId, orderedIds) => projects.reorderCustomHeaders(projectId, orderedIds));
+handle("customHeaderOption:save", (_e, payload) => projects.saveCustomHeaderOption(payload));
+handle("customHeaderOption:remove", (_e, projectId, optionId) => projects.removeCustomHeaderOption(projectId, optionId));
+handle("customHeaderOption:reorder", (_e, projectId, headerId, orderedIds) => projects.reorderCustomHeaderOptions(projectId, headerId, orderedIds));
 // Mode assign Mention/React (poin revisi — bisa DUA-duanya aktif bareng) — GLOBAL buat SEMUA
 // artis, singleton (bukan per-preset), 2 flag independen.
 handle("artistAssignMode:get", () => projects.getArtistAssignModes());
@@ -775,15 +798,7 @@ async function reconcileItemAssignState({ projectId, itemId, force = false }) {
   // udah nempel duluan, react status itu di-lepas lalu dipasang ulang -- otomatis pindah ke
   // ujung PALING BELAKANG, alias selalu setelah react artis.
   if ((addedNewArtistReaction || force) && shouldBeLive.size > 0) {
-    const statusRow = projects.getItemStatus(itemId);
-    if (statusRow?.sent_shortcode) {
-      try {
-        await slack.removeReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: statusRow.sent_shortcode });
-        await slack.addReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: statusRow.sent_shortcode });
-      } catch (err) {
-        projects.addLog("error", `Gagal urutin ulang reaction status :${statusRow.sent_shortcode}: (biar react artis tetap duluan): ${err.message}`);
-      }
-    }
+    await reconcileItemStatusState({ projectId, itemId, force: true, reorder: true });
   }
 
   // Mention message cuma nampilin nama BENERAN kalau flag mention lagi ON -- kalau OFF (react
@@ -803,37 +818,52 @@ async function reconcileItemAssignState({ projectId, itemId, force = false }) {
 // sama semangatnya kayak reconcileItemAssignState tapi jauh lebih sederhana (gak ada mention,
 // gak ada daftar banyak artis) -- SENGAJA fungsi + tabel TERPISAH (item_status, bukan nebeng ke
 // item_reactions), biar gak ketaut/kehapus gak sengaja sama cleanup reaction mode artis-react.
-async function reconcileItemStatusState({ projectId, itemId, force = false }) {
+async function reconcileItemStatusState({ projectId, itemId, force = false, reorder = false }) {
   if (!force && !projects.getRealtimeAssignEnabled()) return;
   const info = slack.findThreadInfo(threadKey(projectId, itemId));
   if (!info) return;
   const token = currentToken();
-  const row = projects.getItemStatus(itemId);
-  const preset = row?.status_id ? projects.listStatusPresets().find((p) => p.id === row.status_id) : null;
-  const desiredShortcode = preset?.code_name || null;
-  const liveShortcode = row?.sent_shortcode || null;
-  if (liveShortcode === desiredShortcode) return; // udah sinkron, gak ada yang perlu diubah
+  const statusRow = projects.getItemStatus(itemId);
+  const statusPresets = projects.listStatusPresets?.();
+  const statusPreset = statusRow?.status_id ? statusPresets?.find((p) => p.id === statusRow.status_id) : null;
+  const headers = projects.listCustomHeaders?.(projectId) || [];
+  const values = new Map((projects.listItemCustomValues?.(itemId) || []).map((value) => [value.header_id, value]));
+  const desired = [];
+  const desiredStatusCode = statusPreset?.code_name || (!statusPresets && statusRow?.status_id ? statusRow.sent_shortcode : null);
+  if (desiredStatusCode) desired.push({ headerId: null, code: desiredStatusCode });
+  for (const header of headers) {
+    const value = values.get(header.id);
+    const option = value?.option_id ? header.options.find((candidate) => candidate.id === value.option_id) : null;
+    if (option?.code_name) desired.push({ headerId: header.id, code: option.code_name });
+  }
+  const live = [];
+  if (statusRow?.sent_shortcode) live.push({ headerId: null, code: statusRow.sent_shortcode });
+  for (const header of headers) {
+    const code = values.get(header.id)?.sent_shortcode;
+    if (code) live.push({ headerId: header.id, code });
+  }
+  if (!reorder && live.length === desired.length && live.every((entry, index) => entry.headerId === desired[index].headerId && entry.code === desired[index].code)) return;
 
-  if (liveShortcode) {
-    // Poin revisi (bug ditemukan lewat audit, D14) — sent_shortcode DULU dihapus TANPA PEDULI
-    // removeReaction berhasil apa enggak (di luar try/catch). Kalau removeReaction GAGAL, DB
-    // lokal tetap ngaku "udah bersih" -- panggilan berikutnya liveShortcode===null jadi nganggep
-    // SUDAH sinkron (baris awal fungsi ini return duluan), reaction lama yang GAGAL kehapus di
-    // Slack gak akan pernah dicoba dihapus lagi. Sekarang cuma di-null-in kalau BENERAN sukses,
-    // biar reconcile berikutnya masih nyoba ulang.
+  // Bangun ulang hanya kelompok Status+custom header saat nilainya berubah. React artis dan
+  // reaction manual tidak disentuh; urutannya selalu Status lalu urutan custom header.
+  for (const entry of live) {
     try {
-      await slack.removeReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: liveShortcode });
-      projects.setItemStatusSentShortcode(itemId, null);
+      await slack.removeReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: entry.code });
+      if (entry.headerId) projects.setItemCustomValueSentShortcode?.(itemId, entry.headerId, null);
+      else projects.setItemStatusSentShortcode?.(itemId, null);
     } catch (err) {
-      projects.addLog("error", `Gagal bersihin reaction status lama :${liveShortcode}: ${err.message}`);
+      projects.addLog('error', `Gagal bersihin reaction header lama :${entry.code}: ${err.message}`);
+      return;
     }
   }
-  if (desiredShortcode) {
+  for (const entry of desired) {
     try {
-      await slack.addReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: desiredShortcode });
-      projects.setItemStatusSentShortcode(itemId, desiredShortcode);
+      await slack.addReaction({ token, channelId: info.channelId, timestamp: info.threadTs, name: entry.code });
+      if (entry.headerId) projects.setItemCustomValueSentShortcode?.(itemId, entry.headerId, entry.code);
+      else projects.setItemStatusSentShortcode?.(itemId, entry.code);
     } catch (err) {
-      projects.addLog("error", `Gagal kasih reaction status :${desiredShortcode}: ${err.message}`);
+      projects.addLog('error', `Gagal kasih reaction header :${entry.code}: ${err.message}`);
+      return;
     }
   }
   if (!force) autoOpenSlack({ channelId: info.channelId, ts: info.threadTs });
@@ -923,6 +953,16 @@ handle("item:setStatus", (_e, { projectId, itemId, statusId }) => withItemArtist
   await reconcileItemStatusState({ projectId, itemId });
 }));
 
+handle("item:setCustomValue", (_e, { projectId, itemId, headerId, optionId }) => withItemArtistLock(itemId, async () => {
+  const item = projects.getProject(projectId)?.items.find((candidate) => candidate.id === itemId);
+  if (!item) throw new Error("Item tidak ditemukan.");
+  projects.setItemCustomValue(itemId, headerId, optionId || null);
+  if (projects.getRealtimeAssignEnabled() && !slack.findThreadInfo(threadKey(projectId, itemId))) {
+    throw new Error(`"${item.name}" belum pernah dikirim ke Slack (belum ada thread) — gak bisa realtime sync.`);
+  }
+  await reconcileItemStatusState({ projectId, itemId });
+}));
+
 // Tombol manual "Update" (poin revisi) — dipicu USER, BUKAN otomatis pas mode assign global
 // di-switch (itu sengaja tetap murni lokal/instan, gak nembak Slack sama sekali sendirian).
 // Nyisir SEMUA item project yang lagi kebuka yang punya artis assigned DAN/ATAU status (poin
@@ -948,7 +988,7 @@ async function pushItemToSlack(projectId, item) {
   // pernah dibersihin. reconcileItemAssignState sendiri udah aman dipanggil unconditional (no-op
   // kalau emang gak ada apa-apa buat diubah, findThreadInfo internal juga udah nge-guard).
   await reconcileItemAssignState({ projectId, itemId: item.id, force: true });
-  if (item.status_id || item.status_sent_shortcode) await reconcileItemStatusState({ projectId, itemId: item.id, force: true });
+  if (item.status_id || item.status_sent_shortcode || item.custom_values?.some((value) => value.option_id || value.sent_shortcode)) await reconcileItemStatusState({ projectId, itemId: item.id, force: true, reorder: true });
 }
 
 // Push dari overlay kolom Item sengaja hanya memperbarui nama pesan root. Assignment artis,
@@ -1078,6 +1118,19 @@ async function pullItemFromSlack(projectId, item, { token, artistPresets, status
         reactionChanges++;
       }
     }
+    for (const header of projects.listCustomHeaders?.(projectId) || []) {
+      for (const option of header.options) {
+        const current = projects.listItemCustomValues(item.id).find((value) => value.header_id === header.id);
+        const isLive = liveNames.has(option.code_name);
+        if (isLive && (current?.option_id !== option.id || current?.sent_shortcode !== option.code_name)) {
+          await onIncomingCustomHeaderReaction(true, item.id, header.id, option.id, option.code_name);
+          reactionChanges++;
+        } else if (!isLive && current?.sent_shortcode === option.code_name) {
+          await onIncomingCustomHeaderReaction(false, item.id, header.id, option.id, option.code_name);
+          reactionChanges++;
+        }
+      }
+    }
   });
 
   if (keywordAutomations.length) {
@@ -1195,6 +1248,17 @@ async function onIncomingStatusReaction(added, itemId, statusId, codeName) {
   }
 }
 
+async function onIncomingCustomHeaderReaction(added, itemId, headerId, optionId, codeName) {
+  const current = (projects.listItemCustomValues?.(itemId) || []).find((value) => value.header_id === headerId);
+  if (added) {
+    if (current?.option_id !== optionId) projects.setItemCustomValue(itemId, headerId, optionId);
+    projects.setItemCustomValueSentShortcode(itemId, headerId, codeName);
+  } else {
+    if (current?.option_id === optionId) projects.setItemCustomValue(itemId, headerId, null);
+    if (current?.sent_shortcode === codeName) projects.setItemCustomValueSentShortcode(itemId, headerId, null);
+  }
+}
+
 // Poin revisi (bug dilaporkan: klik chip react di app abis reaction ke-ubah dari Slack, dapet
 // "Data tidak ditemukan untuk akun/workspace ini") — root cause: sync 2 arah ngubah data di
 // backend, tapi renderer yang lagi kebuka gak tau sama sekali (state item_reactions/artis/status
@@ -1229,6 +1293,14 @@ async function handleIncomingReaction(type, event) {
     if (statusPreset) {
       await withItemArtistLock(itemId, () => onIncomingStatusReaction(added, itemId, statusPreset.id, event.reaction));
       notifyItemChanged(projectId, itemId);
+      return;
+    }
+    for (const header of projects.listCustomHeaders?.(projectId) || []) {
+      const option = header.options.find((candidate) => candidate.code_name === event.reaction);
+      if (!option) continue;
+      await withItemArtistLock(itemId, () => onIncomingCustomHeaderReaction(added, itemId, header.id, option.id, event.reaction));
+      notifyItemChanged(projectId, itemId);
+      return;
     }
     // Reaction lain yang gak cocok preset apa pun -- SENGAJA diabaikan (poin revisi, cakupan
     // sync dipilih user cuma buat Artis/Status, bukan reaction bebas apa pun).
@@ -1610,7 +1682,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
       }
       // Status (poin revisi) — data-driven sama kayak artis di atas, force:true biar tetap
       // kesinkron walau toggle realtime OFF (thread-nya UDAH ADA dari fase 1 di atas).
-      await reconcileItemStatusState({ projectId, itemId: item.id, force: true });
+      await reconcileItemStatusState({ projectId, itemId: item.id, force: true, reorder: true });
     }, { units: (counts) => counts.assigns });
 
     // Fase 3 — react lain (di luar react artis, misal ditambah manual lewat "Add React"). Gagal
@@ -1801,7 +1873,7 @@ handle("send:quick", async (event, { projectId, itemId, channelId, scope, replyI
   }
   // Status (poin revisi) — sinkron juga di Instant Intake, sama semangatnya kayak mention/react
   // di atas (force:true, gak nunggu toggle realtime).
-  await reconcileItemStatusState({ projectId, itemId: item.id, force: true });
+  await reconcileItemStatusState({ projectId, itemId: item.id, force: true, reorder: true });
 
   // Buka LANGSUNG ke thread pesan yang baru/di-update (bukan cuma channel-nya doang kayak
   // send:start) — instant-send 1 aksi, jadi hasilnya juga langsung ketauan, gak perlu scroll
