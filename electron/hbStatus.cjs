@@ -12,6 +12,7 @@
 // "HB-Apps" (poin revisi, nama yang diminta user) — Slack SELALU nyimpen nama channel huruf
 // kecil semua (buat channel via UI/API otomatis di-lowercase, gak bisa mixed-case), jadi channel
 // beneran di Slack namanya "hb-apps". Matching tetep case-insensitive buat jaga-jaga.
+const fs = require("node:fs");
 const STATUS_CHANNEL_NAME = "hb-apps";
 
 let cachedChannelId = null;
@@ -145,38 +146,60 @@ function countSendWork({ targets, scope }) {
 
 // Estimasi waktu kirim (poin revisi) — REAL, bukan tebakan kasar, ngikutin persis pacing 4-fase
 // (paceChannel 1.1s/panggilan, paceReactions 1.2s/panggilan) yang udah jalan di send:start.
-// Dipanggil SEBELUM proses kirim mulai, jadi cuma butuh HITUNG berapa panggilan per fase bakal
-// kejadian -- bukan simulasi penuh.
-function estimateSendMinutes({ targets, scope, assignModes, presetByMember, projects }) {
+// Ukuran file lokal ikut dihitung dengan asumsi 5 MB/detik, overhead 0,4 detik per file, lalu
+// seluruh subtotal diberi buffer jaringan 15%. fs.stat cuma membaca metadata, bukan isi file.
+function estimateSendMinutes({ targets, scope, assignModes: _assignModes, presetByMember, projects }) {
   const MSG_SEC = 1.1;
   const REACT_SEC = 1.2;
-  let seconds = targets.length * MSG_SEC; // fase 1: root, semua item
+  const BYTES_PER_MB = 1024 * 1024;
+  const UPLOAD_MB_PER_SEC = 5;
+  const FILE_OVERHEAD_SEC = 0.4;
+  const FALLBACK_FILE_BYTES = 25 * BYTES_PER_MB;
+  const NETWORK_BUFFER = 1.15;
+  let seconds = targets.length * MSG_SEC;
+  let uploadBytes = 0;
+  let uploadFileCount = 0;
+  const sizeCache = new Map();
 
-  for (const item of targets) {
-    // Poin revisi: syncAssignMessage sekarang SELALU jalan tiap scope (item/replies TERMASUK,
-    // gak di-skip lagi) DAN selalu post/update walau gak ada artis (placeholder) -- estimasi ini
-    // ngikutin itu, gak nge-nolin/nge-syarat-kan artistIds lagi.
-    // Mode mention (poin revisi multi-artist) — SATU pesan assignment per item (syncAssignMessage),
-    // gak peduli berapa banyak artis-nya -- bukan 1 pesan PER artis lagi. Independen dari react
-    // (poin revisi lanjutan: dua-duanya bisa aktif bareng).
-    if (assignModes.mention) seconds += MSG_SEC;
-
-    const codeNames = new Set((item.artists || []).map((a) => presetByMember.get(a.artist_id)?.code_name).filter(Boolean));
-    const reactions = projects.listItemReactions(item.id);
-    const artistReactionCount = reactions.filter((r) => codeNames.has(r.slack_shortcode)).length;
-    seconds += artistReactionCount * REACT_SEC;
-    const otherCount = reactions.length - artistReactionCount;
-    seconds += otherCount * REACT_SEC;
-
-    // Reply jadi post CUMA kalau title/text_value/files-nya gak kosong -- persis logika
-    // composeReplyText+replyToPost (main.cjs), biar hitungannya akurat sama alur beneran.
-    const nonEmptyReplyCount = (item.replies || []).filter((r) => !r.sent && ((r.title || "").trim() || (r.text_value || "").trim() || (r.files || []).length)).length;
-    if (scope !== "item" && scope !== "artist") {
-      const postCount = scope === "replies" ? nonEmptyReplyCount : ((item.files || []).length ? 1 : 0) + nonEmptyReplyCount;
-      seconds += postCount * MSG_SEC;
+  function addFiles(files) {
+    for (const file of files || []) {
+      const filePath = file?.stored_path || file?.path;
+      let bytes = sizeCache.get(filePath);
+      if (bytes === undefined) {
+        try {
+          const stat = filePath && fs.statSync(filePath);
+          bytes = stat?.isFile() && Number.isFinite(stat.size) && stat.size >= 0 ? stat.size : FALLBACK_FILE_BYTES;
+        } catch {
+          bytes = FALLBACK_FILE_BYTES;
+        }
+        if (filePath) sizeCache.set(filePath, bytes);
+      }
+      uploadBytes += bytes;
+      uploadFileCount += 1;
     }
   }
-  return Math.max(1, Math.ceil(seconds / 60));
+
+  for (const item of targets) {
+    // Assignment atau placeholder selalu dikirim satu kali per item, termasuk saat Mention OFF.
+    seconds += MSG_SEC;
+
+    const codeNames = new Set((item.artists || []).map((a) => presetByMember.get(a.artist_id)?.code_name).filter(Boolean));
+    const reactions = projects.listItemReactions(item.id).filter((reaction) => !reaction.sent);
+    const artistReactionCount = reactions.filter((r) => codeNames.has(r.slack_shortcode)).length;
+    seconds += artistReactionCount * REACT_SEC;
+    seconds += (reactions.length - artistReactionCount) * REACT_SEC;
+
+    const nonEmptyReplies = (item.replies || []).filter((reply) => !reply.sent && ((reply.title || "").trim() || (reply.text_value || "").trim() || (reply.files || []).length));
+    if (scope !== "item" && scope !== "artist") {
+      const includeItemFiles = scope !== "replies" && (item.files || []).length > 0;
+      seconds += ((includeItemFiles ? 1 : 0) + nonEmptyReplies.length) * MSG_SEC;
+      if (includeItemFiles) addFiles(item.files);
+      for (const reply of nonEmptyReplies) addFiles(reply.files);
+    }
+  }
+
+  seconds += (uploadBytes / BYTES_PER_MB / UPLOAD_MB_PER_SEC) + (uploadFileCount * FILE_OVERHEAD_SEC);
+  return Math.max(1, Math.ceil((seconds * NETWORK_BUFFER) / 60));
 }
 
 module.exports = {

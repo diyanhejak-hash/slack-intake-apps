@@ -3437,9 +3437,34 @@ async function test(name, fn) {
       const hb = load("electron/hbStatus.cjs", {});
       const mockProjects = { listItemReactions: () => [] };
       const presetByMember = new Map();
-      // 60 item, masing-masing root(1.1)+mention(1.1) = 2.2s -> total 132s -> ceil(132/60) = 3 menit.
+      // 60 item, masing-masing root(1.1)+assignment/placeholder(1.1), ditambah buffer 15%.
       const targets = Array.from({ length: 60 }, (_, i) => ({ id: `I${i}`, artists: [{ artist_id: "U1" }], files: [], replies: [] }));
       assert.equal(hb.estimateSendMinutes({ targets, scope: undefined, assignModes: { mention: true, react: false }, presetByMember, projects: mockProjects }), 3);
+      assert.equal(hb.estimateSendMinutes({ targets, scope: undefined, assignModes: { mention: false, react: false }, presetByMember, projects: mockProjects }), 3); // placeholder tetap butuh 1 API call/item
+    });
+    await test("hbStatus.estimateSendMinutes menghitung ukuran file, overhead, buffer, dan hanya attachment pending dalam scope", () => {
+      const MB = 1024 * 1024;
+      const sizes = new Map([["A", 100 * MB], ["B", 100 * MB], ["C", 100 * MB], ["OLD", 1000 * MB], ["DIRECT", 1000 * MB]]);
+      const hb = load("electron/hbStatus.cjs", { "node:fs": { statSync: (filePath) => ({ isFile: () => true, size: sizes.get(filePath) }) } });
+      const projectsWithoutPendingReactions = { listItemReactions: () => [{ slack_shortcode: "done", sent: 1 }] };
+      const target = {
+        id: "WITH-FILES", artists: [], files: [{ stored_path: "DIRECT" }],
+        replies: [
+          { title: "Animatic", text_value: "", sent: false, files: [{ stored_path: "A" }, { stored_path: "B" }, { stored_path: "C" }] },
+          { title: "Lama", text_value: "", sent: true, files: [{ stored_path: "OLD" }] },
+        ],
+      };
+      // Scope replies: root 1.1 + placeholder 1.1 + field 1.1 + transfer 300/5=60
+      // + overhead 3*0.4=1.2; subtotal 64.5 * buffer 1.15 = 74.175 detik => 2 menit.
+      assert.equal(hb.estimateSendMinutes({ targets: [target], scope: "replies", assignModes: { mention: false }, presetByMember: new Map(), projects: projectsWithoutPendingReactions }), 2);
+      // Scope item tidak membawa DIRECT/reply mana pun, jadi ukuran file tidak ikut dihitung.
+      assert.equal(hb.estimateSendMinutes({ targets: [target], scope: "item", assignModes: { mention: false }, presetByMember: new Map(), projects: projectsWithoutPendingReactions }), 1);
+    });
+    await test("hbStatus.estimateSendMinutes memakai fallback 25 MB jika metadata file tidak terbaca", () => {
+      const hb = load("electron/hbStatus.cjs", { "node:fs": { statSync: () => { throw new Error("missing"); } } });
+      const files = Array.from({ length: 10 }, (_, i) => ({ stored_path: `MISSING-${i}` }));
+      const target = { id: "MISSING", artists: [], files: [], replies: [{ title: "Files", text_value: "", sent: false, files }] };
+      assert.equal(hb.estimateSendMinutes({ targets: [target], scope: "replies", assignModes: { mention: false }, presetByMember: new Map(), projects: { listItemReactions: () => [] } }), 2);
     });
     await test("hbStatus.countSendWork menghitung item, artis nyata, reply pending, dan setiap file fisik", () => {
       const hb = load("electron/hbStatus.cjs", {});
