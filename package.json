@@ -85,7 +85,7 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "Asset/HB5_new.png"
+      "icon": "Asset/HB_ICON_OL.png"
     },
     "mac": {
       "target": {
@@ -96,13 +96,13 @@
         ]
       },
       "identity": null,
-      "icon": "Asset/HB5_new.png"
+      "icon": "Asset/HB_ICON_OL.png"
     },
     "linux": {
       "target": [
         "AppImage"
       ],
-      "icon": "Asset/HB5_new.png",
+      "icon": "Asset/HB_ICON_OL.png",
       "category": "Office"
     }
   }

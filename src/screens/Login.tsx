@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { AuthStatus } from "../global";
-import logo from "../assets/HB5_new.png";
+import logo from "../assets/HB_ICON_OL.png";
 import ThemeToggle from "./ThemeToggle";
 
 export default function Login({ onLoggedIn }: { onLoggedIn: (a: AuthStatus) => void }) {

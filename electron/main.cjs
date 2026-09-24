@@ -55,7 +55,7 @@ function threadKey(projectId, itemId) {
   const info = authStore.loadToken();
   return JSON.stringify([info?.teamId, info?.userId, projectId, itemId]);
 }
-const iconPath = path.join(__dirname, "..", "Asset", "HB5_new.png");
+const iconPath = path.join(__dirname, "..", "Asset", "HB_ICON_OL.png");
 // 1 nativeImage dimuat sekali, dipakai ulang di SEMUA tempat logo app harusnya muncul —
 // window (title bar/taskbar), tray, notifikasi OS, dock (Mac) — biar konsisten logo HB,
 // bukan default Electron di sebagian tempat doang. Sengaja BUKAN diisi di sini (module

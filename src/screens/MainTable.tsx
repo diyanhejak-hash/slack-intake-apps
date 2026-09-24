@@ -1,5 +1,5 @@
 import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeft, Send, Square, CheckSquare, X, Loader2, MessageSquare, Eye, Plus, ClipboardPaste, ExternalLink, Link as LinkIcon, LayoutTemplate, Settings } from "lucide-react";
+import { ArrowLeft, Send, Square, CheckSquare, X, Loader2, MessageSquare, Eye, Plus, ClipboardPaste, ExternalLink, Link as LinkIcon, LayoutTemplate, Settings, Search } from "lucide-react";
 import type { ArtistGroup, ArtistPreset, HyperlinkPreset, Project, ProjectItem, SendResult, SlackChannel, SlackUser, StatusPreset, Template } from "../global";
 const Drawer = lazy(() => import("./Drawer"));
 import BatchFileModal from "./BatchFileModal";
@@ -146,6 +146,11 @@ export default function MainTable({
     }
   }
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [tableQuery, setTableQuery] = useState("");
+  const [tableArtistId, setTableArtistId] = useState("");
+  const [tableStatusId, setTableStatusId] = useState("");
+  const [tableDelivery, setTableDelivery] = useState<"" | "unsent" | "sent" | "pending">("");
+  const [tableSort, setTableSort] = useState<"original" | "name-asc" | "name-desc" | "artist" | "status" | "work-desc">("original");
   const [progress, setProgress] = useState<{ index: number; total: number; itemName: string; phase?: "root" | "artist" | "react" | "post"; counts?: { items: number; assigns: number; replies: number; files: number; total: number } } | null>(null);
   const [results, setResults] = useState<SendResult[] | null>(null);
   const [retryingItemIds, setRetryingItemIds] = useState<Set<string>>(new Set());
@@ -475,12 +480,56 @@ export default function MainTable({
   }, [project]);
   const ARTIST_COLUMN_WIDTH = "200px";
 
+  const tableArtistOptions = useMemo(() => {
+    const artists = new Map<string, string>();
+    for (const item of project?.items || []) {
+      for (const artist of item.artists) artists.set(artist.artist_id, artist.artist_name || artist.artist_id);
+    }
+    return Array.from(artists.entries()).sort((a, b) => a[1].localeCompare(b[1], "id", { numeric: true }));
+  }, [project]);
+
+  const displayedItems = useMemo(() => {
+    if (!project) return [];
+    const query = tableQuery.trim().toLocaleLowerCase("id");
+    const rows = project.items
+      .map((item, sourceIndex) => ({ item, sourceIndex }))
+      .filter(({ item }) => {
+        if (query && !item.name.toLocaleLowerCase("id").includes(query)) return false;
+        if (tableArtistId === "__none__" && item.artists.length > 0) return false;
+        if (tableArtistId && tableArtistId !== "__none__" && !item.artists.some((artist) => artist.artist_id === tableArtistId)) return false;
+        if (tableStatusId === "__none__" && item.status_id) return false;
+        if (tableStatusId && tableStatusId !== "__none__" && item.status_id !== tableStatusId) return false;
+        if (tableDelivery === "unsent" && item.has_thread) return false;
+        if (tableDelivery === "sent" && !item.has_thread) return false;
+        if (tableDelivery === "pending" && !item.replies.some((reply) => !reply.sent)) return false;
+        return true;
+      });
+
+    const compareText = (a: string, b: string) => (a || "").localeCompare(b || "", "id", { numeric: true, sensitivity: "base" });
+    const workCount = (item: ProjectItem) => item.replies.length + item.files.length + item.replies.reduce((total, reply) => total + reply.files.length, 0);
+    rows.sort((a, b) => {
+      if (tableSort === "name-asc") return compareText(a.item.name, b.item.name) || a.sourceIndex - b.sourceIndex;
+      if (tableSort === "name-desc") return compareText(b.item.name, a.item.name) || a.sourceIndex - b.sourceIndex;
+      if (tableSort === "artist") return compareText(a.item.artists.map((artist) => artist.artist_name || artist.artist_id).join(", "), b.item.artists.map((artist) => artist.artist_name || artist.artist_id).join(", ")) || a.sourceIndex - b.sourceIndex;
+      if (tableSort === "status") return compareText(statusPresets.find((status) => status.id === a.item.status_id)?.name || "", statusPresets.find((status) => status.id === b.item.status_id)?.name || "") || a.sourceIndex - b.sourceIndex;
+      if (tableSort === "work-desc") return workCount(b.item) - workCount(a.item) || a.sourceIndex - b.sourceIndex;
+      return a.sourceIndex - b.sourceIndex;
+    });
+    return rows;
+  }, [project, statusPresets, tableArtistId, tableDelivery, tableQuery, tableSort, tableStatusId]);
+  const allDisplayedSelected = displayedItems.length > 0 && displayedItems.every(({ item }) => selected.has(item.id));
+  const tableFiltersActive = Boolean(tableQuery || tableArtistId || tableStatusId || tableDelivery || tableSort !== "original");
+
   // Shift+klik = pilih range dari checkbox terakhir diklik s.d. yang di-shift-klik (semua
   // di antaranya jadi checked). Klik-tahan-geser = "cat" checkbox yang disentuh mouse pas
   // ditahan, ikut nilai checkbox pertama yang diklik (check kalau mulai dari uncheck, dst).
   const dragging = useRef(false);
   const dragValue = useRef(false);
   const lastClickedIndex = useRef<number | null>(null);
+
+  useEffect(() => {
+    lastClickedIndex.current = null;
+  }, [tableArtistId, tableDelivery, tableQuery, tableSort, tableStatusId]);
 
   useEffect(() => {
     function onMouseUp() {
@@ -497,7 +546,7 @@ export default function MainTable({
     e.preventDefault();
     if (e.shiftKey && lastClickedIndex.current !== null && project) {
       const [start, end] = [lastClickedIndex.current, index].sort((a, b) => a - b);
-      const rangeIds = project.items.slice(start, end + 1).map((i) => i.id);
+      const rangeIds = displayedItems.slice(start, end + 1).map(({ item }) => item.id);
       setSelected((prev) => new Set([...prev, ...rangeIds]));
       lastClickedIndex.current = index;
       return;
@@ -524,7 +573,13 @@ export default function MainTable({
 
   function toggleAll(forceOn = false) {
     if (!project) return;
-    setSelected((prev) => (forceOn || prev.size !== project.items.length ? new Set(project.items.map((i) => i.id)) : new Set()));
+    const visibleIds = displayedItems.map(({ item }) => item.id);
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (forceOn || !allDisplayedSelected) visibleIds.forEach((id) => next.add(id));
+      else visibleIds.forEach((id) => next.delete(id));
+      return next;
+    });
   }
 
   async function handleAddManual() {
@@ -1155,7 +1210,7 @@ export default function MainTable({
                 onClick={() => setShowPreview(true)}
                 disabled={project.items.length === 0 || sending}
                 title={`Preview & Kirim (${effectiveItemIds.length}${selected.size === 0 && project.items.length > 0 ? " — semua" : ""})`}
-                style={{ marginBottom: 4, background: "var(--surface)", borderRadius: 999, padding: "1px 6px", border: "1px solid var(--border-strong)" }}
+                style={{ marginBottom: 4, background: "#fff", color: "#111", borderRadius: 999, padding: "1px 6px", border: "1px solid #d4d4cf" }}
               >
                 <img src={slackButtonImg} alt="Kirim ke Slack" style={{ height: 22, display: "block" }} />
                 </button>
@@ -1199,7 +1254,44 @@ export default function MainTable({
               )}
             </div>
           ) : (
-          <div className="folder-panel scrollbar-thin" style={{ overflow: "auto", paddingTop: 10 }}>
+          <div className="folder-panel" style={{ display: "flex", flexDirection: "column", overflow: "hidden" }}>
+            <div className="table-toolbar" aria-label="Filter dan urutkan tabel">
+              <label className="table-search">
+                <Search size={14} aria-hidden="true" />
+                <input value={tableQuery} onChange={(event) => setTableQuery(event.target.value)} placeholder="Cari nama item..." aria-label="Cari nama item" />
+              </label>
+              <select value={tableArtistId} onChange={(event) => setTableArtistId(event.target.value)} aria-label="Filter artis">
+                <option value="">Semua artis</option>
+                <option value="__none__">Belum ada artis</option>
+                {tableArtistOptions.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+              </select>
+              <select value={tableStatusId} onChange={(event) => setTableStatusId(event.target.value)} aria-label="Filter status">
+                <option value="">Semua status</option>
+                <option value="__none__">Belum ada status</option>
+                {statusPresets.map((status) => <option key={status.id} value={status.id}>{status.name}</option>)}
+              </select>
+              <select value={tableDelivery} onChange={(event) => setTableDelivery(event.target.value as "" | "unsent" | "sent" | "pending")} aria-label="Filter pengiriman">
+                <option value="">Semua pengiriman</option>
+                <option value="unsent">Belum terkirim</option>
+                <option value="sent">Sudah terkirim</option>
+                <option value="pending">Ada field tertunda</option>
+              </select>
+              <select value={tableSort} onChange={(event) => setTableSort(event.target.value as typeof tableSort)} aria-label="Urutkan tabel">
+                <option value="original">Urutan asli</option>
+                <option value="name-asc">Nama A-Z</option>
+                <option value="name-desc">Nama Z-A</option>
+                <option value="artist">Artis A-Z</option>
+                <option value="status">Status A-Z</option>
+                <option value="work-desc">Reply/file terbanyak</option>
+              </select>
+              <span className="table-result-count">{displayedItems.length} dari {project.items.length} item</span>
+              {tableFiltersActive && (
+                <button className="btn table-reset" onClick={() => { setTableQuery(""); setTableArtistId(""); setTableStatusId(""); setTableDelivery(""); setTableSort("original"); }}>
+                  Reset
+                </button>
+              )}
+            </div>
+            <div className="scrollbar-thin" style={{ flex: 1, overflow: "auto", paddingTop: 10 }}>
             {/* paddingTop 10px KHUSUS ngasih ruang overlay Instant Intake di header (poking
                 top:-8) — thead th pakai position:sticky (freeze pas scroll), overlay yang poke ke
                 atas kepotong sama batas overflow:auto div ini KALAU gak ada ruang. Padding ikut
@@ -1209,7 +1301,7 @@ export default function MainTable({
               <thead>
                 <tr>
                   <th onClick={() => toggleAll()} style={{ width: 16, maxWidth: 16, padding: "8px 1px", textAlign: "center" }}>
-                    {selected.size === project.items.length && project.items.length > 0 ? <CheckSquare size={14} /> : <Square size={14} />}
+                    {allDisplayedSelected ? <CheckSquare size={14} /> : <Square size={14} />}
                   </th>
                   <th style={{ width: 16, maxWidth: 16, padding: "8px 1px", textAlign: "center" }}>No</th>
                   {/* position:relative DIHAPUS dari 3 th ini (poin revisi, bug freeze header) —
@@ -1272,7 +1364,7 @@ export default function MainTable({
                 </tr>
               </thead>
               <tbody>
-                {project.items.map((item, index) => {
+                {displayedItems.map(({ item, sourceIndex }, index) => {
                   const unsentReplyCount = item.replies.filter((reply) => !reply.sent).length;
                   const allRepliesSent = item.replies.length > 0 && unsentReplyCount === 0;
                   return (
@@ -1297,7 +1389,7 @@ export default function MainTable({
                       <td className="caption" style={{ textAlign: "center", padding: "8px 1px" }}>
                         {syncingItemIds.has(item.id) ? (
                           <span title="Lagi sinkron ke Slack…" style={{ display: "inline-flex" }}><Loader2 size={12} className="spin" /></span>
-                        ) : index + 1}
+                        ) : sourceIndex + 1}
                       </td>
                       <td className={item.has_thread ? "item-sent-cell" : ""} style={{ position: "relative" }} {...cellHoverHandlers("item", item.id)}>
                         {/* Poin revisi (diminta user) — Tab Table dibersihin dari fitur React
@@ -1410,7 +1502,7 @@ export default function MainTable({
                   );
                 })}
                 <tr>
-                  <td colSpan={6} style={{ padding: 0 }}>
+                  <td colSpan={project.phase === "input" ? 7 : 5} style={{ padding: 0 }}>
                     <button
                       className="btn"
                       style={{ width: "100%", justifyContent: "flex-start", border: "none", borderRadius: 0, padding: "8px 10px", color: "var(--text-secondary)" }}
@@ -1427,6 +1519,12 @@ export default function MainTable({
                 Belum ada item — klik "+ Tambah Item" di atas, atau pakai Batch File / Generate Item di sidebar kiri.
               </p>
             )}
+            {project.items.length > 0 && displayedItems.length === 0 && (
+              <p className="caption" style={{ margin: "0 10px 12px" }}>
+                Tidak ada item yang cocok dengan filter. Ubah filter atau klik Reset.
+              </p>
+            )}
+            </div>
           </div>
           )}
 
