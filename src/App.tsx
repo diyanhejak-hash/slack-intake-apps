@@ -5,11 +5,16 @@ import StartMenu from "./screens/StartMenu";
 import MainTable from "./screens/MainTable";
 import SlackDesktopSuggestion from "./screens/SlackDesktopSuggestion";
 import HbSessionClosing from "./screens/HbSessionClosing";
+import WhatsNewModal from "./screens/WhatsNewModal";
+
+const WHATS_NEW_STORAGE_PREFIX = "slack-intake.whats-new.seen.";
 
 export default function App() {
   const [auth, setAuth] = useState<AuthStatus | null>(null);
   const [projectId, setProjectId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [appVersion, setAppVersion] = useState<string | null>(null);
+  const [showWhatsNew, setShowWhatsNew] = useState(false);
   // Sistem Admin/Member (poin revisi, diminta user) — dicek SEKALI abis login (isAdminMember
   // butuh 1 panggilan Slack, listChannels() milik user yang login -- lihat adminAccess.cjs),
   // dipassing ke StartMenu (gate Settings gear) & MainTable (gate toggle Realtime Sync + menu
@@ -51,6 +56,21 @@ export default function App() {
     window.api.slack.refreshUsers().catch(() => undefined);
     window.api.admin.getStatus().then(setAdminStatus).catch(() => setAdminStatus({ isOwner: false, isAdminMember: false }));
   }, [auth?.loggedIn]);
+  useEffect(() => {
+    if (!auth?.loggedIn) return;
+    let active = true;
+    window.api.app.version().then((version) => {
+      if (!active) return;
+      setAppVersion(version);
+      if (localStorage.getItem(`${WHATS_NEW_STORAGE_PREFIX}${version}`) !== "1") setShowWhatsNew(true);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, [auth?.loggedIn]);
+
+  function closeWhatsNew() {
+    if (appVersion) localStorage.setItem(`${WHATS_NEW_STORAGE_PREFIX}${appVersion}`, "1");
+    setShowWhatsNew(false);
+  }
 
   if (error) {
     return <div style={{ padding: 32 }}><h2>Gagal memuat aplikasi</h2><p>{error}</p><button className="btn" onClick={() => location.reload()}>Coba Lagi</button></div>;
@@ -74,12 +94,13 @@ export default function App() {
       ) : (
         // key={projectId}: paksa remount pas ganti project (mis. abis Save As) biar semua state
         // lokal (selected, undo stack, drawer, dst) reset bersih — bukan cuma refetch data project.
-        <MainTable key={projectId} projectId={projectId} isAdminMember={!!adminStatus?.isAdminMember} onBackToStartMenu={() => setProjectId(null)} onOpenProject={setProjectId} />
+        <MainTable key={projectId} projectId={projectId} isAdminMember={!!adminStatus?.isAdminMember} onBackToStartMenu={() => setProjectId(null)} onOpenProject={setProjectId} onShowWhatsNew={() => setShowWhatsNew(true)} />
       )}
       {/* Poin revisi: saran install Slack Desktop — CUMA muncul setelah login (biar gak ganggu
           layar Login), non-blocking, sekali doang per komputer. */}
       <SlackDesktopSuggestion />
       <HbSessionClosing />
+      {showWhatsNew && appVersion && <WhatsNewModal version={appVersion} onClose={closeWhatsNew} />}
     </>
   );
 }

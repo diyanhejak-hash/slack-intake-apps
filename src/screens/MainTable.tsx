@@ -43,6 +43,7 @@ export default function MainTable({
   isAdminMember,
   onBackToStartMenu,
   onOpenProject,
+  onShowWhatsNew,
 }: {
   projectId: string;
   /** Sistem Admin/Member (poin revisi, diminta user) — gate menu "Otomasi Kata Kunci..." (MenuBar)
@@ -52,6 +53,7 @@ export default function MainTable({
   isAdminMember: boolean;
   onBackToStartMenu: () => void;
   onOpenProject: (id: string) => void;
+  onShowWhatsNew: () => void;
 }) {
   const [project, setProject] = useState<Project | null>(null);
   const [users, setUsers] = useState<SlackUser[]>([]);
@@ -1154,6 +1156,7 @@ export default function MainTable({
         onHyperlinkManager={() => setShowHyperlinkManager(true)}
         onArtistPresetManager={() => setShowArtistPresetManager(true)}
         onHelp={() => setShowHelp(true)}
+        onWhatsNew={onShowWhatsNew}
         instantIntakeEnabled={instantIntakeEnabled}
         onToggleInstantIntake={toggleInstantIntake}
         autoOpenSlackEnabled={autoOpenSlackEnabled}

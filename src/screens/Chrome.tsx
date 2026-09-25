@@ -167,6 +167,7 @@ export interface MenuBarActions {
   onHyperlinkManager: () => void;
   onArtistPresetManager: () => void;
   onHelp: () => void;
+  onWhatsNew: () => void;
   openMenu: MenuName | null;
   onOpenMenuChange: (m: MenuName | null) => void;
   /** Toggle global Instant Intake + Instant Reaction (poin revisi) — di menu Settings, gak sentuh
@@ -278,7 +279,10 @@ export function MenuBar(a: MenuBarActions) {
       // channel "hb-adm" yang liat entry ini.
       ...(a.isAdminMember ? [{ label: "Otomasi Kata Kunci...", onClick: a.onKeywordAutomation }] : []),
     ],
-    Help: [{ label: "Keyboard Shortcuts", onClick: a.onHelp }],
+    Help: [
+      { label: "Yang Baru", onClick: a.onWhatsNew },
+      { label: "Keyboard Shortcuts", onClick: a.onHelp },
+    ],
   };
 
   return (
