@@ -75,7 +75,7 @@ function threadKey(projectId, itemId) {
   const info = authStore.loadToken();
   return JSON.stringify([info?.teamId, info?.userId, projectId, itemId]);
 }
-const appIconPath = path.join(__dirname, "..", "Asset", "HB-SLACK-INTAKE.png");
+const appIconPath = path.join(__dirname, "..", "Asset", "HB-SLACK-INTAKE-FINAL.png");
 let appIcon = null;
 let win = null;
 let tray = null;

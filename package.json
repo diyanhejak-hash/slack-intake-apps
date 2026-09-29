@@ -60,7 +60,7 @@
     "files": [
       "electron/**/*",
       "dist/**/*",
-      "Asset/HB-SLACK-INTAKE.png"
+      "Asset/HB-SLACK-INTAKE-FINAL.png"
     ],
     "beforePack": "./electron/build-config.cjs",
     "extraResources": [
@@ -85,7 +85,7 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "Asset/HB-SLACK-INTAKE.png",
+      "icon": "Asset/HB-SLACK-INTAKE-FINAL.png",
       "artifactName": "HB Slack Intake v${version} win ${arch}.${ext}"
     },
     "mac": {
@@ -97,14 +97,14 @@
         ]
       },
       "identity": null,
-      "icon": "Asset/HB-SLACK-INTAKE.png",
+      "icon": "Asset/HB-SLACK-INTAKE-FINAL.png",
       "artifactName": "HB Slack Intake v${version} Mac ${arch}.${ext}"
     },
     "linux": {
       "target": [
         "AppImage"
       ],
-      "icon": "Asset/HB-SLACK-INTAKE.png",
+      "icon": "Asset/HB-SLACK-INTAKE-FINAL.png",
       "category": "Office"
     }
   }

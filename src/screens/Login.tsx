@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { AuthStatus } from "../global";
-import logo from "../../Asset/HB-SLACK-INTAKE.png";
+import logo from "../../Asset/HB-SLACK-INTAKE-FINAL.png";
 import ThemeToggle from "./ThemeToggle";
 import { formatErrorMessage } from "../lib/toast";
 

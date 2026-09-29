@@ -166,7 +166,7 @@ Cek langsung di app & di Slack — bukan cuma percaya log terminal.
 
 **Belum dites/dikerjakan lebih lanjut:**
 - Update checker (`update:check` IPC) sudah ada logikanya tapi belum dites — perlu `GITHUB_REPO=owner/repo` di `.env` dan rilis beneran di GitHub Releases untuk dicoba.
-- Paket Windows dan Mac menggunakan ikon `Asset/HB-SLACK-INTAKE.png`; logo yang sama tampil di jendela, tray, notifikasi, login, dan favicon.
+- Paket Windows dan Mac menggunakan ikon `Asset/HB-SLACK-INTAKE-FINAL.png`; logo yang sama tampil di jendela, tray, notifikasi, login, dan favicon.
 
 ## 4. Kalau ada yang error
 

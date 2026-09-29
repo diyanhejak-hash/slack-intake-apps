@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
-import logo from "../../Asset/HB-SLACK-INTAKE.png";
+import logo from "../../Asset/HB-SLACK-INTAKE-FINAL.png";
 
 export const THEME_KEY = "slack-intake.theme";
 const THEME_CHANGED = "slack-intake:theme-changed";
