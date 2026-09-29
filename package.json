@@ -1,9 +1,9 @@
 {
   "name": "slack-intake-apps",
-  "version": "0.3.12",
+  "version": "1.0.0",
   "private": true,
   "type": "module",
-  "description": "Slack Intake Apps — migrasi Command Builder ke desktop lokal (Win/Mac), kirim thread task produksi ke Slack sebagai identitas Koor asli",
+  "description": "HB Slack Intake — aplikasi desktop untuk mengelola intake produksi melalui Slack",
   "author": "Herald Entertainment",
   "main": "electron/main.cjs",
   "scripts": {
@@ -56,11 +56,12 @@
   },
   "build": {
     "appId": "com.heraldentertainment.slackintakeapps",
-    "productName": "Slack Intake Apps",
+    "productName": "HB Slack Intake",
     "files": [
       "electron/**/*",
       "dist/**/*",
-      "Asset/**/*"
+      "Asset/SIA_*.png",
+      "Asset/Header Apps.png"
     ],
     "beforePack": "./electron/build-config.cjs",
     "extraResources": [
@@ -73,7 +74,7 @@
       "output": "release"
     },
     "protocols": {
-      "name": "Slack Intake Apps",
+      "name": "HB Slack Intake",
       "schemes": [
         "slackintakeapps"
       ]
@@ -85,8 +86,8 @@
     },
     "win": {
       "target": "nsis",
-      "icon": "Asset/HB_ICON_OL.png",
-      "artifactName": "Slack Intake Apps ${version} Win ${arch}.${ext}"
+      "icon": "Asset/SIA_DARK.png",
+      "artifactName": "HB Slack Intake v${version} win ${arch}.${ext}"
     },
     "mac": {
       "target": {
@@ -97,14 +98,14 @@
         ]
       },
       "identity": null,
-      "icon": "Asset/HB_ICON_OL.png",
-      "artifactName": "Slack Intake Apps ${version} MacOS ${arch}.${ext}"
+      "icon": "Asset/SIA_DARK.png",
+      "artifactName": "HB Slack Intake v${version} Mac ${arch}.${ext}"
     },
     "linux": {
       "target": [
         "AppImage"
       ],
-      "icon": "Asset/HB_ICON_OL.png",
+      "icon": "Asset/SIA_DARK.png",
       "category": "Office"
     }
   }

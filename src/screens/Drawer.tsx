@@ -75,6 +75,7 @@ function useIsWindowMaximized() {
 
 export default function Drawer({
   item,
+  templateRevision,
   projectId,
   projectFiles,
   onChanged,
@@ -101,6 +102,7 @@ export default function Drawer({
   phase,
 }: {
   item: ProjectItem;
+  templateRevision: number;
   projectId: string;
   /** Tahap alur kerja Setup/Input (poin revisi, diminta user; nama lama "Assign") — "setup"
    * nyembunyiin dropdown Artis & Status (belum relevan pas masih nyusun daftar item), "input"
@@ -186,6 +188,8 @@ export default function Drawer({
 
   useEffect(() => {
     window.api.template.list().then(setTemplates);
+  }, [templateRevision]);
+  useEffect(() => {
     window.api.hyperlink.list().then(setHyperlinkPresets);
   }, []);
 
@@ -1401,7 +1405,8 @@ function FilePreview({
   isActiveViewer?: boolean;
 }) {
   const kind = fileKind(file.original_name);
-  const url = useFileBlobUrl(kind === "image" ? file.stored_path : null);
+  const [fileReadError, setFileReadError] = useState<string | null>(null);
+  const url = useFileBlobUrl(kind === "image" ? file.stored_path : null, setFileReadError);
   const imgRef = useRef<HTMLImageElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const [captureMode, setCaptureMode] = useState(false);
@@ -1483,7 +1488,7 @@ function FilePreview({
             <img ref={imgRef} src={url} alt={file.original_name} style={{ width: "100%", height: "100%", objectFit: "contain", display: "block" }} />
           ) : (
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", width: "100%", height: "100%" }}>
-              <span className="caption">Memuat gambar…</span>
+              <span className="caption">{fileReadError || "Memuat gambar…"}</span>
             </div>
           )}
           {captureMode && (

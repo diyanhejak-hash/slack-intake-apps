@@ -20,19 +20,19 @@ export default function WhatsNewModal({ version, onClose }: { version: string; o
         <section style={{ marginBottom: 16 }}>
           <h3 style={{ fontSize: 14, marginBottom: 8 }}>Fitur Baru</h3>
           <ul style={{ margin: 0, paddingLeft: 20, color: "var(--text-secondary)", lineHeight: 1.65, fontSize: 13 }}>
-            <li>Tambahkan Custom Header seperti Grade atau Priority.</li>
-            <li>Setiap header memiliki dropdown dan reaction Slack.</li>
-            <li>Mendukung Filter, Sort, Push, Pull, Realtime, serta Instant Intake.</li>
-            <li>Custom Header ikut tersimpan saat Export, Import, dan Duplicate Project.</li>
+            <li>Nama aplikasi sekarang HB Slack Intake; project dan login lama tetap tersedia.</li>
+            <li>Batch File Animatic dapat mengunduh CSV berisi scene, frame, dan durasi.</li>
+            <li>Undangan member channel dapat dicari; member pilihan terlihat sebagai chip.</li>
+            <li>Preset template dan Custom Header dapat dikelola dari menu yang sesuai.</li>
           </ul>
         </section>
 
         <section>
           <h3 style={{ fontSize: 14, marginBottom: 8 }}>Perbaikan</h3>
           <ul style={{ margin: 0, paddingLeft: 20, color: "var(--text-secondary)", lineHeight: 1.65, fontSize: 13 }}>
-            <li>Urutan reaction: Artis → Status → Custom Header.</li>
-            <li>Mencegah emoji reaction ganda.</li>
-            <li>Penghapusan header dan sinkronisasi Slack dibuat lebih aman.</li>
+            <li>Header tabel tetap jelas pada mode gelap.</li>
+            <li>Pesan error dipersingkat dan kegagalan preview file ditampilkan.</li>
+            <li>Perpindahan akun dan koneksi Slack saat logout dibuat lebih aman.</li>
           </ul>
         </section>
 

@@ -1,14 +1,18 @@
-# Panduan Project — Slack Intake Apps
+# Panduan Project — HB Slack Intake
+
+> Lokasi sejak 27 September 2026: `HB Apps/Slack Intake Apps/App`.
+> Seluruh arsip, audit, dan catatan project berada di `HB Apps/Slack Intake Apps`.
+> Aturan UI bersama berada di [Guideline](../../Guideline/UI-GUIDELINE.md).
 
 > Dokumen ini adalah ringkasan menyeluruh: apa aplikasi ini, konsep dasarnya, apa yang sudah
-> dan belum dikerjakan, plus panduan install/build. Diperbarui 2026-09-23, versi app `0.3.9`.
+> dan belum dikerjakan, plus panduan install/build. Diperbarui 2026-09-29, versi app `1.0.0`.
 > Untuk detail teknis mendalam per fitur lihat [rancangan-desain.md](rancangan-desain.md)
 > (log desain) dan [CARA-TES-BEDAH-COMMAND-BUILDER.md](CARA-TES-BEDAH-COMMAND-BUILDER.md)
 > (checklist tes manual per fitur, sangat panjang/detail).
 
 ## 1. Apa aplikasi ini
 
-**Slack Intake Apps** adalah aplikasi desktop (Electron + React/TypeScript, Windows & macOS)
+**HB Slack Intake** adalah aplikasi desktop (Electron + React/TypeScript, Windows & macOS)
 buat Koordinator/SPV Herald Entertainment mengirim thread task produksi ke Slack — mention
 artis, lampirkan file, kirim reply — **atas nama akun Slack asli Koor itu sendiri** (User OAuth
 Token), bukan sebagai bot.
@@ -159,7 +163,7 @@ redo, template, capture gambar/video/PDF, hyperlink preset, dsb — lihat pemeta
   Text Command.
 - **Capture Teks** — rencana diintegrasikan dari software lain milik user, bukan dibangun native
   di sini.
-- Auto-update: mekanisme cek-update versi sudah ada (`GITHUB_REPO`/`GITHUB_RELEASES_TOKEN`,
+- Auto-update: mekanisme cek-update versi sudah ada (`GITHUB_REPO`,
   `updater.cjs`), tapi **auto-download-dan-install belum dirancang** — saat ini cuma
   memberitahu ada versi baru, user download manual dari GitHub Release.
 
@@ -172,21 +176,13 @@ tapi layak diperhatikan kalau muncul laporan terkait)
    di memori sekaligus; preview video baca seluruh file lewat Blob + auto-detect FPS baca lagi.
    Belum di-stress-test dengan file produksi berukuran besar (video/PSD gede). Perbaikan yang
    tepat: streaming/chunking, BUKAN menurunkan batas file yang sudah diminta user.
-2. **Preview gagal kurang jelas** — `useFileBlobUrl` return null + `console.error` doang kalau
-   baca file gagal (file hilang/permission denied/corrupt/>500MB); beberapa layar bisa
-   terlihat "loading terus" tanpa pesan jelas ke user.
-3. **`GITHUB_RELEASES_TOKEN` ikut ter-bundle** ke `runtime-config.json` dalam installer kalau
-   env terisi (buat fitur cek-update baca repo GitHub privat). Token bisa dibaca siapa pun yang
-   install app-nya sendiri. Scope token HARUS fine-grained PAT (Contents: Read-only, scoped ke
-   repo `slack-intake-apps` doang) — sudah didokumentasikan, tapi validasi scope aktual di token
-   yang benar-benar dipakai belum diverifikasi ulang.
-4. **Lifecycle logout** — logout belum menghentikan koneksi Socket Mode atau mereset semua cache
-   status HB/admin secara menyeluruh (D18 sudah menutup celah cache admin, tapi race
-   refresh-token/job Pull-Push yang masih berjalan pas pergantian akun belum diuji khusus).
-5. **Pull replay keyword** — "Pull manual" (Slack → App) replay SELURUH histori reply tanpa
+2. **Lifecycle logout** — logout menghentikan Socket Mode, mereset status HB/cache admin, dan
+   mencegah refresh token lama tersimpan sesudah berganti akun. Job Pull yang sudah berjalan
+   saat pergantian akun belum diuji dengan Slack nyata.
+3. **Pull replay keyword** — "Pull manual" (Slack → App) replay SELURUH histori reply tanpa
    checkpoint; keyword lama berpotensi menimpa status yang sudah diubah manual belakangan. Perlu
    keputusan produk dulu (prioritas reaction manual vs histori keyword) sebelum ada fix.
-6. **Performa skala** — `getProject` melakukan banyak query per item/reply; `releaseUndo`
+4. **Performa skala** — `getProject` melakukan banyak query per item/reply; `releaseUndo`
    menyisir storage attachment secara sinkron; tabel render semua baris sekaligus (PDF sudah
    punya virtualisasi, tabel item belum). Belum diukur di project dengan ribuan item/file.
 
@@ -214,7 +210,7 @@ npm run dev             # Vite dev server + Electron, hot-reload renderer
 (`electron/main.cjs`, `electron/*.cjs`, `electron/preload.cjs`) **TIDAK** ikut hot-reload —
 harus matikan (`Ctrl+C`) dan `npm run dev` ulang dari awal biar kepakai.
 
-Verifikasi sebelum commit/build: `npm run check` (typecheck + 113 regression test + smoke test
+Verifikasi sebelum commit/build: `npm run check` (typecheck + regression test + smoke test
 Electron sungguhan + build renderer — persis yang dipakai CI).
 
 ## 6. Cara build & install installer lokal (Windows)
@@ -223,12 +219,12 @@ Electron sungguhan + build renderer — persis yang dipakai CI).
 npm run build:win
 ```
 
-Hasilnya: `release/Slack Intake Apps Setup <versi>.exe` (~135 MB, NSIS installer).
+Hasilnya: `release/HB Slack Intake v<versi> win x64.exe` (NSIS installer).
 
 **Ini installer PER-USER** (`oneClick: true, perMachine: false` — default electron-builder,
-tidak ada admin rights yang dibutuhkan): terpasang ke `%LOCALAPPDATA%\Programs\Slack Intake
-Apps` milik akun Windows yang menjalankan installer, data app (`%APPDATA%\Slack Intake Apps`)
-juga per-akun-Windows.
+tidak ada admin rights yang dibutuhkan): terpasang ke `%LOCALAPPDATA%\Programs\HB Slack
+Intake` milik akun Windows yang menjalankan installer. Upgrade memakai data aplikasi versi lama
+secara otomatis; lokasi data tetap per-akun-Windows.
 
 ### "Instalasi untuk owner/admin" vs "instalasi untuk user biasa" — TIDAK butuh installer beda
 
@@ -262,7 +258,7 @@ Release kalau lulus. Bisa juga dipicu manual tanpa tag lewat tab **Actions → B
 Run workflow** (build jalan tapi publish di-skip otomatis karena bukan tag).
 
 Secrets yang dibutuhkan sudah dikonfigurasi di GitHub repo settings (`SLACK_CLIENT_ID`,
-`SLACK_REDIRECT_URI`, `RELEASE_REPO`, `RELEASES_TOKEN`) — tidak perlu diisi ulang kecuali App
+`SLACK_REDIRECT_URI`, `RELEASE_REPO`) — tidak perlu diisi ulang kecuali App
 Slack diganti.
 
 ## 8. Repo & status GitHub

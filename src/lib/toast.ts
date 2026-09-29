@@ -13,18 +13,24 @@ type Listener = (toasts: Toast[]) => void;
 let toasts: Toast[] = [];
 const listeners = new Set<Listener>();
 
+export function formatErrorMessage(message: string): string {
+  if (/timeout of \d+ms exceeded/i.test(message) && /slack:|Slack|A request error occurred/i.test(message)) {
+    return "Slack tidak merespons. Periksa koneksi internet atau VPN, lalu coba lagi.";
+  }
+  const firstLine = message.split(/\r?\n/, 1)[0]
+    .replace(/^Error invoking remote method '[^']+':\s*/i, "")
+    .replace(/^(?:Error:\s*)+/i, "")
+    .trim();
+  return firstLine.length > 220 ? `${firstLine.slice(0, 217)}…` : firstLine || "Operasi gagal. Coba lagi.";
+}
+
 function emit() {
   listeners.forEach((l) => l(toasts));
 }
 
 // Poin revisi (diminta user, "kecepetan ilangnya") — durasi default dinaikin 3.5s -> 6s.
 export function showToast(message: string, kind: Toast["kind"] = "info", duration = 6000) {
-  const remoteSlackTimeout = /Error invoking remote method 'slack:[^']+':.*timeout of \d+ms exceeded/i.test(message);
-  if (remoteSlackTimeout) {
-    message = "Slack tidak merespons dalam 60 detik. Periksa koneksi internet, VPN/proxy, lalu coba lagi.";
-  } else {
-    message = message.replace(/^Error invoking remote method '[^']+': Error:\s*/i, "");
-  }
+  if (kind === "error") message = formatErrorMessage(message);
   const id = crypto.randomUUID();
   toasts = [...toasts, { id, message, kind }];
   emit();

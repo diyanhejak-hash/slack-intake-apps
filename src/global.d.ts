@@ -301,6 +301,14 @@ declare global {
         duplicate: (id: string, newName: string) => Promise<string>;
         export: (id: string) => Promise<{ canceled: boolean; filePath?: string }>;
         import: () => Promise<{ canceled: boolean; projectId?: string }>;
+        hejakPick: () => Promise<{
+          canceled: boolean;
+          token?: string;
+          name?: string;
+          items?: { sceneCode: string; files: { role: string; label: string; sourcePages: number[] }[] }[];
+          projectFiles?: { role: string; label: string }[];
+        }>;
+        hejakImport: (payload: { token: string; name: string; channelId: string; channelName: string }) => Promise<{ projectId: string }>;
         attachFiles: (projectId: string, filePaths: string[]) => Promise<void>;
         removeFile: (fileId: string) => Promise<void>;
       };
@@ -506,6 +514,7 @@ declare global {
        * update.check yang butuh internet/GitHub API dan bisa gagal kalau offline. */
       app: {
         version: () => Promise<string>;
+        setTheme: (theme: "light" | "dark") => Promise<void>;
       };
       /** Papan status HB Apps (poin revisi, hasil diskusi rate-limit) — channel "hb-apps"
        * jadi tempat broadcast Online/Offline/Eksekusi-job/Job-selesai, biar user lain tau
@@ -542,6 +551,7 @@ declare global {
         saveSections: (projectId: string, sections: BatchSection[]) => Promise<void>;
         generateItems: (projectId: string) => Promise<{ created: number; itemIds: string[] }>;
         apply: (projectId: string) => Promise<{ added: number }>;
+        downloadMetadata: (projectId: string, files: BatchFileEntry[], categoryName: string) => Promise<{ canceled: boolean; filePath?: string }>;
       };
       file: {
         /** Sinkron — Electron 32+ butuh ini buat dapetin path asli dari File hasil drag-drop OS. */

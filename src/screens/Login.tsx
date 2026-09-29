@@ -1,8 +1,10 @@
 import { useState } from "react";
 import { Loader2 } from "lucide-react";
 import type { AuthStatus } from "../global";
-import logo from "../assets/HB_ICON_OL.png";
+import logoLight from "../../Asset/SIA_LIGHT.png";
+import logoDark from "../../Asset/SIA_DARK.png";
 import ThemeToggle from "./ThemeToggle";
+import { formatErrorMessage } from "../lib/toast";
 
 export default function Login({ onLoggedIn }: { onLoggedIn: (a: AuthStatus) => void }) {
   const [busy, setBusy] = useState(false);
@@ -25,8 +27,9 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (a: AuthStatus) => v
     <div style={{ position: "relative", display: "flex", height: "100%", alignItems: "center", justifyContent: "center" }}>
       <div style={{ position: "absolute", top: 14, right: 16 }}><ThemeToggle /></div>
       <div className="card" style={{ padding: 32, width: 340, textAlign: "center" }}>
-        <img src={logo} alt="Slack Intake Apps" style={{ width: 48, height: 48, margin: "0 auto 16px", display: "block" }} />
-        <h1 style={{ marginBottom: 6 }}>Slack Intake Apps</h1>
+        <img className="app-logo-light" src={logoLight} alt="HB Slack Intake" style={{ width: 48, height: 48, margin: "0 auto 16px" }} />
+        <img className="app-logo-dark" src={logoDark} alt="" aria-hidden="true" style={{ width: 48, height: 48, margin: "0 auto 16px" }} />
+        <h1 style={{ marginBottom: 6 }}>HB Slack Intake</h1>
         <p className="caption" style={{ marginBottom: 20 }}>
           Login sekali pakai akun Slack kamu sendiri — pesan terkirim sebagai identitas asli, bukan bot.
         </p>
@@ -36,7 +39,7 @@ export default function Login({ onLoggedIn }: { onLoggedIn: (a: AuthStatus) => v
         </button>
         {error && (
           <p className="caption" style={{ color: "var(--danger)", marginTop: 12 }}>
-            {error}
+            {formatErrorMessage(error)}
           </p>
         )}
       </div>

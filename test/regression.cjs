@@ -35,7 +35,10 @@ function load(relativePath, mocks) {
 
 const dbModule = load("electron/db.cjs", { electron: { app: { getPath: () => appData } } });
 const { db } = dbModule;
-const projects = load("electron/projects.cjs", { "./db.cjs": dbModule });
+const projects = load("electron/projects.cjs", {
+  "./db.cjs": dbModule,
+  "./hejak-reader.cjs": require(path.join(appRoot, "electron/hejak-reader.cjs")),
+});
 projects.setScope("U-TEST", "T-TEST");
 
 const calls = [];
@@ -172,6 +175,35 @@ async function test(name, fn) {
 
 (async () => {
   try {
+    await test("upgrade nama aplikasi memakai data lama tanpa menimpa data HB Slack Intake yang sudah ada", () => {
+      const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
+      const block = source.match(/\/\/ Nama produk berubah[\s\S]*?\n\}\n/)[0];
+      const base = path.join(temp, "rename-data");
+      const current = path.join(base, "HB Slack Intake");
+      const legacy = path.join(base, "Slack Intake Apps");
+      function selectedPath(files) {
+        let selected = current;
+        const app = {
+          isPackaged: true,
+          getPath: (key) => key === "userData" ? selected : base,
+          setPath: (key, value) => { assert.equal(key, "userData"); selected = value; },
+        };
+        vm.runInNewContext(block, { app, fs: { existsSync: (file) => files.has(file) }, path });
+        return selected;
+      }
+      assert.equal(selectedPath(new Set([path.join(legacy, "slack-intake-apps.db")])), legacy);
+      assert.equal(selectedPath(new Set([path.join(current, "token.enc"), path.join(legacy, "slack-intake-apps.db")])), current);
+      assert.equal(selectedPath(new Set()), current);
+    });
+    await test("batch metadata CSV exports scene, frame and duration safely", async () => {
+      const { createMetadataCsv, readVideoMetadata } = require(path.join(appRoot, "electron/batch-metadata.cjs"));
+      const csv = await createMetadataCsv([
+        { path: "one.mp4", filename: 'BF44,"A".mp4' },
+        { path: "two.mp4", filename: "=SUM(1+1).mp4" },
+      ], async (filePath) => filePath === "one.mp4" ? { frame: 42, duration: 1.75 } : null);
+      assert.equal(csv, 'scene,frame,duration\r\n"BF44,""A""",42,1.750\r\n"\'=SUM(1+1)",,\r\n');
+      assert.equal(await readVideoMetadata("not-video.txt"), null);
+    });
     await test("legacy thread schema migrates without losing mapping", () => {
       assert.equal(db.prepare("SELECT thread_ts FROM threads WHERE item_name=? AND channel_id=?").get("legacy", "CA").thread_ts, "0.001");
       assert.deepEqual(Array.from(db.prepare("PRAGMA table_info(threads)").all().filter((c) => c.pk).map((c) => c.name)), ["item_name", "channel_id"]);
@@ -484,6 +516,45 @@ async function test(name, fn) {
       const importedId = projects.importProjectFile(archive);
       const importedFile = projects.getProject(importedId).items[0].files[0];
       assert.deepEqual(fs.readFileSync(importedFile.stored_path), bytes);
+    });
+    await test("handoff Hejak membuat scene, Animatic, STB Pages, dan file project tanpa mengirim Slack", () => {
+      const archivePath = path.join(temp, "hejak-test.hejak-sia");
+      const files = [
+        { name: "files/animatic.mp4", bytes: Buffer.from("animatic bytes") },
+        { name: "files/stb.pdf", bytes: Buffer.from("%PDF-stb subset") },
+        { name: "files/bible.pdf", bytes: Buffer.from("%PDF-bible") },
+      ];
+      const payload = {
+        format: "hejak-sia-handoff", version: 1,
+        project: { id: "HEJAK-1", name: "Episode Hejak" },
+        projectFiles: [{ role: "Bible", label: "Bible.pdf", path: files[2].name }],
+        items: [
+          { id: "SCENE-1", sceneCode: "BF44_1000", name: "Scene 1000", files: [
+            { role: "Animatic", label: "Animatic.mp4", path: files[0].name },
+            { role: "STB Pages", label: "Storyboard.pdf", path: files[1].name, sourcePages: [2, 4] },
+            ...Array.from({ length: 11 }, () => ({ role: "Referensi", label: "Reference.png", path: files[0].name })),
+          ] },
+          { id: "SCENE-2", sceneCode: "BF44_1010", name: "Scene 1010", files: [] },
+        ],
+        entries: files.map(file => ({ name: file.name, size: file.bytes.length })),
+      };
+      const manifest = Buffer.from(JSON.stringify(payload));
+      const header = Buffer.alloc(12);
+      Buffer.from("HEJAKPK1").copy(header);
+      header.writeUInt32BE(manifest.length, 8);
+      fs.writeFileSync(archivePath, Buffer.concat([header, manifest, ...files.map(file => file.bytes)]));
+      const id = projects.importHejakHandoff(archivePath, { name: "SIA dari Hejak", channelId: "CA", channelName: "test" });
+      const imported = projects.getProject(id);
+      assert.equal(imported.phase, "setup");
+      assert.equal(imported.name, "SIA dari Hejak");
+      assert.deepEqual(imported.items.map(item => item.name), ["BF44_1000", "BF44_1010"]);
+      assert.equal(imported.items[0].has_thread, false);
+      assert.deepEqual(imported.items[0].replies.map(reply => reply.title), ["Animatic", "STB Pages", "Referensi", "Referensi"]);
+      assert.deepEqual(imported.items[0].replies.map(reply => reply.files.length), [1, 1, 10, 1]);
+      assert.equal(imported.items[0].replies[0].sent, false);
+      assert.equal(fs.readFileSync(imported.items[0].replies[0].files[0].stored_path, "utf8"), "animatic bytes");
+      assert.equal(imported.items[0].replies[1].files[0].original_name, "BF44_1000-STB.pdf");
+      assert.equal(imported.files[0].original_name, "Bible.pdf");
     });
     await test("malformed import leaves no partial project", () => {
       const before = projects.listProjects().length;
@@ -1001,6 +1072,11 @@ async function test(name, fn) {
       assert.deepEqual(generated.map((item) => item.name).sort(), ["BF44_050", "BF44_060"]);
       const generatedByName = new Map(generated.map((item) => [item.name, item.id]));
       const savedFiles = projects.listBatchSections(bp.id).flatMap((section) => section.files);
+      const storedBatchPath = savedFiles.find((file) => file.id === "generate-new-mp4").path;
+      assert.equal(projects.isManagedFile(storedBatchPath), true);
+      projects.setScope("OTHER", "OTHERTEAM");
+      assert.equal(projects.isManagedFile(storedBatchPath), false);
+      projects.setScope("U-TEST", "T-TEST");
       assert.equal(savedFiles.find((file) => file.id === "generate-new-mp4").connectedItemIds[0], generatedByName.get("BF44_050"));
       assert.equal(savedFiles.find((file) => file.id === "generate-new-mov").connectedItemIds[0], generatedByName.get("BF44_050"));
       assert.equal(savedFiles.find((file) => file.id === "generate-another").connectedItemIds[0], generatedByName.get("BF44_060"));
@@ -1388,18 +1464,18 @@ async function test(name, fn) {
     });
     await test("tryRefreshToken (poin revisi, diagnostik \"auth:testRefresh\") — bedain 3 skenario: gak ada refresh_token, sukses, gagal — dipakai user buat ngetes tanpa nunggu ~12 jam", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
-      const block = source.match(/let refreshPromise = null;[\s\S]*?\n\}\n/)[0];
+      const block = source.match(/let refreshPromise = null;[\s\S]*?\n\}\n(?=\n\/\/ Buka Slack)/)[0];
       function makeContext({ storedInfo, refreshImpl }) {
         const savedTokens = [];
         const logs = [];
         const context = {
-          authStore: { loadToken: () => storedInfo, saveToken: (info) => savedTokens.push(info) },
+          authStore: { loadToken: () => storedInfo, saveToken: (info) => { savedTokens.push(info); storedInfo = info; } },
           slack: { refreshAccessToken: refreshImpl },
           projects: { addLog: (level, msg) => logs.push(msg) },
           process: { env: { SLACK_CLIENT_ID: "CID" } },
         };
         vm.runInNewContext(block, context);
-        return { tryRefreshToken: context.tryRefreshToken, logs, savedTokens, get reason() { return context.lastRefreshFailureReason; } };
+        return { tryRefreshToken: context.tryRefreshToken, invalidate: context.invalidateAuthSession, setToken: (info) => { storedInfo = info; }, logs, savedTokens, get reason() { return context.lastRefreshFailureReason; } };
       }
       // 1. Gak ada refresh_token tersimpan -- return false, reason "no_refresh_token", ke-log.
       {
@@ -1430,6 +1506,28 @@ async function test(name, fn) {
         assert.equal(await ctx.tryRefreshToken(), false);
         assert.equal(ctx.reason, "refresh_call_failed");
         assert.ok(ctx.logs.some((m) => m.includes("invalid_grant dari Slack")));
+      }
+      // Refresh lama boleh selesai setelah logout/login akun lain, tetapi tak boleh
+      // menyimpan token akun lama atau menghapus single-flight milik sesi baru.
+      {
+        let finishOld, finishNew;
+        const ctx = makeContext({
+          storedInfo: { accessToken: "old", refreshToken: "rt-old" },
+          refreshImpl: ({ refreshToken }) => new Promise((resolve) => {
+            if (refreshToken === "rt-old") finishOld = resolve;
+            else finishNew = resolve;
+          }),
+        });
+        const oldAttempt = ctx.tryRefreshToken();
+        ctx.invalidate();
+        ctx.setToken({ accessToken: "other", refreshToken: "rt-other" });
+        const newAttempt = ctx.tryRefreshToken();
+        finishOld({ accessToken: "stale", refreshToken: "rt-stale" });
+        assert.equal(await oldAttempt, false);
+        assert.equal(ctx.savedTokens.length, 0);
+        finishNew({ accessToken: "fresh", refreshToken: "rt-fresh" });
+        assert.equal(await newAttempt, true);
+        assert.equal(ctx.savedTokens[0].accessToken, "fresh");
       }
     });
     await test("withItemArtistLock (poin revisi, multi-artist realtime) serialize per item, item BEDA jalan bebas", async () => {
@@ -2722,6 +2820,25 @@ async function test(name, fn) {
       assert.equal(socket.isRunning(), true);
       assert.equal(startCalls, 2);
     });
+    await test("Socket Mode yang masih connecting berhenti saat logout", async () => {
+      let finishStart;
+      let disconnects = 0;
+      class FakeSocketModeClient {
+        on() {}
+        removeAllListeners() {}
+        start() { return new Promise((resolve) => { finishStart = resolve; }); }
+        async disconnect() { disconnects++; }
+      }
+      const socket = load("electron/slackSocket.cjs", { "@slack/socket-mode": { SocketModeClient: FakeSocketModeClient } });
+      const starting = socket.start("xapp-fake", {});
+      await Promise.resolve();
+      assert.equal(typeof finishStart, "function");
+      await socket.stop();
+      finishStart();
+      await starting;
+      assert.equal(socket.isRunning(), false);
+      assert.equal(disconnects, 1);
+    });
     await test("updateSocketModeConnectionState (poin revisi, Level 2) — connect kalau salah satu toggle ON & belum jalan, disconnect kalau dua-duanya OFF & lagi jalan, token TETAP TERSIMPAN (gak clearAppToken)", async () => {
       const source = fs.readFileSync(path.join(appRoot, "electron/main.cjs"), "utf8").replace(/\r\n/g, "\n");
       const block = source.match(/const itemArtistQueues = new Map\(\);[\s\S]*?handle\("slackSocket:clearToken",[\s\S]*?\n\}\);/)[0];
@@ -2731,6 +2848,7 @@ async function test(name, fn) {
         require: nativeRequire,
         handle: () => {},
         win: { isDestroyed: () => false, webContents: { send: () => {} } },
+        currentToken: () => "xoxp-mock-token",
         authStore: { loadAppToken: () => "xapp-mock-token" },
         projects: {
           getRealtimeAssignEnabled: () => realtimeOn,
@@ -3442,6 +3560,19 @@ async function test(name, fn) {
       assert.equal(await hb.findStatusChannel(mockSlack, "TOKEN"), "C-STATUS");
       assert.equal(await hb.findStatusChannel(mockSlack, "TOKEN"), "C-STATUS");
       assert.equal(listCalls, 1); // cache -- cuma scan sekali per proses
+    });
+    await test("HB status memakai channel workspace yang sedang login dan mencoba lagi setelah jaringan pulih", async () => {
+      const hb = load("electron/hbStatus.cjs", {});
+      let calls = 0;
+      const mockSlack = { listChannels: async (token) => {
+        calls++;
+        if (calls === 1) throw new Error("offline");
+        return [{ id: token === "A" ? "C-A" : "C-B", name: hb.STATUS_CHANNEL_NAME }];
+      } };
+      assert.equal(await hb.findStatusChannel(mockSlack, "A"), null);
+      assert.equal(await hb.findStatusChannel(mockSlack, "A"), "C-A");
+      assert.equal(await hb.findStatusChannel(mockSlack, "B"), "C-B");
+      assert.equal(calls, 3);
     });
     await test("hbStatus.findStatusChannel/postStatus best-effort kalau channel gak ketemu (gak throw)", async () => {
       const hb = load("electron/hbStatus.cjs", {});

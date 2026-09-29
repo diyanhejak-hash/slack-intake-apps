@@ -14,6 +14,7 @@
 import { useEffect, useState } from "react";
 import { X, Wifi, WifiOff, Loader2, UserPlus, Trash2 } from "lucide-react";
 import type { SlackUser } from "../global";
+import { formatErrorMessage } from "../lib/toast";
 
 const STATUS_LABEL: Record<string, string> = {
   connecting: "Menghubungkan…",
@@ -179,7 +180,7 @@ export default function SlackSyncSettingsModal({ isOwner, onClose }: { isOwner: 
         )}
         {error && (
           <p className="caption" style={{ color: "var(--danger)", marginTop: 8 }}>
-            {error}
+            {formatErrorMessage(error)}
           </p>
         )}
 
@@ -197,7 +198,7 @@ export default function SlackSyncSettingsModal({ isOwner, onClose }: { isOwner: 
             </p>
             {memberError && (
               <p className="caption" style={{ color: "var(--danger)", marginBottom: 8 }}>
-                {memberError}
+                {formatErrorMessage(memberError)}
               </p>
             )}
             {members === null ? (

@@ -12,6 +12,7 @@
   --accent: #2f6feb;
   --accent-hover: #2558c4;
   --accent-soft: #eaf1ff;
+  --table-header-bg: #eaf1ff;
   --success: #16a34a;
   --success-soft: #eafaf0;
   --danger: #dc2626;
@@ -39,6 +40,7 @@
   --accent: #74a2ff;
   --accent-hover: #91b5ff;
   --accent-soft: rgba(83, 137, 255, 0.17);
+  --table-header-bg: #212d46;
   --success: #4ade80;
   --success-soft: rgba(34, 197, 94, 0.14);
   --danger: #fb7185;
@@ -52,6 +54,11 @@
 :root:not([data-theme="dark"]) {
   color-scheme: light;
 }
+
+.app-logo-light { display: block; }
+.app-logo-dark { display: none; }
+:root[data-theme="dark"] .app-logo-light { display: none; }
+:root[data-theme="dark"] .app-logo-dark { display: block; }
 
 * {
   box-sizing: border-box;
@@ -103,6 +110,66 @@ h3 {
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.04em;
+}
+
+.invite-member-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.invite-member-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 6px 3px 8px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+.invite-member-chip button {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  line-height: 1;
+}
+.invite-member-picker {
+  position: relative;
+}
+.invite-member-picker summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  cursor: pointer;
+  list-style: none;
+}
+.invite-member-picker summary::-webkit-details-marker {
+  display: none;
+}
+.invite-member-picker summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.invite-member-menu {
+  position: absolute;
+  z-index: 10;
+  top: calc(100% + 4px);
+  left: 0;
+  right: 0;
+  padding: 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--surface);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.18);
+}
+.invite-member-options {
+  max-height: 160px;
+  overflow: auto;
 }
 
 button {
@@ -496,7 +563,7 @@ thead th {
   position: sticky;
   top: 0;
   z-index: 3;
-  background: var(--accent-soft);
+  background: var(--table-header-bg);
   color: var(--accent);
   text-align: left;
 }
@@ -512,7 +579,7 @@ thead th::after {
   right: 0;
   bottom: 100%;
   height: 10px;
-  background: var(--accent-soft);
+  background: var(--table-header-bg);
   pointer-events: none;
 }
 td {

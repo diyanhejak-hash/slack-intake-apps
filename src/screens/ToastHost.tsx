@@ -27,8 +27,8 @@ export default function ToastHost() {
           key={t.id}
           style={{
             padding: "5px 14px", borderRadius: 999, fontSize: 12, fontWeight: 500,
-            boxShadow: "0 2px 8px rgba(0,0,0,0.25)", whiteSpace: "pre-line", textAlign: "center",
-            maxWidth: "70vw", ...KIND_STYLE[t.kind],
+            boxShadow: "0 2px 8px rgba(0,0,0,0.25)", textAlign: "center",
+            maxWidth: "min(520px, 70vw)", overflowWrap: "anywhere", ...KIND_STYLE[t.kind],
           }}
         >
           {t.message}

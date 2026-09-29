@@ -3,6 +3,7 @@ import { FolderOpen, Plus, Upload, Hash, LogOut, Lock, Trash2, Settings } from "
 import type { AuthStatus, ProjectSummary, SlackChannel, SlackUser } from "../global";
 import ChannelPicker from "./ChannelPicker";
 import SlackSyncSettingsModal from "./SlackSyncSettingsModal";
+import { formatErrorMessage } from "../lib/toast";
 
 // Sama kayak UX asli Slack pas bikin channel: lowercase & spasi->dash langsung pas ngetik,
 // karakter gak valid ditolak (gak sekadar dibersihin pas submit). Cermin regex server-side
@@ -33,11 +34,16 @@ export default function StartMenu({
   const [channels, setChannels] = useState<SlackChannel[]>([]);
   const [users, setUsers] = useState<SlackUser[]>([]);
   const [showNew, setShowNew] = useState(false);
+  const [hejakPreview, setHejakPreview] = useState<Awaited<ReturnType<typeof window.api.project.hejakPick>> | null>(null);
+  const [hejakName, setHejakName] = useState("");
+  const [hejakChannelId, setHejakChannelId] = useState("");
+  const [importingHejak, setImportingHejak] = useState(false);
   const [mode, setMode] = useState<"existing" | "new-channel">("existing");
   const [newName, setNewName] = useState("");
   const [newChannelId, setNewChannelId] = useState("");
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelMembers, setNewChannelMembers] = useState<Set<string>>(new Set());
+  const [memberQuery, setMemberQuery] = useState("");
   const [loadingChannels, setLoadingChannels] = useState(false);
   const [loadingUsers, setLoadingUsers] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -137,7 +143,47 @@ export default function StartMenu({
     }
   }
 
+  async function handleHejakPick() {
+    setError(null);
+    try {
+      const preview = await window.api.project.hejakPick();
+      if (preview.canceled) return;
+      setShowNew(false);
+      setHejakPreview(preview);
+      setHejakName(preview.name || "");
+      setHejakChannelId("");
+      setLoadingChannels(true);
+      try { setChannels(await window.api.slack.listChannels()); }
+      finally { setLoadingChannels(false); }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal membaca paket Hejak.");
+    }
+  }
+
+  async function handleHejakImport() {
+    const channel = channels.find(c => c.id === hejakChannelId);
+    if (!hejakPreview?.token || !hejakName.trim() || !channel) return;
+    setImportingHejak(true);
+    setError(null);
+    try {
+      const result = await window.api.project.hejakImport({
+        token: hejakPreview.token, name: hejakName.trim(), channelId: channel.id, channelName: channel.name,
+      });
+      setHejakPreview(null);
+      onOpenProject(result.projectId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal mengimpor paket Hejak.");
+    } finally {
+      setImportingHejak(false);
+    }
+  }
+
   const canSubmit = newName.trim() && (mode === "existing" ? !!newChannelId : newChannelName.trim());
+  const visibleMembers = users
+    .filter((user) => user.name.toLocaleLowerCase().includes(memberQuery.trim().toLocaleLowerCase()))
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  const selectedMembers = Array.from(newChannelMembers, (id) => users.find((user) => user.id === id) ?? { id, name: id })
+    .sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
 
   async function recoverLegacy() {
     await window.api.project.recoverLegacy();
@@ -172,7 +218,7 @@ export default function StartMenu({
     <div style={{ maxWidth: 640, margin: "0 auto", padding: "48px 24px" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
         <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
-          <h1>Slack Intake Apps</h1>
+          <h1>HB Slack Intake</h1>
           {version && <span className="caption" title="Versi yang lagi terpasang">v{version}</span>}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -205,7 +251,7 @@ export default function StartMenu({
       </div>
 
       {legacyCount > 0 && <button className="btn" onClick={recoverLegacy}>Pulihkan {legacyCount} project lama</button>}
-      {error && <p role="alert" style={{ color: "var(--danger)" }}>{error}</p>}
+      {error && <p role="alert" style={{ color: "var(--danger)" }}>{formatErrorMessage(error)}</p>}
       {!showNew ? (
         <div style={{ display: "flex", gap: 10, marginBottom: 28 }}>
           <button className="btn btn-primary" onClick={openNewProjectForm}>
@@ -213,6 +259,9 @@ export default function StartMenu({
           </button>
           <button className="btn" onClick={handleImport}>
             <Upload size={15} /> Import Project
+          </button>
+          <button className="btn" onClick={handleHejakPick}>
+            <Upload size={15} /> Import dari Hejak
           </button>
         </div>
       ) : (
@@ -272,28 +321,56 @@ export default function StartMenu({
                   <div className="label" style={{ marginBottom: 4 }}>
                     Invite Member ({newChannelMembers.size} dipilih)
                   </div>
-                  {loadingUsers ? (
-                    <span className="caption">Memuat daftar member…</span>
-                  ) : (
-                    <div className="card" style={{ maxHeight: 160, overflow: "auto", padding: 8 }}>
-                      {users.map((u) => (
-                        <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
-                          <input
-                            type="checkbox"
-                            checked={newChannelMembers.has(u.id)}
-                            onChange={(e) => {
-                              setNewChannelMembers((prev) => {
-                                const next = new Set(prev);
-                                e.target.checked ? next.add(u.id) : next.delete(u.id);
-                                return next;
-                              });
-                            }}
-                          />
-                          {u.name}
-                        </label>
+                  {selectedMembers.length > 0 && (
+                    <div className="invite-member-chips" aria-label="Member yang akan diundang">
+                      {selectedMembers.map((member) => (
+                        <span className="invite-member-chip" key={member.id}>
+                          {member.name}
+                          <button type="button" aria-label={`Hapus ${member.name} dari undangan`} onClick={() => setNewChannelMembers((prev) => {
+                            const next = new Set(prev);
+                            next.delete(member.id);
+                            return next;
+                          })}>×</button>
+                        </span>
                       ))}
                     </div>
                   )}
+                  <details className="invite-member-picker">
+                    <summary>Pilih member <span aria-hidden="true">▾</span></summary>
+                    <div className="invite-member-menu">
+                      <input
+                        type="search"
+                        aria-label="Cari member untuk diundang"
+                        placeholder="Ketik nama member..."
+                        value={memberQuery}
+                        onChange={(e) => setMemberQuery(e.target.value)}
+                        style={{ width: "100%", marginBottom: 8 }}
+                      />
+                      {loadingUsers ? (
+                        <span className="caption">Memuat daftar member…</span>
+                      ) : (
+                        <div className="invite-member-options">
+                          {visibleMembers.length === 0 && <span className="caption">Member tidak ditemukan.</span>}
+                          {visibleMembers.map((u) => (
+                            <label key={u.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "3px 0" }}>
+                              <input
+                                type="checkbox"
+                                checked={newChannelMembers.has(u.id)}
+                                onChange={(e) => {
+                                  setNewChannelMembers((prev) => {
+                                    const next = new Set(prev);
+                                    e.target.checked ? next.add(u.id) : next.delete(u.id);
+                                    return next;
+                                  });
+                                }}
+                              />
+                              {u.name}
+                            </label>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </details>
                 </div>
               </div>
             )}
@@ -306,6 +383,40 @@ export default function StartMenu({
               <button className="btn" onClick={() => setShowNew(false)}>
                 Batal
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {hejakPreview && (
+        <div className="card" style={{ padding: 20, marginBottom: 28 }}>
+          <h2 style={{ marginBottom: 6 }}>Import dari Hejak</h2>
+          <p className="caption" style={{ marginBottom: 14 }}>
+            {hejakPreview.items?.length || 0} scene/item · {hejakPreview.projectFiles?.length || 0} file project. Import membuat project SIA baru dalam tahap Setup; belum mengirim apa pun ke Slack.
+          </p>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>Nama Project SIA</div>
+              <input style={{ width: "100%" }} value={hejakName} onChange={e => setHejakName(e.target.value)} />
+            </div>
+            <div>
+              <div className="label" style={{ marginBottom: 4 }}>Channel Slack Tujuan</div>
+              <ChannelPicker channels={channels} value={hejakChannelId} loading={loadingChannels} onChange={c => setHejakChannelId(c.id)} />
+            </div>
+            <div className="card" style={{ maxHeight: 220, overflow: "auto", padding: 10 }}>
+              {(hejakPreview.items || []).map((item, index) => (
+                <div key={index} style={{ padding: "7px 4px", borderBottom: "1px solid var(--border)" }}>
+                  <strong>{item.sceneCode}</strong>
+                  <div className="caption">{item.files.length ? item.files.map(file => file.role + ": " + file.label + (file.sourcePages.length ? " (hal. " + file.sourcePages.join(", ") + ")" : "")).join(" · ") : "Tanpa file"}</div>
+                </div>
+              ))}
+              {!!hejakPreview.projectFiles?.length && <div className="caption" style={{ padding: "7px 4px" }}>File project: {hejakPreview.projectFiles.map(file => file.label).join(", ")}</div>}
+            </div>
+            <div style={{ display: "flex", gap: 8 }}>
+              <button className="btn btn-primary" disabled={importingHejak || !hejakName.trim() || !hejakChannelId} onClick={handleHejakImport}>
+                {importingHejak ? "Mengimpor…" : "Buat Project dari Hejak"}
+              </button>
+              <button className="btn" disabled={importingHejak} onClick={() => setHejakPreview(null)}>Batal</button>
             </div>
           </div>
         </div>

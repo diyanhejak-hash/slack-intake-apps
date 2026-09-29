@@ -1,4 +1,4 @@
-# Cara Tes — Slack Intake Apps (build pertama, 2026-09-14)
+# Cara Tes — HB Slack Intake
 
 Build ini fondasi + alur inti (lihat "Status build" di bawah untuk apa yang beneran jalan vs masih placeholder). **Saya (AI) gak bisa buka window GUI-nya sendiri** — sandbox tool ini sengaja set `ELECTRON_RUN_AS_NODE=1` (biar gak bisa munculin window sembarangan), jadi verifikasi visual harus kamu lakukan sendiri lewat langkah di bawah. Yang sudah saya cek dari sisi saya: renderer (React/TS) build bersih tanpa error, semua file `.cjs` lolos syntax check, dan `node:sqlite` (engine database) sudah saya tes langsung jalan normal di runtime Electron ini.
 
@@ -166,7 +166,7 @@ Cek langsung di app & di Slack — bukan cuma percaya log terminal.
 
 **Belum dites/dikerjakan lebih lanjut:**
 - Update checker (`update:check` IPC) sudah ada logikanya tapi belum dites — perlu `GITHUB_REPO=owner/repo` di `.env` dan rilis beneran di GitHub Releases untuk dicoba.
-- Packaging installer (`npm run build:win` / `build:mac`) belum dicoba jalan — config icon sudah diarahkan ke `Asset/HB5_new.png`, tapi electron-builder butuh dicoba langsung buat mastiin auto-convert ke `.ico`/`.icns` jalan mulus.
+- Paket Windows `electron-builder --win --dir` berhasil dibuat dengan ikon `Asset/SIA_DARK.png` pada executable. Installer NSIS dan paket Mac belum dicoba.
 
 ## 4. Kalau ada yang error
 

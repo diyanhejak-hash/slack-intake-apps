@@ -156,6 +156,8 @@ function BulkAssignStatusButton({ statusPresets, onPick, disabled }: { statusPre
 export interface MenuBarActions {
   onImportProject: () => void;
   onExportProject: () => void;
+  onDownloadMetadata: () => void;
+  canDownloadMetadata: boolean;
   onSaveAs: () => void;
   onDeleteProject: () => void;
   onBackToStartMenu: () => void;
@@ -163,9 +165,13 @@ export interface MenuBarActions {
   onMergeSeparatorChange: (separator: "," | "-") => void;
   onToggleWorkload: () => void;
   onToggleLog: () => void;
-  onGroupEditor: () => void;
   onHyperlinkManager: () => void;
   onArtistPresetManager: () => void;
+  onStatusPresetManager: () => void;
+  onCustomHeaderManager: () => void;
+  onTemplatePresetManager: () => void;
+  onSlackSyncSettings: () => void;
+  canManageSlackSync: boolean;
   onHelp: () => void;
   onWhatsNew: () => void;
   openMenu: MenuName | null;
@@ -174,6 +180,8 @@ export interface MenuBarActions {
    * tombol "Add React" (ItemReactionBar). */
   instantIntakeEnabled: boolean;
   onToggleInstantIntake: () => void;
+  realtimeAssignEnabled: boolean;
+  onToggleRealtimeAssign: () => void;
   autoOpenSlackEnabled: boolean;
   onToggleAutoOpenSlack: () => void;
   /** Poin revisi — buka modal "Kelola Otomasi Kata Kunci" (berdiri sendiri, punya toggle
@@ -243,6 +251,16 @@ export type MenuName = (typeof MENUS)[number];
 export function MenuBar(a: MenuBarActions) {
   const { openMenu: open, onOpenMenuChange: setOpen } = a;
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const closeTimerRef = useRef<number | null>(null);
+
+  function cancelClose() {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = null;
+  }
+
+  useEffect(() => () => {
+    if (closeTimerRef.current !== null) window.clearTimeout(closeTimerRef.current);
+  }, []);
 
   // Klik di luar menu bar = tutup. Ganti pola onBlur+setTimeout lama yang race-y (nyebabin
   // dropdown kebuka-lalu-ketutup sendiri, baru klik ke-2 baru beneran kebuka).
@@ -250,6 +268,7 @@ export function MenuBar(a: MenuBarActions) {
     if (!open) return;
     function onDocMouseDown(e: MouseEvent) {
       if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+        cancelClose();
         setOpen(null);
       }
     }
@@ -261,23 +280,22 @@ export function MenuBar(a: MenuBarActions) {
     File: [
       { label: "Import Project", onClick: a.onImportProject },
       { label: "Export Project", onClick: a.onExportProject },
+      ...(a.canDownloadMetadata ? [{ label: "Download CSV Animatic", onClick: a.onDownloadMetadata }] : []),
       { label: "Save As", onClick: a.onSaveAs },
       { label: "Hapus Project", onClick: a.onDeleteProject },
       { label: "Kembali ke Start Menu", onClick: a.onBackToStartMenu },
     ],
-    Edit: [
-      { label: "Preset Artis...", onClick: a.onArtistPresetManager },
-    ],
+    Edit: [],
     View: [
       { label: "Workload Distribution", onClick: a.onToggleWorkload },
       { label: "Message Log", onClick: a.onToggleLog },
     ],
     Settings: [
-      { label: "Grup Artis", onClick: a.onGroupEditor },
+      { label: "Preset Artis & Grup...", onClick: a.onArtistPresetManager },
+      { label: "Preset Status...", onClick: a.onStatusPresetManager },
+      { label: "Template Reply...", onClick: a.onTemplatePresetManager },
+      { label: "Header Kustom...", onClick: a.onCustomHeaderManager },
       { label: "Hyperlink Preset", onClick: a.onHyperlinkManager },
-      // Sistem Admin/Member (poin revisi, diminta user) — default hidden, cuma admin-member
-      // channel "hb-adm" yang liat entry ini.
-      ...(a.isAdminMember ? [{ label: "Otomasi Kata Kunci...", onClick: a.onKeywordAutomation }] : []),
     ],
     Help: [
       { label: "Yang Baru", onClick: a.onWhatsNew },
@@ -286,18 +304,25 @@ export function MenuBar(a: MenuBarActions) {
   };
 
   return (
-    <div ref={containerRef} style={{ display: "flex", gap: 2, padding: "4px 10px", borderBottom: "1px solid var(--border)", position: "relative" }}>
+    <div
+      ref={containerRef}
+      style={{ display: "flex", gap: 2, padding: "4px 10px", borderBottom: "1px solid var(--border)", position: "relative" }}
+      onMouseEnter={cancelClose}
+      onMouseLeave={() => {
+        if (open) closeTimerRef.current = window.setTimeout(() => setOpen(null), 500);
+      }}
+    >
       {MENUS.map((m) => (
         <div key={m} style={{ position: "relative" }}>
           <button
             className="btn"
             style={{ border: "none", padding: "4px 10px", fontWeight: 500, ...(open === m ? { background: "var(--surface-hover)" } : {}) }}
-            onClick={() => setOpen(open === m ? null : m)}
+            onClick={() => { cancelClose(); setOpen(open === m ? null : m); }}
           >
             {m}
           </button>
           {open === m && (
-            <div className="card" style={{ position: "absolute", top: 30, left: 0, width: 220, padding: 4, zIndex: 40 }}>
+            <div className="card scrollbar-thin" style={{ position: "absolute", top: 30, left: 0, width: 240, padding: 4, zIndex: 40, maxHeight: "calc(100vh - 70px)", overflowY: "auto" }}>
               {m === "Edit" && (
                 <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px" }}>
                   <span style={{ fontSize: 13 }}>Merge default</span>
@@ -321,6 +346,12 @@ export function MenuBar(a: MenuBarActions) {
                   </div>
                 </div>
               )}
+              {m === "View" && (
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "6px 8px" }}>
+                  <span>Dark Mode</span>
+                  <ThemeToggle />
+                </div>
+              )}
               {m === "Settings" && (
                 <>
                   <button
@@ -330,6 +361,14 @@ export function MenuBar(a: MenuBarActions) {
                   >
                     <span>Instant Intake</span>
                     {a.instantIntakeEnabled ? <CheckSquare size={14} /> : <Square size={14} />}
+                  </button>
+                  <button
+                    className="btn"
+                    style={{ width: "100%", justifyContent: "space-between", border: "none", padding: "6px 8px" }}
+                    onClick={a.onToggleRealtimeAssign}
+                  >
+                    <span>Realtime Sync</span>
+                    {a.realtimeAssignEnabled ? <CheckSquare size={14} /> : <Square size={14} />}
                   </button>
                   <button
                     className="btn"

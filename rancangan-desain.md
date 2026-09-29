@@ -23,9 +23,14 @@ Log diskusi desain untuk software pengganti "Slack Intake POC" (`../Phase 0/`), 
 
 ### Struktur folder (workspace ini)
 ```
-Slack Intake Local user\        ← root workspace, tidak diubah namanya
-├── Phase 0\                    ← POC lengkap (arsip/referensi, masih bisa dipakai buat kirim batch episode)
-└── Slack Intake Apps\          ← project baru, di folder inilah dibangun
+HB Apps\                       ← folder utama aplikasi HB
+├── Guideline\                 ← aturan UI bersama
+├── Slack Intake Apps\         ← seluruh project Slack Intake
+│   ├── App\                   ← aplikasi utama dan repository Git
+│   ├── Phase 0\               ← POC lengkap (arsip/referensi)
+│   ├── audit\                 ← script dan bukti audit
+│   └── graphify-out\           ← peta hubungan file project
+└── Widget Assisten\           ← project berikutnya
 ```
 
 ## Kerangka rancangan (dibahas satu per satu)

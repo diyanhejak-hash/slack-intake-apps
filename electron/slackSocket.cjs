@@ -9,8 +9,9 @@
 const { SocketModeClient } = require("@slack/socket-mode");
 
 let client = null;
+let lifecycle = 0;
 
-async function stop() {
+async function disconnectCurrent() {
   if (!client) return;
   const old = client;
   client = null;
@@ -20,6 +21,11 @@ async function stop() {
   } catch {
     /* best-effort -- lagi mau berhenti, gak masalah kalau disconnect-nya sendiri gagal */
   }
+}
+
+async function stop() {
+  lifecycle++;
+  await disconnectCurrent();
 }
 
 // onReaction(type, event) dipanggil tiap "reaction_added"/"reaction_removed" nyampe.
@@ -34,7 +40,9 @@ async function stop() {
 // gak pernah nyoba start ulang. Sekarang `client` cuma diisi SETELAH c.start() BENERAN sukses;
 // kalau gagal, listener dibersihin dan error dilempar ke pemanggil (biar keliatan jelas gagal).
 async function start(appToken, { onReaction, onMessage, onStatus }) {
-  await stop();
+  const request = ++lifecycle;
+  await disconnectCurrent();
+  if (request !== lifecycle) return;
   const c = new SocketModeClient({ appToken });
 
   c.on("reaction_added", ({ event, ack }) => {
@@ -56,6 +64,11 @@ async function start(appToken, { onReaction, onMessage, onStatus }) {
 
   try {
     await c.start();
+    if (request !== lifecycle) {
+      c.removeAllListeners();
+      await c.disconnect().catch(() => {});
+      return;
+    }
   } catch (err) {
     c.removeAllListeners();
     throw err;

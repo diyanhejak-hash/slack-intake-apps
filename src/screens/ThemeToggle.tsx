@@ -1,25 +1,49 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
+import logoLight from "../../Asset/SIA_LIGHT.png";
+import logoDark from "../../Asset/SIA_DARK.png";
 
 export const THEME_KEY = "slack-intake.theme";
+const THEME_CHANGED = "slack-intake:theme-changed";
 
 function savedTheme(): "light" | "dark" {
   return localStorage.getItem(THEME_KEY) === "dark" ? "dark" : "light";
 }
 
 export function applySavedTheme(): void {
-  document.documentElement.dataset.theme = savedTheme();
+  applyTheme(savedTheme());
+}
+
+function applyTheme(theme: "light" | "dark") {
+  document.documentElement.dataset.theme = theme;
+  let favicon = document.querySelector<HTMLLinkElement>('link[rel="icon"]');
+  if (!favicon) {
+    favicon = document.createElement("link");
+    favicon.rel = "icon";
+    document.head.appendChild(favicon);
+  }
+  favicon.href = theme === "dark" ? logoDark : logoLight;
+  void window.api.app.setTheme(theme).catch(() => undefined);
+}
+
+function saveTheme(theme: "light" | "dark") {
+  localStorage.setItem(THEME_KEY, theme);
+  applyTheme(theme);
+  window.dispatchEvent(new Event(THEME_CHANGED));
 }
 
 export default function ThemeToggle() {
   const [theme, setTheme] = useState(savedTheme);
   const dark = theme === "dark";
 
+  useEffect(() => {
+    const syncTheme = () => setTheme(savedTheme());
+    window.addEventListener(THEME_CHANGED, syncTheme);
+    return () => window.removeEventListener(THEME_CHANGED, syncTheme);
+  }, []);
+
   function toggle() {
-    const next = dark ? "light" : "dark";
-    localStorage.setItem(THEME_KEY, next);
-    document.documentElement.dataset.theme = next;
-    setTheme(next);
+    saveTheme(dark ? "light" : "dark");
   }
 
   return (

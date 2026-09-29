@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
-import { X, Plus, Check, FileWarning, UploadCloud } from "lucide-react";
+import { X, Plus, Check, FileWarning, UploadCloud, Download } from "lucide-react";
 import type { Project, BatchSection as Section, BatchFileEntry as BatchFile } from "../global";
+import { formatErrorMessage } from "../lib/toast";
 
 const PRESET_CATEGORIES = ["Animatic", "TBH", "Char", "BG", "Prop"];
 
@@ -62,6 +63,7 @@ export default function BatchFileModal({ project, onClose, onApplied, onProjectC
   const [categoryTouched, setCategoryTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   function submitNewCategory() {
@@ -199,6 +201,19 @@ export default function BatchFileModal({ project, onClose, onApplied, onProjectC
     }
   }
 
+  async function downloadMetadata() {
+    if (active?.name.toLowerCase() !== "animatic" || !active.files.length || downloading) return;
+    setDownloading(true);
+    setError(null);
+    try {
+      await window.api.batchFile.downloadMetadata(project.id, active.files, active.name);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Gagal mengunduh CSV Animatic.");
+    } finally {
+      setDownloading(false);
+    }
+  }
+
   async function finish() {
     setBusy(true);
     setError(null);
@@ -281,6 +296,15 @@ export default function BatchFileModal({ project, onClose, onApplied, onProjectC
               </span>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 6, marginBottom: 6 }}>
+              {active.name.toLowerCase() === "animatic" && <button
+                className="btn"
+                style={{ padding: "3px 10px", fontSize: 12, marginRight: "auto" }}
+                onClick={downloadMetadata}
+                disabled={!active.files.length || downloading}
+                title="Simpan scene, jumlah frame, dan durasi file kategori ini sebagai CSV"
+              >
+                <Download size={13} /> {downloading ? "Membuat CSV Animatic..." : "CSV Animatic"}
+              </button>}
               <button
                 className="btn"
                 style={{ padding: "3px 10px", fontSize: 12 }}
@@ -361,7 +385,7 @@ export default function BatchFileModal({ project, onClose, onApplied, onProjectC
           </div>
         )}
 
-        {error && <span className="caption" style={{ color: "var(--danger)" }}>{error}</span>}
+        {error && <span className="caption" style={{ color: "var(--danger)" }}>{formatErrorMessage(error)}</span>}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: 14 }}>
           <span className="caption">{totalConnections} koneksi file→item siap diterapkan</span>
           <div style={{ display: "flex", gap: 8 }}>

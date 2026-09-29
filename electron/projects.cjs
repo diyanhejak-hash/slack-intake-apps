@@ -2,6 +2,7 @@ const crypto = require("node:crypto");
 const fs = require("node:fs");
 const path = require("node:path");
 const { db, dataDir } = require("./db.cjs");
+const { readHandoffArchive } = require("./hejak-reader.cjs");
 
 const now = () => new Date().toISOString();
 const uuid = () => crypto.randomUUID();
@@ -95,6 +96,7 @@ function isManagedFile(filePath) {
     `SELECT 1 FROM project_files f JOIN projects p ON p.id=f.project_id WHERE f.stored_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
     `SELECT 1 FROM item_files f JOIN items i ON i.id=f.item_id JOIN projects p ON p.id=i.project_id WHERE f.stored_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
     `SELECT 1 FROM reply_files f JOIN replies r ON r.id=f.reply_id JOIN items i ON i.id=r.item_id JOIN projects p ON p.id=i.project_id WHERE f.stored_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
+    `SELECT 1 FROM batch_files f JOIN batch_sections s ON s.id=f.section_id JOIN projects p ON p.id=s.project_id WHERE f.path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
     `SELECT 1 FROM custom_header_options o JOIN custom_headers h ON h.id=o.header_id JOIN projects p ON p.id=h.project_id WHERE o.image_path=? AND p.owner_user_id=? AND p.owner_team_id=?`,
   ].some((sql) => db.prepare(sql).get(resolved, activeScope.userId, activeScope.teamId));
   if (scoped) return true;
@@ -1773,6 +1775,50 @@ function importProjectFile(filePath) {
   return importProject(JSON.parse(fs.readFileSync(filePath, "utf8")));
 }
 
+function importHejakHandoff(filePath, { name, channelId, channelName }) {
+  const archive = readHandoffArchive(filePath);
+  const source = archive.manifest;
+  const projectName = String(name || source.project.name).trim();
+  if (!projectName || !String(channelId || "").trim() || !String(channelName || "").trim()) {
+    throw new Error("Nama project dan channel SIA wajib dipilih.");
+  }
+  const allFiles = [...source.projectFiles, ...source.items.flatMap(item => item.files)];
+  for (const file of allFiles) safeFilename(file.role === "STB Pages" ? "STB Pages.pdf" : file.label);
+  return transaction(() => {
+    const project = createProject({ name: projectName, channelId, channelName });
+    for (const [index, file] of source.projectFiles.entries()) {
+      const location = archive.locations.get(file.path);
+      const storedPath = stageCopyRange(project.id, filePath, location.offset, location.length, file.label);
+      db.prepare(`INSERT INTO project_files (id, project_id, stored_path, original_name, sort_order) VALUES (?, ?, ?, ?, ?)`)
+        .run(uuid(), project.id, storedPath, file.label, index);
+    }
+    for (const sourceItem of source.items) {
+      const itemId = addItem(project.id, { name: sourceItem.sceneCode.trim(), source: "manual" });
+      const grouped = new Map();
+      for (const file of sourceItem.files) {
+        const title = file.role.trim().toLowerCase() === "animatic" ? "Animatic" : file.role.trim();
+        if (!grouped.has(title)) grouped.set(title, []);
+        grouped.get(title).push(file);
+      }
+      for (const [title, files] of grouped) {
+        for (let start = 0; start < files.length; start += 10) {
+          const replyId = addReplyWithFiles(itemId, { title });
+          for (const file of files.slice(start, start + 10)) {
+            const stem = sourceItem.sceneCode.trim().replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").slice(0, 100);
+            const filename = title === "STB Pages" ? stem + "-STB.pdf" : file.label;
+            safeFilename(filename);
+            const location = archive.locations.get(file.path);
+            const storedPath = stageCopyRange(itemId, filePath, location.offset, location.length, filename);
+            db.prepare(`INSERT INTO reply_files (id, reply_id, stored_path, original_name) VALUES (?, ?, ?, ?)`)
+              .run(uuid(), replyId, storedPath, filename);
+          }
+        }
+      }
+    }
+    return project.id;
+  });
+}
+
 function stageImportedFile(ownerId, file, filename, archive) {
   if (!archive) return stageWrite(ownerId, Buffer.from(file.dataBase64, "base64"), filename);
   const location = archive.locations.get(file.archiveIndex);
@@ -2050,6 +2096,7 @@ module.exports = {
   exportProjectToFile,
   importProject,
   importProjectFile,
+  importHejakHandoff,
 };
 
 // Synchronous nested mutations share their outer transaction and staged files.
@@ -2057,7 +2104,7 @@ for (const name of [
   "addItemFiles", "addProjectFiles", "addReplyWithFiles", "addFilesToReply",
   "addCapturedFile", "addCapturedFileToReply", "restoreItem", "mergeItems", "unmergeItems",
   "removeItem", "deleteProject", "removeReply", "removeReplies", "removeRepliesByCategory",
-  "broadcastReply", "saveBatchSections", "generateBatchItems", "applyBatchSections", "importProject", "importProjectFile", "duplicateProject",
+  "broadcastReply", "saveBatchSections", "generateBatchItems", "applyBatchSections", "importProject", "importProjectFile", "importHejakHandoff", "duplicateProject",
   "saveArtistPreset", "removeArtistPreset",
   "saveStatusPreset", "removeStatusPreset",
   "saveCustomHeader", "removeCustomHeader", "reorderCustomHeaders", "saveCustomHeaderOption", "removeCustomHeaderOption", "reorderCustomHeaderOptions",

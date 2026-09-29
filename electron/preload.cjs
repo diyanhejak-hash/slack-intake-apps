@@ -44,6 +44,8 @@ contextBridge.exposeInMainWorld("api", {
     duplicate: (id, newName) => ipcRenderer.invoke("project:duplicate", id, newName),
     export: (id) => ipcRenderer.invoke("project:export", id),
     import: () => ipcRenderer.invoke("project:import"),
+    hejakPick: () => ipcRenderer.invoke("project:hejakPick"),
+    hejakImport: (payload) => ipcRenderer.invoke("project:hejakImport", payload),
     attachFiles: (projectId, filePaths) => ipcRenderer.invoke("project:attachFiles", projectId, filePaths),
     removeFile: (fileId) => ipcRenderer.invoke("project:removeFile", fileId),
   },
@@ -196,6 +198,7 @@ contextBridge.exposeInMainWorld("api", {
   },
   app: {
     version: () => ipcRenderer.invoke("app:version"),
+    setTheme: (theme) => ipcRenderer.invoke("app:setTheme", theme),
   },
   hbStatus: {
     shouldShowModal: () => ipcRenderer.invoke("hbStatus:shouldShowModal"),
@@ -224,6 +227,7 @@ contextBridge.exposeInMainWorld("api", {
     saveSections: (projectId, sections) => ipcRenderer.invoke("batchFile:saveSections", projectId, sections),
     generateItems: (projectId) => ipcRenderer.invoke("batchFile:generateItems", projectId),
     apply: (projectId) => ipcRenderer.invoke("batchFile:apply", projectId),
+    downloadMetadata: (projectId, files, categoryName) => ipcRenderer.invoke("batchFile:downloadMetadata", projectId, files, categoryName),
   },
   // Drag-drop file native dari OS (File Explorer) — Electron 32+ udah gak nempelin `.path`
   // otomatis ke File object lagi (dihapus, alasan keamanan), harus lewat webUtils.getPathForFile.

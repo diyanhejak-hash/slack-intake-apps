@@ -90,7 +90,8 @@ export default function VideoPlayer({
   // blob: URL lewat IPC — bukan file:// langsung, lihat catatan panjang di fileUrl.ts
   // (webSecurity Electron blokir halaman ber-origin http://localhost:5173, dipakai mode dev,
   // muat resource file:// langsung; blob: selalu se-origin di dev MAUPUN packaged).
-  const url = useFileBlobUrl(filePath);
+  const [fileReadError, setFileReadError] = useState<string | null>(null);
+  const url = useFileBlobUrl(filePath, setFileReadError);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const stageRef = useRef<HTMLDivElement | null>(null);
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -347,7 +348,7 @@ export default function VideoPlayer({
             </span>
           </div>
         )}
-        {loadError && (
+        {(loadError || fileReadError) && (
           <div
             style={{
               position: "absolute",
@@ -361,7 +362,7 @@ export default function VideoPlayer({
               background: "rgba(0,0,0,0.75)",
             }}
           >
-            <span style={{ fontSize: 12 }}>{loadError}</span>
+            <span style={{ fontSize: 12 }}>{loadError || fileReadError}</span>
           </div>
         )}
         {captureMode && (
@@ -372,7 +373,7 @@ export default function VideoPlayer({
         {selRect && (
           <div style={{ position: "absolute", left: selRect.x, top: selRect.y, width: selRect.w, height: selRect.h, border: "2px solid var(--accent)", background: "rgba(47,111,235,0.15)", pointerEvents: "none" }} />
         )}
-        {!playing && !captureMode && !loadError && (
+        {!playing && !captureMode && !loadError && !fileReadError && (
           <button
             onClick={togglePlay}
             title="Play"

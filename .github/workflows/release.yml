@@ -35,7 +35,6 @@ jobs:
       SLACK_CLIENT_ID: ${{ secrets.SLACK_CLIENT_ID }}
       SLACK_REDIRECT_URI: ${{ secrets.SLACK_REDIRECT_URI }}
       GITHUB_REPO: ${{ secrets.RELEASE_REPO }}
-      GITHUB_RELEASES_TOKEN: ${{ secrets.RELEASES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -54,7 +53,7 @@ jobs:
           path: |
             release/*.exe
             release/*.dmg
-          if-no-files-found: ignore
+          if-no-files-found: error
 
   # Jalan SEKALI hanya kalau SEMUA build/check platform sukses. Rilis resmi tidak boleh terbit
   # parsial karena satu platform yang gagal bisa menandakan regresi lintas-platform.
@@ -75,4 +74,4 @@ jobs:
       - name: Publish GitHub Release (1 release, semua installer platform yang sukses jadi asset)
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" release/* --repo "${{ github.repository }}" --title "${{ github.ref_name }}" --generate-notes
+        run: gh release create "${{ github.ref_name }}" release/* --repo "${{ github.repository }}" --title "HB Slack Intake ${{ github.ref_name }}" --generate-notes

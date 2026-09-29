@@ -1,8 +1,25 @@
-const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, dialog, shell, nativeImage } = require("electron");
+const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, dialog, shell, nativeImage, nativeTheme } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
+const { randomUUID } = require("node:crypto");
 if (app.isPackaged) Object.assign(process.env, JSON.parse(fs.readFileSync(path.join(process.resourcesPath, "runtime-config.json"), "utf8")));
 else require("dotenv").config({ path: path.join(__dirname, "..", ".env") });
+
+// Nama produk berubah pada v1.0.0. Pakai data instalasi lama jika ada agar project,
+// attachment, dan token login tidak tampak hilang sesudah upgrade.
+if (app.isPackaged) {
+  const currentData = app.getPath("userData");
+  const hasData = (dir) => fs.existsSync(path.join(dir, "slack-intake-apps.db")) || fs.existsSync(path.join(dir, "token.enc"));
+  if (!hasData(currentData)) {
+    for (const name of ["Slack Intake Apps", "slack-intake-apps"]) {
+      const oldData = path.join(app.getPath("appData"), name);
+      if (hasData(oldData)) {
+        app.setPath("userData", oldData);
+        break;
+      }
+    }
+  }
+}
 
 // Redirect login Slack (PKCE) lewat custom URI scheme slackintakeapps://callback, bukan server
 // HTTP lokal — lihat catatan di electron/slack.cjs. OS ngirim balik URL ini ke app yang UDAH
@@ -21,6 +38,8 @@ if (!gotSingleInstanceLock) app.quit();
 const authStore = require("./auth-store.cjs");
 const slack = require("./slack.cjs");
 const projects = require("./projects.cjs");
+const { readHandoffArchive } = require("./hejak-reader.cjs");
+const { createMetadataCsv } = require("./batch-metadata.cjs");
 const { checkForUpdate } = require("./updater.cjs");
 const hbStatus = require("./hbStatus.cjs");
 const adminAccess = require("./adminAccess.cjs");
@@ -30,6 +49,7 @@ const isDev = !!process.env.VITE_DEV;
 const { pathToFileURL } = require("node:url");
 const rendererURL = isDev ? "http://localhost:5173/" : pathToFileURL(path.join(__dirname, "../dist/index.html")).href;
 const fileGrants = new Set();
+let pendingHejak = null;
 function trustedURL(value) {
   try { const u = new URL(value); u.hash = ""; u.search = ""; return u.href === rendererURL; } catch { return false; }
 }
@@ -55,14 +75,13 @@ function threadKey(projectId, itemId) {
   const info = authStore.loadToken();
   return JSON.stringify([info?.teamId, info?.userId, projectId, itemId]);
 }
-const iconPath = path.join(__dirname, "..", "Asset", "HB_ICON_OL.png");
-// 1 nativeImage dimuat sekali, dipakai ulang di SEMUA tempat logo app harusnya muncul —
-// window (title bar/taskbar), tray, notifikasi OS, dock (Mac) — biar konsisten logo HB,
-// bukan default Electron di sebagian tempat doang. Sengaja BUKAN diisi di sini (module
-// top-level jalan sebelum app.whenReady) — nativeImage yang dibuat sebelum app ready kadang
-// gagal ke-convert jadi HICON Windows dengan benar (taskbar balik nunjukin icon Electron
-// default). Diisi di app.whenReady() di bawah.
+const iconPaths = {
+  light: path.join(__dirname, "..", "Asset", "SIA_LIGHT.png"),
+  dark: path.join(__dirname, "..", "Asset", "SIA_DARK.png"),
+};
+const headerIconPath = path.join(__dirname, "..", "Asset", "Header Apps.png");
 let appIcon = null;
+let headerIcon = null;
 let win = null;
 let tray = null;
 let cancelRequested = false;
@@ -110,6 +129,11 @@ function currentToken() {
 // di-single-flight. Balikin false (bukan throw) kalau gak ada refresh_token tersimpan atau
 // refresh-nya sendiri gagal — caller tetap lempar error asli, user tetap harus login ulang manual.
 let refreshPromise = null;
+let authSession = 0;
+function invalidateAuthSession() {
+  authSession++;
+  refreshPromise = null;
+}
 // Poin revisi (diagnosa: user masih kena token_expired berulang, gak jelas kenapa auto-refresh
 // gak nolong) — dulu gagal diam-diam (return false doang, gak ada jejak KENAPA). Sekarang tiap
 // jalur gagal di-log (Menu > Log Aktivitas) DAN caller (handle()) nyusun error yang beda buat
@@ -126,10 +150,19 @@ async function tryRefreshToken() {
       projects.addLog("error", "Auto-refresh token dilewati: gak ada refresh_token tersimpan (login sebelum fitur auto-refresh ada, atau App Slack gak pakai Token Rotation) -- logout lalu login ulang.");
       return false;
     }
-    refreshPromise = slack
+    const session = authSession;
+    const pending = slack
       .refreshAccessToken({ clientId: process.env.SLACK_CLIENT_ID, refreshToken: info.refreshToken })
-      .then((refreshed) => authStore.saveToken({ ...info, ...refreshed }))
-      .finally(() => { refreshPromise = null; });
+      .then((refreshed) => {
+        if (session !== authSession || authStore.loadToken()?.accessToken !== info.accessToken) {
+          throw new Error("Sesi login berubah saat refresh token.");
+        }
+        authStore.saveToken({ ...info, ...refreshed });
+      });
+    refreshPromise = pending.finally(() => {
+      if (refreshPromise === completed) refreshPromise = null;
+    });
+    const completed = refreshPromise;
   }
   try {
     await refreshPromise;
@@ -211,7 +244,7 @@ function handle(channel, fn) {
 }
 
 function validateAccess(channel, args) {
-  if (!["auth:status", "auth:login", "update:check"].includes(channel) && !currentToken()) throw new Error("Login Slack terlebih dahulu.");
+  if (!["auth:status", "auth:login", "update:check", "app:setTheme"].includes(channel) && !currentToken()) throw new Error("Login Slack terlebih dahulu.");
   if (activeSend && ["auth:login", "auth:logout"].includes(channel)) throw new Error("Tunggu pengiriman selesai sebelum berganti akun.");
   if (["project:attachFiles", "item:attachFiles"].includes(channel)) args[1].forEach(validateFile);
   if (channel === "reply:add") (args[0].filePaths || []).forEach(validateFile);
@@ -219,6 +252,7 @@ function validateAccess(channel, args) {
   if (channel === "artistPreset:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
   if (channel === "statusPreset:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
   if (channel === "customHeaderOption:save" && args[0].sourcePath) validateFile(args[0].sourcePath);
+  if (channel === "batchFile:downloadMetadata") args[1].forEach((file) => validateFile(file.path));
   if (channel === "batchFile:saveSections") {
     const previous = projects.listBatchSections(args[0]);
     for (const section of args[1]) for (const file of section.files) {
@@ -227,7 +261,7 @@ function validateAccess(channel, args) {
     }
   }
   let valid = true;
-  if (["project:load", "project:rename", "project:setChannel", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "project:listChannelMemberIds", "project:refreshChannelMembers", "batchFile:listSections", "batchFile:saveSections", "batchFile:generateItems", "batchFile:apply", "artistAssign:syncProject", "slackPull:syncProject", "customHeader:list", "customHeader:remove", "customHeader:reorder", "customHeaderOption:remove", "customHeaderOption:reorder"].includes(channel)) valid = projects.ownsProject(args[0]);
+  if (["project:load", "project:rename", "project:setChannel", "project:setPhase", "project:delete", "project:duplicate", "project:export", "project:attachFiles", "project:listChannelMemberIds", "project:refreshChannelMembers", "batchFile:listSections", "batchFile:saveSections", "batchFile:generateItems", "batchFile:apply", "batchFile:downloadMetadata", "artistAssign:syncProject", "slackPull:syncProject", "customHeader:list", "customHeader:remove", "customHeader:reorder", "customHeaderOption:remove", "customHeaderOption:reorder"].includes(channel)) valid = projects.ownsProject(args[0]);
   else if (["customHeader:save", "customHeaderOption:save", "item:setCustomValue"].includes(channel)) valid = projects.ownsProject(args[0]?.projectId) && (channel !== "item:setCustomValue" || projects.ownsItem(args[0]?.itemId));
   else if (channel === "item:addManual") valid = projects.ownsProject(args[0]?.projectId);
   else if (["item:update", "item:remove", "item:attachFiles"].includes(channel)) valid = projects.ownsItem(args[0]);
@@ -254,14 +288,14 @@ function validateAccess(channel, args) {
 }
 
 function createWindow() {
-  const windowTitle = `Slack Intake Apps v${app.getVersion()}`;
+  const windowTitle = `HB Slack Intake v${app.getVersion()}`;
   win = new BrowserWindow({
     title: windowTitle,
     width: 1180,
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    icon: appIcon,
+    icon: headerIcon,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -272,7 +306,7 @@ function createWindow() {
   // Nama di title bar native harus selalu memperlihatkan versi build yang benar. Halaman
   // renderer punya <title> sendiri, jadi cegah page title menimpa judul native ini saat load.
   win.on("page-title-updated", (event) => event.preventDefault());
-  win.setIcon(appIcon); // redundan sama opsi `icon` di atas, tapi Windows kadang butuh set eksplisit ini abis window dibuat.
+  win.setIcon(headerIcon);
   win.setMenuBarVisibility(false);
   // Matikan zoom native Electron (poin F2 rancangan) — tanpa ini, Ctrl+scroll/Ctrl+Plus-Minus
   // bisa nge-zoom SELURUH window bentrok sama zoom custom di PdfViewer. Accelerator menu bawaan
@@ -322,7 +356,7 @@ function createWindow() {
 
 function createTray() {
   tray = new Tray(appIcon.resize({ width: 32, height: 32 }));
-  tray.setToolTip("Slack Intake Apps");
+  tray.setToolTip("HB Slack Intake");
   tray.setContextMenu(
     Menu.buildFromTemplate([
       { label: "Buka", click: () => win?.show() },
@@ -331,6 +365,14 @@ function createTray() {
     ])
   );
   tray.on("click", () => win?.show());
+}
+
+function setAppIcon(theme) {
+  const icon = nativeImage.createFromPath(iconPaths[theme]);
+  if (icon.isEmpty()) throw new Error("Ikon aplikasi tidak ditemukan.");
+  appIcon = icon;
+  if (tray) tray.setImage(icon.resize({ width: 32, height: 32 }));
+  if (process.platform === "darwin") app.dock.setIcon(icon);
 }
 
 function handleDeepLink(url) {
@@ -353,8 +395,9 @@ app.on("open-url", (event, url) => {
 });
 
 app.whenReady().then(() => {
-  appIcon = nativeImage.createFromPath(iconPath);
-  if (process.platform === "darwin") app.dock.setIcon(appIcon); // dock Mac = taskbar Windows, butuh di-set eksplisit juga
+  headerIcon = nativeImage.createFromPath(headerIconPath);
+  if (headerIcon.isEmpty()) throw new Error("Ikon header aplikasi tidak ditemukan.");
+  setAppIcon(nativeTheme.shouldUseDarkColors ? "dark" : "light");
   createWindow();
   createTray();
   // Sync 2 arah reaction Slack->App (poin revisi) — auto-connect Socket Mode kalau App-Level
@@ -376,6 +419,7 @@ app.on("activate", () => {
 handle("auth:status", () => {
   const info = authStore.loadToken();
   if (info && !info.teamId) {
+    invalidateAuthSession();
     authStore.clearToken();
     projects.setScope(null, null);
     return { loggedIn: false };
@@ -393,8 +437,10 @@ handle("auth:login", async () => {
     { clientId: process.env.SLACK_CLIENT_ID, redirectUri: process.env.SLACK_REDIRECT_URI },
     (url) => shell.openExternal(url)
   );
+  invalidateAuthSession();
   authStore.saveToken(info);
   projects.setScope(info.userId, info.teamId);
+  await updateSocketModeConnectionState();
   // Poin revisi (bug ditemukan lewat audit, D18) — akun baru login = cache admin (adminAccess.cjs)
   // punya akun SEBELUMNYA (kalau ada) harus di-invalidate, biar isAdminMember/isOwner dicek ULANG
   // buat identitas yang baru, bukan kepake status akun lama.
@@ -406,7 +452,7 @@ handle("auth:login", async () => {
   projects.addLog("info", `Login berhasil (${info.team || info.userId}). Refresh token ${info.refreshToken ? "TERSIMPAN" : "TIDAK ADA (App Slack mungkin belum/gak pakai Token Rotation)"}.`);
   if (Notification.isSupported()) {
     new Notification({
-      title: "Slack Intake Apps",
+      title: "HB Slack Intake",
       icon: appIcon,
       body: "Login berhasil. Tab browser yang masih terbuka boleh ditutup.",
     }).show();
@@ -426,15 +472,28 @@ handle("auth:testRefresh", async () => {
   return { ok, reason: ok ? null : lastRefreshFailureReason };
 });
 
-handle("auth:logout", () => {
+handle("auth:logout", async () => {
   if (authenticating) throw new Error("Tunggu login selesai.");
+  const oldToken = currentToken();
+  const wasOnline = hbOnline;
+  invalidateAuthSession();
   fileGrants.clear();
   authStore.clearToken();
   projects.setScope(null, null);
+  hbOnline = false;
+  sessionModalShown = false;
   // Poin revisi (bug ditemukan lewat audit, D18) — cache admin (adminAccess.cjs) per PROSES app,
   // bukan per akun. Tanpa ini, ganti akun (logout admin -> login user biasa) di proses yang SAMA
   // (belum restart app) bisa nyisain status admin punya akun LAMA nempel ke akun BARU.
   adminAccess.invalidateCache();
+  await slackSocket.stop();
+  slackSocketStatusChanged("disconnected");
+  if (wasOnline) {
+    await Promise.race([
+      hbStatus.postStatus(slack, oldToken, ":radio_button: Offline"),
+      new Promise((resolve) => setTimeout(resolve, 5000)),
+    ]);
+  }
   return { loggedIn: false };
 });
 
@@ -611,6 +670,35 @@ handle("project:import", async () => {
   // sama kayak attachment/export lain, biarin aja gede sesuai isi project-nya.
   const newId = projects.importProjectFile(filePaths[0]);
   return { canceled: false, projectId: newId };
+});
+
+handle("project:hejakPick", async () => {
+  const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+    title: "Import dari Hejak",
+    filters: [{ name: "HEJAK SIA Handoff", extensions: ["hejak-sia"] }],
+    properties: ["openFile"],
+  });
+  if (canceled || !filePaths.length) return { canceled: true };
+  const archive = readHandoffArchive(filePaths[0]);
+  const token = randomUUID();
+  pendingHejak = { token, filePath: filePaths[0] };
+  return {
+    canceled: false,
+    token,
+    name: archive.manifest.project.name,
+    items: archive.manifest.items.map(item => ({
+      sceneCode: item.sceneCode,
+      files: item.files.map(file => ({ role: file.role, label: file.label, sourcePages: file.sourcePages || [] })),
+    })),
+    projectFiles: archive.manifest.projectFiles.map(file => ({ role: file.role, label: file.label })),
+  };
+});
+
+handle("project:hejakImport", (_e, { token, name, channelId, channelName }) => {
+  if (!pendingHejak || token !== pendingHejak.token) throw new Error("Pilih ulang paket Hejak.");
+  const projectId = projects.importHejakHandoff(pendingHejak.filePath, { name, channelId, channelName });
+  pendingHejak = null;
+  return { projectId };
 });
 
 // ---------- Items ----------
@@ -1411,7 +1499,7 @@ async function startSlackSocket(appToken) {
 async function updateSocketModeConnectionState() {
   const token = authStore.loadAppToken();
   if (!token) return; // gak ada token tersimpan -- gak ada apa pun yang bisa dikerjain di sini
-  const shouldRun = projects.getRealtimeAssignEnabled() || projects.getKeywordAutomationEnabled();
+  const shouldRun = !!currentToken() && (projects.getRealtimeAssignEnabled() || projects.getKeywordAutomationEnabled());
   if (shouldRun && !slackSocket.isRunning()) {
     await startSlackSocket(token).catch((err) => slackSocketStatusChanged("error", err.message));
   } else if (!shouldRun && slackSocket.isRunning()) {
@@ -1502,6 +1590,20 @@ handle("batchFile:listSections", (_e, projectId) => projects.listBatchSections(p
 handle("batchFile:saveSections", (_e, projectId, sections) => projects.saveBatchSections(projectId, sections));
 handle("batchFile:generateItems", (_e, projectId) => projects.generateBatchItems(projectId));
 handle("batchFile:apply", (_e, projectId) => projects.applyBatchSections(projectId));
+handle("batchFile:downloadMetadata", async (_e, projectId, files, categoryName) => {
+  if (typeof categoryName !== "string" || categoryName.toLowerCase() !== "animatic") throw new Error("CSV Animatic hanya tersedia untuk kategori Animatic.");
+  const project = projects.getProject(projectId);
+  const filename = `${project.name}-CSV Animatic.csv`.replace(/[<>:"/\\|?*\x00-\x1f]/g, "_");
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: "Download CSV Animatic",
+    defaultPath: filename,
+    filters: [{ name: "CSV", extensions: ["csv"] }],
+  });
+  if (canceled || !filePath) return { canceled: true };
+  const csv = await createMetadataCsv(files);
+  await fs.promises.writeFile(filePath, `\uFEFF${csv}`, "utf8");
+  return { canceled: false, filePath };
+});
 
 // Baca bytes file lewat main process (bukan fetch(file://) di renderer) — port dari Hej
 // Breakdown (pdfViewer.js), pola yang sama sudah terbukti diandalkan buat pdf.js: fetch/XHR
@@ -1757,7 +1859,7 @@ handle("send:start", async (event, { projectId, itemIds, channelId, scope }) => 
   await hbStatus.updateJobStatus(slack, token, statusHandle, hbStatus.formatJobDone({ counts: workCounts, okCount, failedNames }));
   if (Notification.isSupported()) {
     new Notification({
-      title: "Slack Intake Apps",
+      title: "HB Slack Intake",
       icon: appIcon,
       body: `Selesai kirim: ${okCount}/${results.length} berhasil.`,
     }).show();
@@ -1893,11 +1995,15 @@ handle("shell:openExternal", (_e, url) => {
 handle("shell:openSlackMessage", (_e, { channelId, ts }) => openSlack({ channelId, ts }));
 
 // ---------- Update check ----------
-handle("update:check", () => checkForUpdate(process.env.GITHUB_REPO, process.env.GITHUB_RELEASES_TOKEN));
+handle("update:check", () => checkForUpdate(process.env.GITHUB_REPO));
 // Versi app sendiri (poin revisi) — TERPISAH dari update:check yang butuh internet/GitHub API
 // (bisa gagal/reason kalau offline). Ini murni baca app.getVersion() lokal, jadi user SELALU
 // bisa liat versi yang lagi jalan walau lagi gak ada koneksi.
 handle("app:version", () => app.getVersion());
+handle("app:setTheme", (_e, theme) => {
+  if (theme !== "light" && theme !== "dark") throw new Error("Tema aplikasi tidak valid.");
+  setAppIcon(theme);
+});
 
 // ---------- Papan status HB Apps (poin revisi, hasil diskusi rate-limit) ----------
 // Modal "Mulai Sesi Bersama HB Apps" — opsional, SEKALI per proses app. "Lewati" cuma nutup

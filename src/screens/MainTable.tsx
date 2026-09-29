@@ -10,13 +10,15 @@ import ChannelPicker from "./ChannelPicker";
 import QuickSendButton from "./QuickSendButton";
 import ArtistPresetModal from "./ArtistPresetModal";
 import StatusPresetModal from "./StatusPresetModal";
+import TemplatePresetModal from "./TemplatePresetModal";
 import CustomHeaderModal from "./CustomHeaderModal";
 import KeywordAutomationModal from "./KeywordAutomationModal";
+import SlackSyncSettingsModal from "./SlackSyncSettingsModal";
 import StatusDropdown from "./StatusDropdown";
 import ArtistPicker from "./ArtistPicker";
 import EmojiPicker from "./EmojiPicker";
 import ToastHost from "./ToastHost";
-import { showToast } from "../lib/toast";
+import { formatErrorMessage, showToast } from "../lib/toast";
 import { refreshEmojiCatalogCache } from "../lib/emojiCatalog";
 import { hoverDelayHandlers } from "../lib/hoverDelay";
 import slackButtonImg from "../assets/SlackButton.png";
@@ -40,12 +42,14 @@ const PHASE_LABEL: Record<"root" | "artist" | "react" | "post", string> = {
 
 export default function MainTable({
   projectId,
+  isOwner,
   isAdminMember,
   onBackToStartMenu,
   onOpenProject,
   onShowWhatsNew,
 }: {
   projectId: string;
+  isOwner: boolean;
   /** Sistem Admin/Member (poin revisi, diminta user) — gate menu "Otomasi Kata Kunci..." (MenuBar)
    * doang, default hidden buat user biasa. Toggle Realtime Sync (SyncControls, poin revisi
    * lanjutan) UDAH gak digate lagi -- kebuka semua user. Pull/Push (manual, Web API, gak lewat
@@ -65,8 +69,11 @@ export default function MainTable({
   // Fitur Status (poin revisi) — daftar preset GLOBAL, sama pola fetch/refresh kayak artistPresets.
   const [statusPresets, setStatusPresets] = useState<StatusPreset[]>([]);
   const [showStatusPresetManager, setShowStatusPresetManager] = useState(false);
+  const [showTemplatePresetManager, setShowTemplatePresetManager] = useState(false);
+  const [templateRevision, setTemplateRevision] = useState(0);
   const [customHeaders, setCustomHeaders] = useState<CustomHeader[]>([]);
   const [showCustomHeaderManager, setShowCustomHeaderManager] = useState(false);
+  const [showSlackSyncSettings, setShowSlackSyncSettings] = useState(false);
   // Otomasi Kata Kunci (poin revisi) — dipindah jadi modal berdiri sendiri, trigger-nya di Main
   // menu > Settings (bukan lagi nested di dalam modal "Sync & Otomasi Slack" di Start Menu).
   const [showKeywordAutomation, setShowKeywordAutomation] = useState(false);
@@ -115,7 +122,7 @@ export default function MainTable({
       if (!result.total) {
         showToast("Gak ada item yang punya artis assigned di project ini — gak ada yang perlu disinkron.", "info");
       } else if (result.errors.length) {
-        showToast(`Sinkron ${result.synced}/${result.total} item berhasil. Gagal:\n${result.errors.join("\n")}`, "error");
+        showToast(`Sinkron ${result.synced}/${result.total} item berhasil; ${result.errors.length} gagal. Detail di Message Log.`, "error");
       } else {
         showToast(`Sinkron ${result.synced} item berhasil.`, "success");
       }
@@ -136,7 +143,7 @@ export default function MainTable({
     try {
       const result = await window.api.slackPull.syncProject(projectId);
       if (result.errors.length) {
-        showToast(`Pull selesai (${result.reactionChanges} react, ${result.keywordChanges} kata kunci, ${result.namesChanged} nama item ke-update). Gagal:\n${result.errors.join("\n")}`, "error");
+        showToast(`Pull selesai; ${result.errors.length} item gagal. Detail di Message Log.`, "error");
       } else if (!result.reactionChanges && !result.keywordChanges && !result.namesChanged) {
         showToast("Sudah sinkron — gak ada update baru dari Slack.", "info");
       } else {
@@ -168,6 +175,7 @@ export default function MainTable({
   const [showHelp, setShowHelp] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
   const [showBatchFile, setShowBatchFile] = useState(false);
+  const [canDownloadMetadata, setCanDownloadMetadata] = useState(false);
   const [showLog, setShowLog] = useState(false);
   const [showHyperlinkManager, setShowHyperlinkManager] = useState(false);
   const [showSaveAs, setShowSaveAs] = useState(false);
@@ -238,8 +246,33 @@ export default function MainTable({
     } catch (err) { setLoadError(err instanceof Error ? err.message : "Gagal memuat project."); }
   }
 
+  async function refreshMetadataAvailability() {
+    try {
+      const sections = await window.api.batchFile.listSections(projectId);
+      setCanDownloadMetadata(sections.some((section) => section.name.toLowerCase() === "animatic" && section.files.length > 0));
+    } catch {
+      setCanDownloadMetadata(false);
+    }
+  }
+
+  async function handleDownloadMetadata() {
+    try {
+      const sections = await window.api.batchFile.listSections(projectId);
+      const animatic = sections.find((section) => section.name.toLowerCase() === "animatic" && section.files.length > 0);
+      if (!animatic) {
+        setCanDownloadMetadata(false);
+        showToast("Belum ada file pada kategori Animatic.", "info");
+        return;
+      }
+      await window.api.batchFile.downloadMetadata(projectId, animatic.files, animatic.name);
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal mengunduh CSV Animatic.", "error");
+    }
+  }
+
   useEffect(() => {
     refresh();
+    void refreshMetadataAvailability();
     // Poin revisi (bug dilaporkan: gagal fetch listUsers nongolin alert() native jelek, "seakan
     // nge-block input") — timeout/gagal koneksi Slack (light call, 60s, lihat slack.cjs) TOAST
     // doang, gak boleh nge-crash ke alert() blocking cuma gara-gara dropdown Artis kosong.
@@ -342,7 +375,7 @@ export default function MainTable({
       if (e.defaultPrevented || document.querySelector('[aria-modal="true"]') ||
         showGenerate || showWorkload || showHelp || showPreview || showBatchFile ||
         showLog || showHyperlinkManager || showArtistPresetManager ||
-        showStatusPresetManager || showCustomHeaderManager || showKeywordAutomation || showSaveAs || showTemplateAll || openMenu || bulkPasteCol) return;
+        showStatusPresetManager || showTemplatePresetManager || showCustomHeaderManager || showSlackSyncSettings || showKeywordAutomation || showSaveAs || showTemplateAll || openMenu || bulkPasteCol) return;
       const active = document.activeElement as HTMLElement | null;
       const tag = (active?.tagName || "").toLowerCase();
       const typing = tag === "input" || tag === "textarea" || !!active?.isContentEditable;
@@ -1145,6 +1178,8 @@ export default function MainTable({
         onOpenMenuChange={setOpenMenu}
         onImportProject={handleImportProject}
         onExportProject={handleExport}
+        onDownloadMetadata={handleDownloadMetadata}
+        canDownloadMetadata={canDownloadMetadata}
         onSaveAs={handleSaveAs}
         onDeleteProject={handleDeleteProject}
         onBackToStartMenu={onBackToStartMenu}
@@ -1152,13 +1187,19 @@ export default function MainTable({
         onMergeSeparatorChange={setMergeSeparator}
         onToggleWorkload={() => setShowWorkload((v) => !v)}
         onToggleLog={() => setShowLog((v) => !v)}
-        onGroupEditor={() => setShowArtistPresetManager(true)}
         onHyperlinkManager={() => setShowHyperlinkManager(true)}
         onArtistPresetManager={() => setShowArtistPresetManager(true)}
+        onStatusPresetManager={() => setShowStatusPresetManager(true)}
+        onCustomHeaderManager={() => setShowCustomHeaderManager(true)}
+        onTemplatePresetManager={() => setShowTemplatePresetManager(true)}
+        onSlackSyncSettings={() => setShowSlackSyncSettings(true)}
+        canManageSlackSync={isOwner || isAdminMember}
         onHelp={() => setShowHelp(true)}
         onWhatsNew={onShowWhatsNew}
         instantIntakeEnabled={instantIntakeEnabled}
         onToggleInstantIntake={toggleInstantIntake}
+        realtimeAssignEnabled={realtimeAssignEnabled}
+        onToggleRealtimeAssign={toggleRealtimeAssign}
         autoOpenSlackEnabled={autoOpenSlackEnabled}
         onToggleAutoOpenSlack={toggleAutoOpenSlack}
         onKeywordAutomation={() => setShowKeywordAutomation(true)}
@@ -1261,6 +1302,7 @@ export default function MainTable({
                 <Suspense fallback={<div className="placeholder-box"><span className="caption">Memuat editor…</span></div>}>
                 <Drawer
                   item={activeItem}
+                  templateRevision={templateRevision}
                   projectId={projectId}
                   phase={project.phase}
                   projectFiles={project.files}
@@ -1646,7 +1688,7 @@ export default function MainTable({
               <div key={r.itemId} className="caption" style={{ marginBottom: 4, display: "flex", alignItems: "center", gap: 4 }}>
                 <span>
                   {r.status === "berhasil" ? "✓" : r.status === "gagal" ? "✗" : "–"} {r.itemName}
-                  {r.reason && <span style={{ color: "var(--danger)" }}> — {r.reason}</span>}
+                  {r.reason && <span style={{ color: "var(--danger)" }}> — {formatErrorMessage(r.reason)}</span>}
                 </span>
                 {r.status === "gagal" && (
                   <button
@@ -1816,7 +1858,7 @@ export default function MainTable({
         />
       )}
 
-      {showBatchFile && <BatchFileModal project={project} onClose={() => setShowBatchFile(false)} onApplied={() => (setShowBatchFile(false), refresh())} onProjectChanged={refresh} />}
+      {showBatchFile && <BatchFileModal project={project} onClose={() => { setShowBatchFile(false); void refreshMetadataAvailability(); }} onApplied={() => { setShowBatchFile(false); void refreshMetadataAvailability(); void refresh(); }} onProjectChanged={refresh} />}
 
       {showLog && <MessageLogPanel onClose={() => setShowLog(false)} />}
 
@@ -1846,6 +1888,9 @@ export default function MainTable({
           }}
         />
       )}
+      {showTemplatePresetManager && (
+        <TemplatePresetModal onClose={() => setShowTemplatePresetManager(false)} onChanged={() => setTemplateRevision((value) => value + 1)} />
+      )}
       {showCustomHeaderManager && (
         <CustomHeaderModal
           projectId={projectId}
@@ -1854,6 +1899,7 @@ export default function MainTable({
         />
       )}
       {showKeywordAutomation && <KeywordAutomationModal onClose={() => setShowKeywordAutomation(false)} />}
+      {showSlackSyncSettings && <SlackSyncSettingsModal isOwner={isOwner} onClose={() => setShowSlackSyncSettings(false)} />}
 
       {showTemplateAll && (
         <TemplateAllModal

@@ -49,10 +49,11 @@ function mimeTypeFor(name: string): string {
 /** Baca file lewat main process + bikin object URL (blob:) — lihat catatan panjang di atas
  * kenapa ini WAJIB, bukan sekadar preferensi, buat <img>/<video> src. `null` selama masih
  * dimuat ATAU kalau storedPath kosong; revoke otomatis pas storedPath ganti/unmount. */
-export function useFileBlobUrl(storedPath: string | null | undefined): string | null {
+export function useFileBlobUrl(storedPath: string | null | undefined, onError?: (message: string | null) => void): string | null {
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {
     setUrl(null);
+    onError?.(null);
     if (!storedPath) return;
     let cancelled = false;
     let created: string | null = null;
@@ -69,13 +70,16 @@ export function useFileBlobUrl(storedPath: string | null | undefined): string | 
       // ngecek tabel baru), jadi UNHANDLED PROMISE REJECTION, munculnya sebagai dialog error
       // "Error invoking remote method..." yang bikin app kerasa nge-freeze (fokus input ke-ambil
       // dialog). Preview doang, jadi gagal = anggap "gak ada gambar" (null), gak usah crash.
-      if (!cancelled) console.error("useFileBlobUrl gagal baca file:", storedPath, err);
+      if (!cancelled) {
+        console.error("useFileBlobUrl gagal baca file:", storedPath, err);
+        onError?.("Gagal membaca file lokal. Pastikan file masih tersedia dan coba buka lagi.");
+      }
     });
     return () => {
       cancelled = true;
       if (created) URL.revokeObjectURL(created);
     };
-  }, [storedPath]);
+  }, [storedPath, onError]);
   return url;
 }
 

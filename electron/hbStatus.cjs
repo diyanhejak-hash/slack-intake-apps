@@ -17,20 +17,30 @@ const STATUS_CHANNEL_NAME = "hb-apps";
 
 let cachedChannelId = null;
 let scanned = false;
+let cacheToken = null;
 
 async function findStatusChannel(slack, token) {
+  if (!token) return null;
+  if (cacheToken !== token) {
+    cacheToken = token;
+    cachedChannelId = null;
+    scanned = false;
+  }
   if (cachedChannelId) return cachedChannelId;
   if (scanned) return null; // udah pernah discan & gak ketemu -- jangan scan ulang terus-terusan
   scanned = true;
   try {
     const channels = await slack.listChannels(token);
     const found = channels.find((c) => c.name.toLowerCase() === STATUS_CHANNEL_NAME);
-    if (found) cachedChannelId = found.id;
-  } catch { /* best-effort */ }
-  return cachedChannelId;
+    if (found && cacheToken === token) cachedChannelId = found.id;
+  } catch {
+    if (cacheToken === token) scanned = false;
+  }
+  return cacheToken === token ? cachedChannelId : null;
 }
 
 async function postStatus(slack, token, text) {
+  if (!token) return;
   try {
     const channelId = await findStatusChannel(slack, token);
     if (!channelId || !token) return;
@@ -43,6 +53,7 @@ async function postStatus(slack, token, text) {
 // sekali di antaranya). postJobStatus post pesan pertamanya, balikin handle {channelId, ts} buat
 // dipakai updateJobStatus ngedit pesan yang SAMA berkali-kali.
 async function postJobStatus(slack, token, text) {
+  if (!token) return null;
   try {
     const channelId = await findStatusChannel(slack, token);
     if (!channelId || !token) return null;

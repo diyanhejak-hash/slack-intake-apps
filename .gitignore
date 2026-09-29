@@ -11,4 +11,5 @@ audit/
 audit-build/
 release-check/
 release-check*/
+release-icon-check/
 release-local/

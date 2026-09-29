@@ -6,6 +6,7 @@ import MainTable from "./screens/MainTable";
 import SlackDesktopSuggestion from "./screens/SlackDesktopSuggestion";
 import HbSessionClosing from "./screens/HbSessionClosing";
 import WhatsNewModal from "./screens/WhatsNewModal";
+import { formatErrorMessage } from "./lib/toast";
 
 const WHATS_NEW_STORAGE_PREFIX = "slack-intake.whats-new.seen.";
 
@@ -24,7 +25,7 @@ export default function App() {
   useEffect(() => {
     const onRejected = (event: PromiseRejectionEvent) => {
       event.preventDefault();
-      alert(event.reason instanceof Error ? event.reason.message : "Operasi gagal. Coba lagi.");
+      alert(formatErrorMessage(event.reason instanceof Error ? event.reason.message : "Operasi gagal. Coba lagi."));
     };
     const trapFocus = (event: KeyboardEvent) => {
       if (event.key !== "Tab") return;
@@ -73,7 +74,7 @@ export default function App() {
   }
 
   if (error) {
-    return <div style={{ padding: 32 }}><h2>Gagal memuat aplikasi</h2><p>{error}</p><button className="btn" onClick={() => location.reload()}>Coba Lagi</button></div>;
+    return <div style={{ padding: 32 }}><h2>Gagal memuat aplikasi</h2><p>{formatErrorMessage(error)}</p><button className="btn" onClick={() => location.reload()}>Coba Lagi</button></div>;
   }
   if (!auth) {
     return (
@@ -94,7 +95,7 @@ export default function App() {
       ) : (
         // key={projectId}: paksa remount pas ganti project (mis. abis Save As) biar semua state
         // lokal (selected, undo stack, drawer, dst) reset bersih — bukan cuma refetch data project.
-        <MainTable key={projectId} projectId={projectId} isAdminMember={!!adminStatus?.isAdminMember} onBackToStartMenu={() => setProjectId(null)} onOpenProject={setProjectId} onShowWhatsNew={() => setShowWhatsNew(true)} />
+        <MainTable key={projectId} projectId={projectId} isOwner={!!adminStatus?.isOwner} isAdminMember={!!adminStatus?.isAdminMember} onBackToStartMenu={() => setProjectId(null)} onOpenProject={setProjectId} onShowWhatsNew={() => setShowWhatsNew(true)} />
       )}
       {/* Poin revisi: saran install Slack Desktop — CUMA muncul setelah login (biar gak ganggu
           layar Login), non-blocking, sekali doang per komputer. */}
