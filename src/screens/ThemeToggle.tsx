@@ -1,7 +1,6 @@
 import { useEffect, useState } from "react";
 import { Moon, Sun } from "lucide-react";
-import logoLight from "../../Asset/SIA_LIGHT.png";
-import logoDark from "../../Asset/SIA_DARK.png";
+import logo from "../../Asset/HB-SLACK-INTAKE.png";
 
 export const THEME_KEY = "slack-intake.theme";
 const THEME_CHANGED = "slack-intake:theme-changed";
@@ -22,7 +21,7 @@ function applyTheme(theme: "light" | "dark") {
     favicon.rel = "icon";
     document.head.appendChild(favicon);
   }
-  favicon.href = theme === "dark" ? logoDark : logoLight;
+  favicon.href = logo;
   void window.api.app.setTheme(theme).catch(() => undefined);
 }
 

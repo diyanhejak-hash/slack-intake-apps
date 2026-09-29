@@ -55,11 +55,6 @@
   color-scheme: light;
 }
 
-.app-logo-light { display: block; }
-.app-logo-dark { display: none; }
-:root[data-theme="dark"] .app-logo-light { display: none; }
-:root[data-theme="dark"] .app-logo-dark { display: block; }
-
 * {
   box-sizing: border-box;
 }

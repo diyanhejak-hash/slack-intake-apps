@@ -71,7 +71,14 @@ jobs:
           path: release
           pattern: installer-*
           merge-multiple: true
-      - name: Publish GitHub Release (1 release, semua installer platform yang sukses jadi asset)
+      - name: Publish or replace GitHub Release assets
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release create "${{ github.ref_name }}" release/* --repo "${{ github.repository }}" --title "HB Slack Intake ${{ github.ref_name }}" --generate-notes
+        shell: bash
+        run: |
+          if gh release view "${{ github.ref_name }}" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release upload "${{ github.ref_name }}" release/* --clobber --repo "${{ github.repository }}"
+            gh release edit "${{ github.ref_name }}" --repo "${{ github.repository }}" --title "HB Slack Intake ${{ github.ref_name }}"
+          else
+            gh release create "${{ github.ref_name }}" release/* --repo "${{ github.repository }}" --title "HB Slack Intake ${{ github.ref_name }}" --generate-notes
+          fi

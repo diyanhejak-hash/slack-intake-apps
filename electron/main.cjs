@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, dialog, shell, nativeImage, nativeTheme } = require("electron");
+const { app, BrowserWindow, Tray, Menu, Notification, ipcMain, dialog, shell, nativeImage } = require("electron");
 const path = require("node:path");
 const fs = require("node:fs");
 const { randomUUID } = require("node:crypto");
@@ -75,13 +75,8 @@ function threadKey(projectId, itemId) {
   const info = authStore.loadToken();
   return JSON.stringify([info?.teamId, info?.userId, projectId, itemId]);
 }
-const iconPaths = {
-  light: path.join(__dirname, "..", "Asset", "SIA_LIGHT.png"),
-  dark: path.join(__dirname, "..", "Asset", "SIA_DARK.png"),
-};
-const headerIconPath = path.join(__dirname, "..", "Asset", "Header Apps.png");
+const appIconPath = path.join(__dirname, "..", "Asset", "HB-SLACK-INTAKE.png");
 let appIcon = null;
-let headerIcon = null;
 let win = null;
 let tray = null;
 let cancelRequested = false;
@@ -295,7 +290,7 @@ function createWindow() {
     height: 800,
     minWidth: 900,
     minHeight: 600,
-    icon: headerIcon,
+    icon: appIcon,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
@@ -306,7 +301,7 @@ function createWindow() {
   // Nama di title bar native harus selalu memperlihatkan versi build yang benar. Halaman
   // renderer punya <title> sendiri, jadi cegah page title menimpa judul native ini saat load.
   win.on("page-title-updated", (event) => event.preventDefault());
-  win.setIcon(headerIcon);
+  win.setIcon(appIcon);
   win.setMenuBarVisibility(false);
   // Matikan zoom native Electron (poin F2 rancangan) — tanpa ini, Ctrl+scroll/Ctrl+Plus-Minus
   // bisa nge-zoom SELURUH window bentrok sama zoom custom di PdfViewer. Accelerator menu bawaan
@@ -367,12 +362,11 @@ function createTray() {
   tray.on("click", () => win?.show());
 }
 
-function setAppIcon(theme) {
-  const icon = nativeImage.createFromPath(iconPaths[theme]);
-  if (icon.isEmpty()) throw new Error("Ikon aplikasi tidak ditemukan.");
-  appIcon = icon;
-  if (tray) tray.setImage(icon.resize({ width: 32, height: 32 }));
-  if (process.platform === "darwin") app.dock.setIcon(icon);
+function setAppIcon() {
+  appIcon = nativeImage.createFromPath(appIconPath);
+  if (appIcon.isEmpty()) throw new Error("Ikon aplikasi tidak ditemukan.");
+  if (tray) tray.setImage(appIcon.resize({ width: 32, height: 32 }));
+  if (process.platform === "darwin") app.dock.setIcon(appIcon);
 }
 
 function handleDeepLink(url) {
@@ -395,9 +389,7 @@ app.on("open-url", (event, url) => {
 });
 
 app.whenReady().then(() => {
-  headerIcon = nativeImage.createFromPath(headerIconPath);
-  if (headerIcon.isEmpty()) throw new Error("Ikon header aplikasi tidak ditemukan.");
-  setAppIcon(nativeTheme.shouldUseDarkColors ? "dark" : "light");
+  setAppIcon();
   createWindow();
   createTray();
   // Sync 2 arah reaction Slack->App (poin revisi) — auto-connect Socket Mode kalau App-Level
@@ -2002,7 +1994,6 @@ handle("update:check", () => checkForUpdate(process.env.GITHUB_REPO));
 handle("app:version", () => app.getVersion());
 handle("app:setTheme", (_e, theme) => {
   if (theme !== "light" && theme !== "dark") throw new Error("Tema aplikasi tidak valid.");
-  setAppIcon(theme);
 });
 
 // ---------- Papan status HB Apps (poin revisi, hasil diskusi rate-limit) ----------
