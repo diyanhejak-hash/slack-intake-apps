@@ -1004,7 +1004,9 @@ function generateBatchItems(projectId) {
   }
 
   const createdByKey = new Map();
-  for (const [key, name] of candidates) {
+  // Urut natural (SC001, SC002, ... SC013), bukan urutan file masuk.
+  const ordered = [...candidates].sort((a, b) => a[1].localeCompare(b[1], undefined, { numeric: true, sensitivity: "base" }));
+  for (const [key, name] of ordered) {
     createdByKey.set(key, addItem(projectId, { name, source: "manual" }));
   }
 

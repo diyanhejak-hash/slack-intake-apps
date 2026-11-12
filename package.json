@@ -1,6 +1,6 @@
 {
   "name": "slack-intake-apps",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "type": "module",
   "description": "HB Slack Intake — aplikasi desktop untuk mengelola intake produksi melalui Slack",
