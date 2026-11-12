@@ -312,6 +312,9 @@ declare global {
         attachFiles: (projectId: string, filePaths: string[]) => Promise<void>;
         removeFile: (fileId: string) => Promise<void>;
       };
+      checker: {
+        exportMetadata: () => Promise<{ canceled: boolean; filePath?: string; projects?: number; tasks?: number }>;
+      };
       item: {
         pushRootName: (payload: { projectId: string; itemId: string; openAfter?: boolean }) => Promise<{ itemName: string }>;
         addManual: (payload: { projectId: string; name: string; artistId?: string; artistName?: string }) => Promise<string>;

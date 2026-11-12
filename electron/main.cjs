@@ -651,6 +651,18 @@ handle("project:export", async (_e, id) => {
   return { canceled: false, filePath };
 });
 
+handle("checker:exportMetadata", async () => {
+  const { canceled, filePath } = await dialog.showSaveDialog(win, {
+    title: "Ekspor metadata untuk HB Checker",
+    defaultPath: "hb-intake-metadata.json",
+    filters: [{ name: "Metadata HB Checker", extensions: ["json"] }],
+  });
+  if (canceled || !filePath) return { canceled: true };
+  const data = projects.exportCheckerMetadata({ exportedBy: `Slack Intake Apps ${app.getVersion()}` });
+  fs.writeFileSync(filePath, JSON.stringify(data, null, 2));
+  return { canceled: false, filePath, projects: data.projects.length, tasks: data.projects.reduce((sum, project) => sum + project.tasks.length, 0) };
+});
+
 handle("project:import", async () => {
   const { canceled, filePaths } = await dialog.showOpenDialog(win, {
     title: "Import Project",

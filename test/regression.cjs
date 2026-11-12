@@ -474,6 +474,23 @@ async function test(name, fn) {
 
       projects.removeStatusPreset(preset); // status_presets GLOBAL -- jangan nyisa buat test lain
     });
+    await test("exportCheckerMetadata — format berversi buat HB Checker: item yang sudah punya thread ikut (dengan artis dan status), yang belum tidak, dan project tanpa channel tidak", () => {
+      const preset = projects.saveStatusPreset({ name: "Working on it-CHK", codeName: "wip-chk" });
+      const cp = projects.createProject({ name: "checker-export", channelId: "CCHECKER1", channelName: "hb-production" });
+      const sent = projects.addItem(cp.id, { name: "HT_EP05_SC012" });
+      const notSent = projects.addItem(cp.id, { name: "HT_EP05_SC013" });
+      projects.addItemArtist(sent, "UARTIST1", "Rina");
+      projects.setItemStatus(sent, preset);
+      db.prepare(`INSERT INTO threads (item_name, channel_id, thread_ts, permalink, updated_at) VALUES (?, ?, ?, ?, ?)`).run(JSON.stringify(["T-TEST", "U-TEST", cp.id, sent]), "CCHECKER1", "1700000000.000100", "https://herald.slack.com/archives/CCHECKER1/p1700000000000100", new Date().toISOString());
+      const data = projects.exportCheckerMetadata({ exportedBy: "Slack Intake Apps test" });
+      assert.deepEqual([data.format, data.version, data.exportedBy, data.workspace.teamId], ["hb-intake-metadata", 1, "Slack Intake Apps test", "T-TEST"]);
+      const mine = data.projects.find((entry) => entry.id === cp.id);
+      assert.deepEqual([mine.name, mine.channelId, mine.channelName], ["checker-export", "CCHECKER1", "hb-production"]);
+      assert.equal(mine.tasks.length, 1, "item tanpa thread tidak ikut");
+      assert.deepEqual(JSON.parse(JSON.stringify(mine.tasks[0])), { id: sent, name: "HT_EP05_SC012", threadTs: "1700000000.000100", permalink: "https://herald.slack.com/archives/CCHECKER1/p1700000000000100", artists: [{ id: "UARTIST1", name: "Rina" }], status: { name: "Working on it-CHK" } });
+      assert.ok(!mine.tasks.some((task) => task.id === notSent));
+      projects.removeStatusPreset(preset);
+    });
     await test("custom header per-project: CRUD, single-select, urutan, dan duplicate membawa definisi+nilai", () => {
       const hp = projects.createProject({ name: "custom-header", channelId: "CA", channelName: "test" });
       const itemId = projects.addItem(hp.id, { name: "shot-1" });

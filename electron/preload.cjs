@@ -49,6 +49,9 @@ contextBridge.exposeInMainWorld("api", {
     attachFiles: (projectId, filePaths) => ipcRenderer.invoke("project:attachFiles", projectId, filePaths),
     removeFile: (fileId) => ipcRenderer.invoke("project:removeFile", fileId),
   },
+  checker: {
+    exportMetadata: () => ipcRenderer.invoke("checker:exportMetadata"),
+  },
   item: {
     pushRootName: (payload) => ipcRenderer.invoke("item:pushRootName", payload),
     addManual: (payload) => ipcRenderer.invoke("item:addManual", payload),

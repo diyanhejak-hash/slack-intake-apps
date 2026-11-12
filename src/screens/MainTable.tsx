@@ -847,6 +847,15 @@ export default function MainTable({
     }
   }
 
+  async function handleExportCheckerMetadata() {
+    try {
+      const res = await window.api.checker.exportMetadata();
+      if (!res.canceled) showToast(`Metadata untuk HB Checker diekspor: ${res.projects} project, ${res.tasks} item.`, "success");
+    } catch (err) {
+      showToast(err instanceof Error ? err.message : "Gagal mengekspor metadata.", "error");
+    }
+  }
+
   async function handleExport() {
     try {
       const res = await window.api.project.export(projectId);
@@ -1178,6 +1187,7 @@ export default function MainTable({
         onOpenMenuChange={setOpenMenu}
         onImportProject={handleImportProject}
         onExportProject={handleExport}
+        onExportCheckerMetadata={handleExportCheckerMetadata}
         onDownloadMetadata={handleDownloadMetadata}
         canDownloadMetadata={canDownloadMetadata}
         onSaveAs={handleSaveAs}

@@ -1980,7 +1980,31 @@ function releaseUndo(projectId) {
   visit(root);
 }
 
+// Metadata buat HB Checker (aplikasi terpisah yang memeriksa video): proyek (satu channel Slack), item/scene yang SUDAH punya thread, artis, dan status-nya.
+// Formatnya berversi ('hb-intake-metadata' v1) supaya dua sisi bisa tumbuh sendiri-sendiri; Checker menolak versi yang lebih baru dari yang dia mengerti.
+// Item yang belum dikirim ke Slack (belum ada thread) tidak ikut: Checker tidak punya apa-apa untuk dibuka darinya.
+function exportCheckerMetadata({ exportedBy = 'Slack Intake Apps' } = {}) {
+  const statusNames = new Map(listStatusPresets().map((preset) => [preset.id, preset.name]));
+  const out = { format: 'hb-intake-metadata', version: 1, exportedAt: new Date().toISOString(), exportedBy, workspace: { teamId: activeScope.teamId || '', name: '' }, projects: [] };
+  for (const row of listProjects()) {
+    if (!row.channel_id) continue;
+    const project = getProject(row.id), tasks = [];
+    for (const item of project.items) {
+      const thread = db.prepare(`SELECT channel_id, thread_ts, permalink FROM threads WHERE item_name = ?`).get(JSON.stringify([activeScope.teamId, activeScope.userId, row.id, item.id]));
+      if (!thread?.thread_ts || thread.channel_id !== row.channel_id) continue;
+      tasks.push({
+        id: item.id, name: item.name, threadTs: thread.thread_ts, permalink: thread.permalink || '',
+        artists: item.artists.map((artist) => ({ id: artist.artist_id, name: artist.artist_name || '' })),
+        status: item.status_id && statusNames.get(item.status_id) ? { name: statusNames.get(item.status_id) } : null,
+      });
+    }
+    out.projects.push({ id: row.id, name: row.name, channelId: row.channel_id, channelName: row.channel_name, tasks });
+  }
+  return out;
+}
+
 module.exports = {
+  exportCheckerMetadata,
   legacyCount,
   recoverLegacyProjects,
   releaseUndo,

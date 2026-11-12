@@ -156,6 +156,7 @@ function BulkAssignStatusButton({ statusPresets, onPick, disabled }: { statusPre
 export interface MenuBarActions {
   onImportProject: () => void;
   onExportProject: () => void;
+  onExportCheckerMetadata: () => void;
   onDownloadMetadata: () => void;
   canDownloadMetadata: boolean;
   onSaveAs: () => void;
@@ -280,6 +281,7 @@ export function MenuBar(a: MenuBarActions) {
     File: [
       { label: "Import Project", onClick: a.onImportProject },
       { label: "Export Project", onClick: a.onExportProject },
+      { label: "Export Metadata untuk HB Checker", onClick: a.onExportCheckerMetadata },
       ...(a.canDownloadMetadata ? [{ label: "Download CSV Animatic", onClick: a.onDownloadMetadata }] : []),
       { label: "Save As", onClick: a.onSaveAs },
       { label: "Hapus Project", onClick: a.onDeleteProject },
